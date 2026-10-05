@@ -1,0 +1,46 @@
+{
+  "v": 1,
+  "fetchedAt": "2026-10-05T17:57:14.688Z",
+  "completedAt": "2026-10-05T17:57:16.101Z",
+  "request": {
+    "method": "GET",
+    "url": "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/rwa/stock/detail/list/ai?type=3"
+  },
+  "response": {
+    "status": 200,
+    "ok": true,
+    "body": {
+      "code": "000000",
+      "success": true,
+      "data": [
+        {
+          "chainId": "56",
+          "contractAddress": "0xcdf2f3e0fa43c47a6662a91c9e4a7c5f69762699",
+          "symbol": "MUB",
+          "ticker": "MU",
+          "type": 3,
+          "multiplier": "1.000107512568805603",
+          "d": 18
+        },
+        {
+          "chainId": "56",
+          "contractAddress": "0x80f3d493ebce97e343c53d29a137942416b4ffc0",
+          "symbol": "CRCLB",
+          "ticker": "CRCL",
+          "type": 3,
+          "multiplier": "1.000000000000000000",
+          "d": 18
+        },
+        {
+          "chainId": "56",
+          "contractAddress": "0x02fca66c1d1afb4e2a7884261eb00f63598a7436",
+          "symbol": "NVDAB",
+          "ticker": "NVDA",
+          "type": 3,
+          "multiplier": "1.000778223752807865",
+          "d": 18
+        }
+      ]
+    }
+  }
+}

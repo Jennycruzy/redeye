@@ -20,4 +20,3 @@ Execution is disabled by default and must remain disabled during probes.
 ## Current milestone
 
 M0 validates endpoint reachability, response shape, source timestamps, and local prerequisites before implementation depends on any external behavior. Findings belong in [`docs/dx-log.md`](docs/dx-log.md).
-

@@ -140,8 +140,10 @@ async function run() {
   if (statusOnly) {
     report.skipped.push({ name: "network", reason: "status-only mode" });
   } else {
-    const rwaListUrl = "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/rwa/stock/detail/list/ai?type=3";
-    const marketStatusUrl = "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/rwa/market/status/ai";
+    const rwaListUrl =
+      "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/rwa/stock/detail/list/ai?type=3";
+    const marketStatusUrl =
+      "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/rwa/market/status/ai";
     const nasdaqUrl = `https://api.nasdaq.com/api/calendar/earnings?date=${encodeURIComponent(date)}`;
     const secTickerUrl = "https://www.sec.gov/files/company_tickers.json";
     const geckoUrl = "https://api.geckoterminal.com/api/v2/networks/bsc/pools";
@@ -174,7 +176,11 @@ async function run() {
       summarize(gecko)
     );
     if (b402) report.probes.push(summarize(b402));
-    else report.skipped.push({ name: "binance-b402-supported", reason: "BINANCE_WEB3_API_KEY is not set" });
+    else
+      report.skipped.push({
+        name: "binance-b402-supported",
+        reason: "BINANCE_WEB3_API_KEY is not set"
+      });
 
     const rpc = await requestJson("bsc-rpc-chain-id", rpcUrl, {
       method: "POST",
@@ -187,7 +193,10 @@ async function run() {
       const poolUrl = `https://api.geckoterminal.com/api/v2/networks/bsc/pools/${encodeURIComponent(process.env.M0_POOL_ADDRESS)}`;
       report.probes.push(summarize(await requestJson("geckoterminal-configured-pool", poolUrl)));
     } else {
-      report.skipped.push({ name: "geckoterminal-configured-pool", reason: "M0_POOL_ADDRESS is not set" });
+      report.skipped.push({
+        name: "geckoterminal-configured-pool",
+        reason: "M0_POOL_ADDRESS is not set"
+      });
     }
   }
 
@@ -195,20 +204,28 @@ async function run() {
     report.warnings.push("Node 22 or newer is required before M1 CI and package work.");
   }
   if (report.executionEnabled !== "false") {
-    report.warnings.push("EXECUTION_ENABLED is not exactly false; no authenticated or funded execution probe is permitted.");
+    report.warnings.push(
+      "EXECUTION_ENABLED is not exactly false; no authenticated or funded execution probe is permitted."
+    );
   }
   report.completedAt = now();
   await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n", "utf8");
 
-  console.log(JSON.stringify({
-    report: reportPath.slice(repoRoot.length + 1),
-    node: report.prerequisites.node,
-    nodeRequirementSatisfied: report.prerequisites.nodeRequirementSatisfied,
-    executionEnabled: report.executionEnabled,
-    probeCount: report.probes.length,
-    skippedCount: report.skipped.length,
-    warningCount: report.warnings.length
-  }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        report: reportPath.slice(repoRoot.length + 1),
+        node: report.prerequisites.node,
+        nodeRequirementSatisfied: report.prerequisites.nodeRequirementSatisfied,
+        executionEnabled: report.executionEnabled,
+        probeCount: report.probes.length,
+        skippedCount: report.skipped.length,
+        warningCount: report.warnings.length
+      },
+      null,
+      2
+    )
+  );
 
   if (!report.prerequisites.nodeRequirementSatisfied) process.exitCode = 2;
 }

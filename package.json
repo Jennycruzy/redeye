@@ -10,7 +10,19 @@
   },
   "scripts": {
     "m0": "node scripts/m0/probe.mjs",
-    "m0:status": "node scripts/m0/probe.mjs --status-only"
+    "m0:status": "node scripts/m0/probe.mjs --status-only",
+    "test": "pnpm --recursive --if-present test",
+    "typecheck": "pnpm --recursive --if-present typecheck",
+    "lint": "pnpm --recursive --if-present lint",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0",
+    "vitest": "^2.1.8"
   }
 }
-

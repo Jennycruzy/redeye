@@ -1,0 +1,32 @@
+{
+  "v": 1,
+  "fetchedAt": "2026-10-05T17:57:14.688Z",
+  "completedAt": "2026-10-05T17:57:15.939Z",
+  "request": {
+    "method": "GET",
+    "url": "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/rwa/market/status/ai"
+  },
+  "response": {
+    "status": 200,
+    "ok": true,
+    "body": {
+      "code": "000000",
+      "success": true,
+      "data": {
+        "marketStatus": "regular",
+        "openState": true,
+        "reasonCode": null,
+        "reasonMsg": null,
+        "nextOpen": "2026-10-05T20:01:00Z",
+        "nextClose": "2026-10-05T19:59:00Z",
+        "nextOpenTime": 1791230460000,
+        "nextCloseTime": 1791230340000,
+        "offhours": {
+          "openState": false,
+          "nextOpenTime": 1791590700000,
+          "nextCloseTime": 1791762900000
+        }
+      }
+    }
+  }
+}

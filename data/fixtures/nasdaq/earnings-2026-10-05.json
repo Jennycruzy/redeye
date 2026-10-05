@@ -1,0 +1,56 @@
+{
+  "v": 1,
+  "fetchedAt": "2026-10-05T17:57:14.837Z",
+  "completedAt": "2026-10-05T17:57:15.917Z",
+  "request": {
+    "method": "GET",
+    "url": "https://api.nasdaq.com/api/calendar/earnings?date=2026-10-05"
+  },
+  "response": {
+    "status": 200,
+    "ok": true,
+    "body": {
+      "data": {
+        "asOf": "Mon, Oct 5, 2026",
+        "rows": [
+          {
+            "lastYearRptDt": "10/06/2025",
+            "lastYearEPS": "($0.05)",
+            "time": "time-not-supplied",
+            "symbol": "AEHR",
+            "name": "Aehr Test Systems",
+            "fiscalQuarterEnding": "Aug/2026",
+            "epsForecast": "$0.05",
+            "noOfEsts": "2"
+          },
+          {
+            "lastYearRptDt": "N/A",
+            "lastYearEPS": "($1.27)",
+            "time": "time-not-supplied",
+            "symbol": "NCPL",
+            "name": "Netcapital Inc.",
+            "fiscalQuarterEnding": "Jul/2026",
+            "epsForecast": "",
+            "noOfEsts": "2"
+          },
+          {
+            "lastYearRptDt": "9/22/2025",
+            "lastYearEPS": "$2",
+            "time": "time-not-supplied",
+            "symbol": "MSS",
+            "name": "Maison Solutions Inc.",
+            "fiscalQuarterEnding": "Jul/2026",
+            "epsForecast": "$0.57",
+            "noOfEsts": "2"
+          }
+        ]
+      },
+      "message": null,
+      "status": {
+        "rCode": 200,
+        "bCodeMessage": null,
+        "developerMessage": null
+      }
+    }
+  }
+}
