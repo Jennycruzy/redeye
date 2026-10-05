@@ -1,0 +1,22 @@
+{
+  "name": "@redeye/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@redeye/shared": "workspace:*",
+    "decimal.js": "^10.4.3",
+    "viem": "^2.21.54"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint ."
+  }
+}

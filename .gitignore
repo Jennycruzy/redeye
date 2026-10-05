@@ -16,4 +16,5 @@ data/derived/*
 # Local agent/runtime state
 .redeye/
 apps/agent/.state/
-
+contracts/cache/
+contracts/out/

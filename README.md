@@ -2,7 +2,8 @@
 
 Redeye helps a tokenized-stock holder decide before a company reports, then publishes evidence of what happened.
 
-Status: M0 bootstrap in progress.
+Status: deterministic core and PlanBook proof layer in progress. Live execution is
+disabled and no mainnet deployment is claimed by this repository yet.
 
 The private build specification is intentionally not stored in this repository. This repository contains only implementation notes, source code, fixtures, and generated evidence that is safe to publish.
 
@@ -19,4 +20,35 @@ Execution is disabled by default and must remain disabled during probes.
 
 ## Current milestone
 
-M0 validates endpoint reachability, response shape, source timestamps, and local prerequisites before implementation depends on any external behavior. Findings belong in [`docs/dx-log.md`](docs/dx-log.md).
+The current implementation establishes the first proof slice:
+
+- typed source records and fail-loud public-data parsers;
+- deterministic Protect, Hold and React decisions;
+- quote freshness, address, reference-price and price-impact checks;
+- verbatim filing-value verification;
+- canonical plan, decision and verdict hashes;
+- a no-custody PlanBook contract with uniqueness and lifecycle tests.
+
+The central story is deliberately narrow: a plan must be frozen before its
+release, then end as a confirmed action or a visible refusal. Until a live plan
+resolves, replay output must be labeled `REPLAY` and simulations must be labeled
+`SIMULATED`.
+
+## Verification
+
+```sh
+pnpm test
+pnpm typecheck
+pnpm lint
+pnpm format:check
+pnpm contract:build
+pnpm contract:test
+```
+
+The contract test suite is offline and does not deploy or move funds. Mainnet
+deployment, wallet execution, the filing feed, the web app and Agent Studio
+evidence are not represented as complete yet.
+
+M0 still validates endpoint reachability, response shape, source timestamps and
+local prerequisites before implementation depends on external behavior. Findings
+belong in [`docs/dx-log.md`](docs/dx-log.md).

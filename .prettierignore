@@ -3,4 +3,6 @@ dist
 coverage
 data/raw
 .redeye
-
+pnpm-lock.yaml
+contracts/cache
+contracts/out
