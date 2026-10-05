@@ -62,3 +62,25 @@ export interface NasdaqEarningsRow {
   numberOfEstimates: number;
   fiscalQuarterEnding: string;
 }
+
+export interface SecFiling {
+  cik: string;
+  accessionNumber: string;
+  form: "8-K" | "6-K";
+  filingDate: string;
+  acceptanceDateTime: string;
+  primaryDocument: string;
+  reportDate: string | null;
+  items: string | null;
+}
+
+export interface GeckoPoolSnapshot {
+  network: "bsc";
+  address: string;
+  name: string;
+  poolCreatedAt: string;
+  baseTokenPriceUsd: string;
+  quoteTokenPriceUsd: string;
+  reserveUsd: string;
+  volume24hUsd: string;
+}

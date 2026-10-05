@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "fetchedAt": "2026-10-05T17:54:35.586Z",
+  "completedAt": "2026-10-05T17:54:37.314Z",
+  "request": {
+    "method": "GET",
+    "url": "https://api.geckoterminal.com/api/v2/networks/bsc/pools/0x172fcd41e0913e95784454622d1c3724f546f849"
+  },
+  "response": {
+    "status": 200,
+    "ok": true,
+    "body": {
+      "data": {
+        "id": "bsc_0x172fcd41e0913e95784454622d1c3724f546f849",
+        "type": "pool",
+        "attributes": {
+          "base_token_price_usd": "0.999469538444177",
+          "quote_token_price_usd": "785.97",
+          "address": "0x172fcd41e0913e95784454622d1c3724f546f849",
+          "name": "USDT / WBNB 0.01%",
+          "pool_created_at": "2025-11-09T12:44:04Z",
+          "volume_usd": { "h24": "104444313.747797" },
+          "reserve_in_usd": "13546025.6008"
+        }
+      }
+    }
+  }
+}
