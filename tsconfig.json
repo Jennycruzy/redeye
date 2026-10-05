@@ -5,6 +5,7 @@
     { "path": "./packages/shared" },
     { "path": "./packages/clients" },
     { "path": "./packages/core" },
-    { "path": "./apps/agent" }
+    { "path": "./apps/agent" },
+    { "path": "./apps/web" }
   ]
 }

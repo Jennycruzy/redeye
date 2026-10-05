@@ -56,6 +56,10 @@ with `pnpm agent:build`; it will refuse to start if those values are absent. The
 wallet, filing feed and PlanBook write services are intentionally not wired into
 the store yet, so they return named errors instead of simulated success.
 
+The web shell is source-driven and responsive at 360px. Build it with
+`pnpm web:build`. With no agent data it shows explicit empty/error states and a
+`REPLAY` lead card; it does not render sample prices, hashes or counters.
+
 Receipt verification instructions are in [`docs/verification.md`](docs/verification.md).
 
 M0 still validates endpoint reachability, response shape, source timestamps and
