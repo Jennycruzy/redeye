@@ -17,6 +17,12 @@ export interface TradingSession {
   holiday: string | null;
 }
 
+export interface OffHoursWindow {
+  kind: "overnight" | "weekend" | "holiday";
+  closeTs: number;
+  openTs: number;
+}
+
 interface LocalParts {
   year: number;
   month: number;
@@ -195,6 +201,42 @@ function nextTradingDate(year: number, month: number, day: number): LocalParts {
   throw new Error("Could not find the next NYSE trading date.");
 }
 
+function previousTradingDate(year: number, month: number, day: number): LocalParts {
+  let date = new Date(Date.UTC(year, month - 1, day));
+  for (let i = 0; i < 370; i += 1) {
+    date = new Date(date.getTime() - 86_400_000);
+    const previousYear = date.getUTCFullYear();
+    const previousMonth = date.getUTCMonth() + 1;
+    const previousDay = date.getUTCDate();
+    if (
+      !isWeekend(previousYear, previousMonth, previousDay) &&
+      holidayName(previousYear, previousMonth, previousDay) === null
+    ) {
+      return {
+        year: previousYear,
+        month: previousMonth,
+        day: previousDay,
+        hour: 0,
+        minute: 0,
+        second: 0
+      };
+    }
+  }
+  throw new Error("Could not find the previous NYSE trading date.");
+}
+
+function containsHoliday(start: LocalParts, end: LocalParts): boolean {
+  let date = new Date(Date.UTC(start.year, start.month - 1, start.day));
+  const endMs = Date.UTC(end.year, end.month - 1, end.day);
+  while (date.getTime() < endMs) {
+    date = new Date(date.getTime() + 86_400_000);
+    if (holidayName(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate()) !== null) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function regularBounds(
   year: number,
   month: number,
@@ -260,4 +302,28 @@ export function nyseSessionAt(timestampMs: number): TradingSession {
     earlyClose: bounds.earlyClose,
     holiday: null
   };
+}
+
+export function nextWindow(timestampMs: number): OffHoursWindow {
+  const local = partsAt(timestampMs);
+  const todayIsTradingDay =
+    !isWeekend(local.year, local.month, local.day) &&
+    holidayName(local.year, local.month, local.day) === null;
+  const todayBounds = regularBounds(local.year, local.month, local.day);
+  const start =
+    todayIsTradingDay && timestampMs >= todayBounds.openMs
+      ? local
+      : todayIsTradingDay && timestampMs < todayBounds.openMs
+        ? previousTradingDate(local.year, local.month, local.day)
+        : previousTradingDate(local.year, local.month, local.day);
+  const startBounds = regularBounds(start.year, start.month, start.day);
+  const openDate = nextTradingDate(start.year, start.month, start.day);
+  const openBounds = regularBounds(openDate.year, openDate.month, openDate.day);
+  const daySpan = Math.round(
+    (Date.UTC(openDate.year, openDate.month - 1, openDate.day) -
+      Date.UTC(start.year, start.month - 1, start.day)) /
+      86_400_000
+  );
+  const kind = containsHoliday(start, openDate) ? "holiday" : daySpan > 1 ? "weekend" : "overnight";
+  return { kind, closeTs: startBounds.closeMs, openTs: openBounds.openMs };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nyseSessionAt } from "./session.js";
+import { nextWindow, nyseSessionAt } from "./session.js";
 
 function utc(value: string): number {
   return Date.parse(`${value}Z`);
@@ -34,5 +34,36 @@ describe("NYSE session clock", () => {
     expect(after.period).toBe("regular");
     expect(new Date(before.regularOpenMs).toISOString()).toBe("2026-10-30T13:30:00.000Z");
     expect(new Date(after.regularOpenMs).toISOString()).toBe("2026-11-02T14:30:00.000Z");
+  });
+
+  it("builds a weeknight window from the close to the next open", () => {
+    const window = nextWindow(utc("2026-10-05T15:00:00"));
+    expect(window.kind).toBe("overnight");
+    expect(new Date(window.closeTs).toISOString()).toBe("2026-10-05T20:00:00.000Z");
+    expect(new Date(window.openTs).toISOString()).toBe("2026-10-06T13:30:00.000Z");
+  });
+
+  it("builds a Friday-to-Monday weekend window", () => {
+    const window = nextWindow(utc("2026-10-09T15:00:00"));
+    expect(window.kind).toBe("weekend");
+    expect(new Date(window.closeTs).toISOString()).toBe("2026-10-09T20:00:00.000Z");
+    expect(new Date(window.openTs).toISOString()).toBe("2026-10-12T13:30:00.000Z");
+  });
+
+  it("marks a long weekend with a market holiday as a holiday window", () => {
+    const window = nextWindow(utc("2026-09-04T15:00:00"));
+    expect(window.kind).toBe("holiday");
+    expect(new Date(window.closeTs).toISOString()).toBe("2026-09-04T20:00:00.000Z");
+    expect(new Date(window.openTs).toISOString()).toBe("2026-09-08T13:30:00.000Z");
+  });
+
+  it("uses the early close and crosses the daylight-saving weekend", () => {
+    const early = nextWindow(utc("2026-11-27T16:00:00"));
+    expect(early.kind).toBe("weekend");
+    expect(new Date(early.closeTs).toISOString()).toBe("2026-11-27T18:00:00.000Z");
+
+    const dst = nextWindow(utc("2026-10-30T15:00:00"));
+    expect(new Date(dst.closeTs).toISOString()).toBe("2026-10-30T20:00:00.000Z");
+    expect(new Date(dst.openTs).toISOString()).toBe("2026-11-02T14:30:00.000Z");
   });
 });

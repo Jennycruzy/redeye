@@ -21,6 +21,24 @@ function noTrade(reason: string): Decision {
   return { action: "none", size: {}, wrapper: null, reason, refusal: null };
 }
 
+function realPrice(input: DecisionInput): Decimal | Decision {
+  const age = input.prices.ages.P;
+  if (input.prices.P === null || age === null || !Number.isFinite(age) || age < 0 || age > 120) {
+    return refused("REAL_PRICE_UNAVAILABLE", input);
+  }
+  return decimal(input.prices.P, "24/7 price");
+}
+
+function tokenGapPct(input: DecisionInput, real: Decimal): Decimal {
+  return decimal(input.prices.T, "token price").minus(real).abs().div(real).mul(100);
+}
+
+function triggerDropPct(input: DecisionInput, real: Decimal): Decimal {
+  const close = decimal(input.prices.C, "US close");
+  if (close.lte(0)) throw new Error("US close must be greater than zero.");
+  return close.minus(real).div(close).mul(100);
+}
+
 function refused(
   code: RefusalCode,
   input: DecisionInput,
@@ -134,6 +152,93 @@ function protect(input: DecisionInput): Decision {
   };
 }
 
+function guard(input: DecisionInput): Decision {
+  const real = realPrice(input);
+  if ("action" in real) return real;
+  const trigger = decimal(
+    required(input.plan.params.triggerDropPct, "triggerDropPct"),
+    "triggerDropPct"
+  );
+  const drop = triggerDropPct(input, real);
+  if (drop.lt(trigger)) {
+    return input.atMs >= input.event.openTs
+      ? refused("CONDITION_NOT_MET", input)
+      : noTrade(
+          `Guard is waiting: the 24/7 price is ${drop.toSignificantDigits(30).toString()}% below the close; the trigger is ${trigger.toString()}%.`
+        );
+  }
+  if (input.atMs >= input.event.openTs) return refused("WINDOW_CLOSED", input);
+  const maximumGap = decimal(
+    required(input.plan.params.maxGapToRealPricePct, "maxGapToRealPricePct"),
+    "maxGapToRealPricePct"
+  );
+  const gap = tokenGapPct(input, real);
+  if (gap.gt(maximumGap)) {
+    return refused("PRICE_OFF_REAL", input, {
+      gapPct: gap.toSignificantDigits(30).toString(),
+      limitPct: maximumGap.toString()
+    });
+  }
+  const gate = commonTradeGate(input);
+  if (gate) return gate;
+  const quote = quoteFor(input, "sell");
+  if ("action" in quote) return quote;
+  const sellPct = decimal(required(input.plan.params.sellPct, "sellPct"), "sellPct");
+  const shares = decimal(input.plan.heldShares, "heldShares")
+    .mul(sellPct)
+    .div(100)
+    .toSignificantDigits(30)
+    .toString();
+  return {
+    action: "sell",
+    size: { shares },
+    wrapper: quote.quote.wrapper,
+    reason: `Guard: 24/7 price ${drop.toSignificantDigits(30).toString()}% below the close; token within ${gap.toSignificantDigits(30).toString()}% of it.`,
+    refusal: null
+  };
+}
+
+function buyDip(input: DecisionInput): Decision {
+  const real = realPrice(input);
+  if ("action" in real) return real;
+  const trigger = decimal(
+    required(input.plan.params.triggerDropPct, "triggerDropPct"),
+    "triggerDropPct"
+  );
+  const drop = triggerDropPct(input, real);
+  if (drop.lt(trigger)) {
+    return input.atMs >= input.event.openTs
+      ? refused("CONDITION_NOT_MET", input)
+      : noTrade(
+          `Buy-the-dip plan is waiting: the 24/7 price is ${drop.toSignificantDigits(30).toString()}% below the close; the trigger is ${trigger.toString()}%.`
+        );
+  }
+  if (input.atMs >= input.event.openTs) return refused("WINDOW_CLOSED", input);
+  const maximumGap = decimal(
+    required(input.plan.params.maxGapToRealPricePct, "maxGapToRealPricePct"),
+    "maxGapToRealPricePct"
+  );
+  const gap = tokenGapPct(input, real);
+  if (gap.gt(maximumGap)) {
+    return refused("PRICE_OFF_REAL", input, {
+      gapPct: gap.toSignificantDigits(30).toString(),
+      limitPct: maximumGap.toString()
+    });
+  }
+  const gate = commonTradeGate(input);
+  if (gate) return gate;
+  const quote = quoteFor(input, "buy");
+  if ("action" in quote) return quote;
+  const maxUsd = required(input.plan.params.maxUsd, "maxUsd");
+  return {
+    action: "buy",
+    size: { usd: maxUsd },
+    wrapper: quote.quote.wrapper,
+    reason: `Buy the dip: 24/7 price ${drop.toSignificantDigits(30).toString()}% below the close; token within ${gap.toSignificantDigits(30).toString()}% of it.`,
+    refusal: null
+  };
+}
+
 function react(input: DecisionInput): Decision {
   if (input.event.kind !== "earnings" || input.event.consensus === null) {
     return refused("NO_CONSENSUS", input);
@@ -159,17 +264,18 @@ function react(input: DecisionInput): Decision {
     );
   }
 
-  const move = decimal(
-    required(input.onChainMoveSinceReleasePct, "on-chain move"),
-    "on-chain move"
-  );
+  const real = realPrice(input);
+  if ("action" in real) return real;
+  const close = decimal(input.prices.C, "US close");
+  if (close.lte(0)) throw new Error("US close must be greater than zero.");
+  const move = real.minus(close).div(close).mul(100);
   const unpriced = decimal(
     required(input.plan.params.unpricedThresholdPct, "unpricedThresholdPct"),
     "unpricedThresholdPct"
   );
   const sameDirection = move.isZero() || move.s === surprise.s;
   if (!sameDirection || move.abs().gte(unpriced)) {
-    return noTrade("The surprise is already reflected in the on-chain move.");
+    return noTrade("The surprise is already reflected in the 24/7 price.");
   }
 
   const direction = required(input.plan.params.direction, "direction");
@@ -189,7 +295,7 @@ function react(input: DecisionInput): Decision {
     action: side,
     size: { usd: maxUsd },
     wrapper: quote.quote.wrapper,
-    reason: `React plan: ${surprise.toSignificantDigits(30).toString()}% EPS surprise with ${unpriced.toString()}% still unpriced on chain.`,
+    reason: `React plan: ${surprise.toSignificantDigits(30).toString()}% EPS surprise with ${unpriced.toString()}% still unpriced in the 24/7 price.`,
     refusal: null
   };
 }
@@ -200,10 +306,12 @@ export function decide(input: DecisionInput): Decision {
       action: "hold",
       size: {},
       wrapper: input.plan.wrapper,
-      reason: "Hold plan: no trades; monitor the release and report the result.",
+      reason: "Hold plan: no trades; monitor the window and report the result.",
       refusal: null
     };
   }
+  if (input.plan.kind === "guard") return guard(input);
+  if (input.plan.kind === "buy_dip") return buyDip(input);
   if (input.plan.kind === "protect") return protect(input);
   return react(input);
 }

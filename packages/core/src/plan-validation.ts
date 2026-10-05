@@ -1,6 +1,16 @@
 import Decimal from "decimal.js";
 import type { EventContext, PlanContext } from "./types.js";
 
+const offHoursKinds = ["overnight", "weekend", "holiday"] as const;
+
+function isOffHours(kind: EventContext["kind"]): boolean {
+  return offHoursKinds.includes(kind as (typeof offHoursKinds)[number]);
+}
+
+export function planLockDeadlineMs(event: EventContext): number {
+  return event.lockTs - (isOffHours(event.kind) ? 5 : 30) * 60 * 1000;
+}
+
 export interface PlanValidationIssue {
   field: string;
   message: string;
@@ -75,11 +85,51 @@ export function validatePlan(plan: PlanContext, event: EventContext): PlanValida
     });
   }
 
+  if (plan.kind === "buy_dip" && !isOffHours(event.kind)) {
+    issues.push({ field: "kind", message: "Buy the dip is allowed only for off-hours windows." });
+  }
+  if (plan.kind === "protect" && event.kind !== "earnings" && event.kind !== "scheduled_report") {
+    issues.push({ field: "kind", message: "Protect is allowed only for scheduled releases." });
+  }
+  if (plan.kind === "react" && event.kind !== "earnings") {
+    issues.push({ field: "kind", message: "React is allowed only for earnings events." });
+  }
+
+  if (plan.kind === "guard") {
+    const trigger = numberValue(plan.params.triggerDropPct, "params.triggerDropPct", issues);
+    between(trigger, "1", "20", "params.triggerDropPct", issues);
+    const sellPct = numberValue(plan.params.sellPct, "params.sellPct", issues);
+    between(sellPct, "10", "100", "params.sellPct", issues);
+    const maximumGap = numberValue(
+      plan.params.maxGapToRealPricePct,
+      "params.maxGapToRealPricePct",
+      issues
+    );
+    between(maximumGap, "0.2", "2", "params.maxGapToRealPricePct", issues);
+  }
+
+  if (plan.kind === "buy_dip") {
+    const trigger = numberValue(plan.params.triggerDropPct, "params.triggerDropPct", issues);
+    between(trigger, "1", "20", "params.triggerDropPct", issues);
+    const maximumGap = numberValue(
+      plan.params.maxGapToRealPricePct,
+      "params.maxGapToRealPricePct",
+      issues
+    );
+    between(maximumGap, "0.1", "2", "params.maxGapToRealPricePct", issues);
+    const maxUsd = numberValue(plan.params.maxUsd, "params.maxUsd", issues);
+    if (maxUsd !== null && maxUsd.lt(5)) {
+      issues.push({ field: "params.maxUsd", message: "must be at least 5 USD." });
+    }
+  }
+
   if (plan.kind === "protect") {
     const sellPct = numberValue(plan.params.sellPct, "params.sellPct", issues);
     between(sellPct, "10", "100", "params.sellPct", issues);
     const sellAt = numberValue(plan.params.sellAtMs, "params.sellAtMs", issues);
-    if (sellAt !== null) {
+    if (event.releaseTs === null) {
+      issues.push({ field: "event.releaseTs", message: "is required for Protect." });
+    } else if (sellAt !== null) {
       const lower = new Decimal(event.releaseTs).minus(6 * 60 * 60 * 1000);
       const upper = new Decimal(event.releaseTs).minus(10 * 60 * 1000);
       if (sellAt.lt(lower) || sellAt.gt(upper)) {
@@ -92,9 +142,6 @@ export function validatePlan(plan: PlanContext, event: EventContext): PlanValida
   }
 
   if (plan.kind === "react") {
-    if (event.kind !== "earnings") {
-      issues.push({ field: "kind", message: "React is allowed only for earnings events." });
-    }
     const surprise = numberValue(
       plan.params.surpriseThresholdPct,
       "params.surpriseThresholdPct",
@@ -114,7 +161,9 @@ export function validatePlan(plan: PlanContext, event: EventContext): PlanValida
       issues.push({ field: "params.direction", message: "is required." });
     }
     const windowEnd = numberValue(plan.params.windowEndMs, "params.windowEndMs", issues);
-    if (windowEnd !== null && windowEnd.lt(event.releaseTs)) {
+    if (event.releaseTs === null) {
+      issues.push({ field: "event.releaseTs", message: "is required for React." });
+    } else if (windowEnd !== null && windowEnd.lt(event.releaseTs)) {
       issues.push({ field: "params.windowEndMs", message: "must not be before release." });
     }
   }

@@ -3,11 +3,11 @@ import { canonicalJson, hashCanonical } from "./canonical.js";
 import { assertClaimAllowed, canPublishClaim } from "./claims.js";
 import { decide } from "./decide.js";
 import { verifyExtractedReport } from "./extract.js";
-import { assertValidPlan, validatePlan } from "./plan-validation.js";
+import { assertValidPlan, planLockDeadlineMs, validatePlan } from "./plan-validation.js";
 import { checkQuote } from "./quote-check.js";
 import { hashDecision, hashPlan, hashVerdict, makeEventKey } from "./receipt.js";
 import { verifyReceipt } from "./verify.js";
-import { refusal } from "./refuse.js";
+import { refusal, refusalCodes } from "./refuse.js";
 import type {
   DecisionInput,
   EventContext,
@@ -71,6 +71,8 @@ function event(overrides: Partial<EventContext> = {}): EventContext {
   return {
     ticker: "NVDA",
     kind: "earnings",
+    lockTs: 2000,
+    openTs: 10_000,
     releaseTs: 2000,
     consensus: { eps: "1", basis: "adjusted diluted USD per share", noOfEsts: 3 },
     ...overrides
@@ -84,8 +86,9 @@ function decisionInput(overrides: Partial<DecisionInput> = {}): DecisionInput {
     quote: candidate,
     expectedTokenAddress: tokenAddress,
     expectedWrapper: "bStock",
-    referencePricePerShare: "25",
-    lastPoolPricePerShare: "24",
+    usReferencePricePerShare: "25",
+    realPricePerShare: "24",
+    realPriceAgeSeconds: 10,
     marketOpen: true,
     maxPriceImpactPct: "1",
     checkedAtMs: 1000
@@ -101,6 +104,13 @@ function decisionInput(overrides: Partial<DecisionInput> = {}): DecisionInput {
     poolDepthUsd: "100000",
     atMs: 1000,
     executionEnabled: true,
+    prices: {
+      C: "25",
+      P: "25.1",
+      T: "25",
+      sources: { C: "nasdaq", P: "hyperliquid:xyz:NVDA", T: "pool" },
+      ages: { C: 3600, P: 10, T: 5 }
+    },
     ...overrides
   };
 }
@@ -120,8 +130,9 @@ describe("quote checks", () => {
       quote: quote(),
       expectedTokenAddress: tokenAddress,
       expectedWrapper: "bStock",
-      referencePricePerShare: "25",
-      lastPoolPricePerShare: "24",
+      usReferencePricePerShare: "25",
+      realPricePerShare: "24",
+      realPriceAgeSeconds: 10,
       marketOpen: true,
       maxPriceImpactPct: "1",
       checkedAtMs: 1000
@@ -137,8 +148,9 @@ describe("quote checks", () => {
       quote: quote({ outputAmount: "1000" }),
       expectedTokenAddress: tokenAddress,
       expectedWrapper: "bStock",
-      referencePricePerShare: "25",
-      lastPoolPricePerShare: "24",
+      usReferencePricePerShare: "25",
+      realPricePerShare: "24",
+      realPriceAgeSeconds: 10,
       marketOpen: true,
       maxPriceImpactPct: "1",
       checkedAtMs: 1000
@@ -156,8 +168,9 @@ describe("quote checks", () => {
       quote: quote({ quotedAtMs: 1000 }),
       expectedTokenAddress: tokenAddress,
       expectedWrapper: "bStock",
-      referencePricePerShare: "25",
-      lastPoolPricePerShare: "24",
+      usReferencePricePerShare: "25",
+      realPricePerShare: "24",
+      realPriceAgeSeconds: 10,
       marketOpen: true,
       maxPriceImpactPct: "1",
       checkedAtMs: 21_001
@@ -173,8 +186,9 @@ describe("quote checks", () => {
       quote: quote({ priceImpactPct: "1.1" }),
       expectedTokenAddress: tokenAddress,
       expectedWrapper: "bStock",
-      referencePricePerShare: "25",
-      lastPoolPricePerShare: "24",
+      usReferencePricePerShare: "25",
+      realPricePerShare: "24",
+      realPriceAgeSeconds: 10,
       marketOpen: true,
       maxPriceImpactPct: "1",
       checkedAtMs: 1000
@@ -182,8 +196,47 @@ describe("quote checks", () => {
 
     expect(checked.result.code).toBe("IMPACT_TOO_HIGH");
     expect(checked.refusal?.sentence).toBe(
-      "Selling now would move the price 1.1%; your limit is 1%."
+      "Trading now would move the price 1.1%; your limit is 1%."
     );
+  });
+
+  it("uses the fresh 24/7 price while the US market is shut", () => {
+    const checked = checkQuote({
+      ticker: "NVDA",
+      quote: quote({ outputAmount: "24" }),
+      expectedTokenAddress: tokenAddress,
+      expectedWrapper: "bStock",
+      usReferencePricePerShare: "25",
+      realPricePerShare: "24",
+      realPriceAgeSeconds: 10,
+      marketOpen: false,
+      maxPriceImpactPct: "1",
+      checkedAtMs: 1000
+    });
+
+    expect(checked.result.passed).toBe(true);
+    expect(checked.result.referencePricePerShare).toBe("24");
+  });
+
+  it.each([
+    [null, null],
+    ["24", 121]
+  ])("refuses a missing or stale 24/7 price", (realPricePerShare, realPriceAgeSeconds) => {
+    const checked = checkQuote({
+      ticker: "NVDA",
+      quote: quote({ outputAmount: "24" }),
+      expectedTokenAddress: tokenAddress,
+      expectedWrapper: "bStock",
+      usReferencePricePerShare: "25",
+      realPricePerShare,
+      realPriceAgeSeconds,
+      marketOpen: false,
+      maxPriceImpactPct: "1",
+      checkedAtMs: 1000
+    });
+
+    expect(checked.result.code).toBe("REAL_PRICE_UNAVAILABLE");
+    expect(checked.refusal?.sentence).toBe("We can't see the real price right now, so no trade.");
   });
 });
 
@@ -245,8 +298,9 @@ describe("deterministic decisions", () => {
       quote: candidate,
       expectedTokenAddress: tokenAddress,
       expectedWrapper: "bStock",
-      referencePricePerShare: "25",
-      lastPoolPricePerShare: "24",
+      usReferencePricePerShare: "25",
+      realPricePerShare: "24",
+      realPriceAgeSeconds: 10,
       marketOpen: true,
       maxPriceImpactPct: "1",
       checkedAtMs: 1000
@@ -271,7 +325,13 @@ describe("deterministic decisions", () => {
         },
         quotes: [candidate],
         quoteChecks: [check],
-        onChainMoveSinceReleasePct: "0.5"
+        prices: {
+          C: "25",
+          P: "25.125",
+          T: "25.1",
+          sources: { C: "nasdaq", P: "hyperliquid:xyz:NVDA", T: "pool" },
+          ages: { C: 3600, P: 10, T: 5 }
+        }
       })
     );
 
@@ -305,8 +365,9 @@ describe("deterministic decisions", () => {
       quote: bstock,
       expectedTokenAddress: tokenAddress,
       expectedWrapper: "bStock",
-      referencePricePerShare: "25",
-      lastPoolPricePerShare: "24",
+      usReferencePricePerShare: "25",
+      realPricePerShare: "24",
+      realPriceAgeSeconds: 10,
       marketOpen: true,
       maxPriceImpactPct: "1",
       checkedAtMs: 1000
@@ -316,8 +377,9 @@ describe("deterministic decisions", () => {
       quote: ondo,
       expectedTokenAddress: tokenAddress,
       expectedWrapper: "Ondo",
-      referencePricePerShare: "25",
-      lastPoolPricePerShare: "24",
+      usReferencePricePerShare: "25",
+      realPricePerShare: "24",
+      realPriceAgeSeconds: 10,
       marketOpen: true,
       maxPriceImpactPct: "1",
       checkedAtMs: 1000
@@ -343,7 +405,13 @@ describe("deterministic decisions", () => {
         },
         quotes: [bstock, ondo],
         quoteChecks: [bstockCheck, ondoCheck],
-        onChainMoveSinceReleasePct: "0.5"
+        prices: {
+          C: "25",
+          P: "25.125",
+          T: "25.1",
+          sources: { C: "nasdaq", P: "hyperliquid:xyz:NVDA", T: "pool" },
+          ages: { C: 3600, P: 10, T: 5 }
+        }
       })
     );
 
@@ -351,10 +419,188 @@ describe("deterministic decisions", () => {
     expect(result.wrapper).toBe("Ondo");
   });
 
+  it("executes Guard only when the real-price trigger and token gap both pass", () => {
+    const candidate = quote({ outputAmount: "95" });
+    const check = checkQuote({
+      ticker: "NVDA",
+      quote: candidate,
+      expectedTokenAddress: tokenAddress,
+      expectedWrapper: "bStock",
+      usReferencePricePerShare: "100",
+      realPricePerShare: "95",
+      realPriceAgeSeconds: 10,
+      marketOpen: false,
+      maxPriceImpactPct: "1",
+      checkedAtMs: 1000
+    }).result;
+    const result = decide(
+      decisionInput({
+        event: event({
+          kind: "weekend",
+          lockTs: 1000,
+          openTs: 10_000,
+          releaseTs: null,
+          consensus: null
+        }),
+        plan: plan({
+          kind: "guard",
+          params: {
+            maxPriceImpactPct: "1",
+            minPoolDepthUsd: "50000",
+            triggerDropPct: "5",
+            sellPct: "50",
+            maxGapToRealPricePct: "0.5"
+          }
+        }),
+        quotes: [candidate],
+        quoteChecks: [check],
+        atMs: 2000,
+        prices: {
+          C: "100",
+          P: "95",
+          T: "95.1",
+          sources: { C: "nasdaq", P: "hyperliquid:xyz:NVDA", T: "pool" },
+          ages: { C: 3600, P: 10, T: 5 }
+        }
+      })
+    );
+
+    expect(result.action).toBe("sell");
+    expect(result.size.shares).toBe("1");
+  });
+
+  it("records an unmet off-hours trigger as a kept no-action result at the open", () => {
+    const result = decide(
+      decisionInput({
+        event: event({ kind: "overnight", lockTs: 1000, openTs: 10_000, releaseTs: null }),
+        plan: plan({
+          kind: "guard",
+          params: {
+            maxPriceImpactPct: "1",
+            minPoolDepthUsd: "50000",
+            triggerDropPct: "5",
+            sellPct: "50",
+            maxGapToRealPricePct: "0.5"
+          }
+        }),
+        atMs: 10_000,
+        prices: {
+          C: "100",
+          P: "98",
+          T: "98",
+          sources: { C: "nasdaq", P: "hyperliquid:xyz:NVDA", T: "pool" },
+          ages: { C: 3600, P: 10, T: 5 }
+        }
+      })
+    );
+
+    expect(result.refusal?.code).toBe("CONDITION_NOT_MET");
+  });
+
+  it("refuses Guard when the token is too far from the 24/7 price", () => {
+    const result = decide(
+      decisionInput({
+        event: event({ kind: "weekend", lockTs: 1000, openTs: 10_000, releaseTs: null }),
+        plan: plan({
+          kind: "guard",
+          params: {
+            maxPriceImpactPct: "1",
+            minPoolDepthUsd: "50000",
+            triggerDropPct: "5",
+            sellPct: "50",
+            maxGapToRealPricePct: "0.5"
+          }
+        }),
+        atMs: 2000,
+        prices: {
+          C: "100",
+          P: "95",
+          T: "96",
+          sources: { C: "nasdaq", P: "hyperliquid:xyz:NVDA", T: "pool" },
+          ages: { C: 3600, P: 10, T: 5 }
+        }
+      })
+    );
+
+    expect(result.refusal?.code).toBe("PRICE_OFF_REAL");
+  });
+
+  it("buys a dip when its price condition and quote pass", () => {
+    const candidate = quote({
+      id: "dip-buy",
+      side: "buy",
+      inputAmount: "25",
+      inputUnit: "USD",
+      outputAmount: "0.263157894736842105",
+      outputUnit: "TOKEN"
+    });
+    const check = checkQuote({
+      ticker: "NVDA",
+      quote: candidate,
+      expectedTokenAddress: tokenAddress,
+      expectedWrapper: "bStock",
+      usReferencePricePerShare: "100",
+      realPricePerShare: "95",
+      realPriceAgeSeconds: 10,
+      marketOpen: false,
+      maxPriceImpactPct: "1",
+      checkedAtMs: 1000
+    }).result;
+    const result = decide(
+      decisionInput({
+        event: event({ kind: "overnight", lockTs: 1000, openTs: 10_000, releaseTs: null }),
+        plan: plan({
+          kind: "buy_dip",
+          params: {
+            maxPriceImpactPct: "1",
+            minPoolDepthUsd: "50000",
+            triggerDropPct: "3",
+            maxUsd: "25",
+            maxGapToRealPricePct: "0.3"
+          }
+        }),
+        quotes: [candidate],
+        quoteChecks: [check],
+        atMs: 2000,
+        prices: {
+          C: "100",
+          P: "95",
+          T: "95.1",
+          sources: { C: "nasdaq", P: "hyperliquid:xyz:NVDA", T: "pool" },
+          ages: { C: 3600, P: 10, T: 5 }
+        }
+      })
+    );
+
+    expect(result.action).toBe("buy");
+    expect(result.size.usd).toBe("25");
+  });
+
   it("keeps refusal sentences deterministic", () => {
     expect(
       refusal("POOL_TOO_THIN", { ticker: "NVDA", currentUsd: "3", neededUsd: "50000" }).sentence
     ).toBe("The NVDA pool holds $3; your plan needs at least $50000.");
+  });
+
+  it("gives every refusal code a user sentence", () => {
+    for (const code of refusalCodes) {
+      expect(
+        refusal(code, {
+          ticker: "NVDA",
+          reason: "source reason",
+          currentUsd: "3",
+          neededUsd: "50000",
+          impactPct: "1.1",
+          limitPct: "1",
+          actualPrice: "100",
+          referencePrice: "25",
+          quotaLeftUsd: "10",
+          quotaNeededUsd: "25",
+          sessionEndsAt: "2026-10-05T23:00:00.000Z",
+          gapPct: "2.1"
+        }).sentence.length
+      ).toBeGreaterThan(0);
+    }
   });
 });
 
@@ -393,9 +639,45 @@ describe("v1.5 proof rules", () => {
     ).toThrow("Invalid plan");
   });
 
+  it("validates off-hours bounds and the five-minute lock deadline", () => {
+    const window = event({
+      kind: "weekend",
+      lockTs: Date.parse("2026-10-09T20:00:00.000Z"),
+      openTs: Date.parse("2026-10-12T13:30:00.000Z"),
+      releaseTs: null,
+      consensus: null
+    });
+    const result = validatePlan(
+      plan({
+        kind: "buy_dip",
+        params: {
+          maxPriceImpactPct: "1",
+          minPoolDepthUsd: "50000",
+          triggerDropPct: "0.5",
+          maxUsd: "4",
+          maxGapToRealPricePct: "3"
+        }
+      }),
+      window
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.issues.map((issue) => issue.field)).toEqual(
+      expect.arrayContaining([
+        "params.triggerDropPct",
+        "params.maxUsd",
+        "params.maxGapToRealPricePct"
+      ])
+    );
+    expect(new Date(planLockDeadlineMs(window)).toISOString()).toBe("2026-10-09T19:55:00.000Z");
+  });
+
   it("creates stable event and receipt hashes", () => {
     const eventKey = makeEventKey("NVDA", "earnings", "2026-08-26");
     expect(eventKey).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(makeEventKey("NVDA", "weekend", "2026-10-09")).toBe(
+      "0x5ac80f5b914639a8a70c0534f908a0e24b67e8d00757dc771c92eea898886a84"
+    );
     expect(hashPlan(plan())).toBe(hashPlan({ ...plan(), params: { ...plan().params } }));
     expect(
       hashDecision(
@@ -440,6 +722,8 @@ describe("v1.5 proof rules", () => {
         }
       ],
       releaseTs: Date.parse("2026-08-26T20:20:00.000Z"),
+      lockTs: Date.parse("2026-08-26T20:20:00.000Z"),
+      openTs: null,
       consensus: null
     };
     const decision = {
@@ -450,7 +734,7 @@ describe("v1.5 proof rules", () => {
       refusal: null
     };
     const input = { source: "fixture" };
-    const verdict = { outcome: "refused" as const, reason: "No action required." };
+    const verdict = { outcome: "kept" as const, reason: "No action required." };
     const receipt = {
       v: 1 as const,
       event: eventRecord,
@@ -473,5 +757,21 @@ describe("v1.5 proof rules", () => {
     const verified = verifyReceipt(receipt);
     expect(verified.valid).toBe(true);
     expect(verified.errors).toEqual([]);
+
+    const tradeDecision = { ...decision, action: "buy" as const, size: { usd: "25" } };
+    const tradeReceipt = {
+      ...receipt,
+      decisions: [
+        {
+          at: Date.parse("2026-08-26T20:20:02.000Z"),
+          input,
+          decision: tradeDecision,
+          decisionHash: hashDecision(input, tradeDecision)
+        }
+      ]
+    };
+    expect(verifyReceipt(tradeReceipt).errors).toContain(
+      "a kept trade receipt must include at least one confirmed fill."
+    );
   });
 });

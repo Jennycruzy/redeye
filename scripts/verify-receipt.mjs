@@ -50,10 +50,10 @@ if (!path) {
     if (computedEventKey !== receipt.event.eventKey) errors.push("eventKey mismatch");
     const computedPlanHash = hash({ ...receipt.plan, planId: null });
     if (computedPlanHash !== receipt.planHash) errors.push("planHash mismatch");
-    if (receipt.event.releaseTs === null || receipt.event.releaseTs === undefined) {
-      errors.push("event releaseTs is missing");
-    } else if (receipt.freezeBlockTs >= receipt.event.releaseTs) {
-      errors.push("freeze block time is not before the earliest release source");
+    if (receipt.event.lockTs === null || receipt.event.lockTs === undefined) {
+      errors.push("event lockTs is missing");
+    } else if (receipt.freezeBlockTs >= receipt.event.lockTs) {
+      errors.push("freeze block time is not before the event lock time");
     }
     txHash(receipt.freezeTx, "freezeTx");
     for (const [index, entry] of receipt.decisions.entries()) {
@@ -65,8 +65,11 @@ if (!path) {
       txHash(fill.txHash, `fills[${index}].txHash`);
     const computedVerdictHash = hash(receipt.verdict);
     if (computedVerdictHash !== receipt.verdictHash) errors.push("verdictHash mismatch");
-    if (receipt.verdict.outcome === "kept" && receipt.fills.length === 0) {
-      errors.push("kept receipt has no fill");
+    const hasTradeDecision = receipt.decisions.some(
+      ({ decision }) => decision.action === "buy" || decision.action === "sell"
+    );
+    if (receipt.verdict.outcome === "kept" && hasTradeDecision && receipt.fills.length === 0) {
+      errors.push("kept trade receipt has no fill");
     }
     const result = {
       valid: errors.length === 0,

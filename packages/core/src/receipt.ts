@@ -36,11 +36,15 @@ export interface ReceiptBundle {
   verdictHash: `0x${string}`;
 }
 
-export function makeEventKey(ticker: string, kind: EventKind, releaseDate: string): `0x${string}` {
+export function makeEventKey(
+  ticker: string,
+  kind: EventKind,
+  windowStartDate: string
+): `0x${string}` {
   if (!/^[A-Z][A-Z0-9.-]{0,14}$/.test(ticker)) throw new Error("Event ticker must be uppercase.");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(releaseDate))
-    throw new Error("Event release date must be YYYY-MM-DD.");
-  return keccak256(encodePacked(["string", "string", "string"], [ticker, kind, releaseDate]));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(windowStartDate))
+    throw new Error("Event window start date must be YYYY-MM-DD.");
+  return keccak256(encodePacked(["string", "string", "string"], [ticker, kind, windowStartDate]));
 }
 
 export function hashPlan(plan: PlanContext): `0x${string}` {

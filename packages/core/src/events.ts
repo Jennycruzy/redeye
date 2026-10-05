@@ -20,11 +20,20 @@ export interface EventRecord {
   eventKey: `0x${string}`;
   ticker: string;
   kind: EventKind;
-  issuerCik: string;
+  issuerCik: string | null;
   expectedDate: string;
   sources: EventSourceObservation[];
   releaseTs: number | null;
+  lockTs: number | null;
+  openTs: number | null;
   consensus: EventConsensus | null;
+}
+
+const windowKinds = ["overnight", "weekend", "holiday"] as const;
+type WindowKind = (typeof windowKinds)[number];
+
+function isWindowKind(kind: EventKind): kind is WindowKind {
+  return windowKinds.includes(kind as WindowKind);
 }
 
 function isoMs(value: string, field: string): number {
@@ -72,6 +81,9 @@ export function createEventRecord(input: {
     }
   }
   const releaseTs = earliestPublicSourceMs(input.sources);
+  if (isWindowKind(input.kind)) {
+    throw new Error("Window events must be created with createWindowRecord.");
+  }
   return {
     v: 1,
     eventKey: makeEventKey(input.ticker, input.kind, input.expectedDate),
@@ -81,13 +93,46 @@ export function createEventRecord(input: {
     expectedDate: input.expectedDate,
     sources: input.sources,
     releaseTs,
+    lockTs: releaseTs,
+    openTs: null,
     consensus: input.consensus
   };
 }
 
-export function freezeIsBeforeRelease(freezeBlockTs: number, event: EventRecord): boolean {
+export function createWindowRecord(
+  kind: WindowKind,
+  ticker: string,
+  closeTs: number,
+  openTs: number
+): EventRecord {
+  if (!Number.isFinite(closeTs) || !Number.isFinite(openTs)) {
+    throw new Error("Window close and open timestamps must be finite.");
+  }
+  if (openTs <= closeTs) throw new Error("Window open must be after its close.");
+  const expectedDate = new Date(closeTs).toISOString().slice(0, 10);
+  return {
+    v: 1,
+    eventKey: makeEventKey(ticker, kind, expectedDate),
+    ticker,
+    kind,
+    issuerCik: null,
+    expectedDate,
+    sources: [],
+    releaseTs: null,
+    lockTs: closeTs,
+    openTs,
+    consensus: null
+  };
+}
+
+export function freezeIsBeforeLock(freezeBlockTs: number, event: EventRecord): boolean {
   if (!Number.isFinite(freezeBlockTs)) throw new Error("freezeBlockTs must be finite.");
+  if (event.lockTs === null) throw new Error("Cannot compare a freeze before a lock time exists.");
+  return freezeBlockTs < event.lockTs;
+}
+
+export function freezeIsBeforeRelease(freezeBlockTs: number, event: EventRecord): boolean {
   if (event.releaseTs === null)
     throw new Error("Cannot compare a freeze before a release time was observed.");
-  return freezeBlockTs < event.releaseTs;
+  return freezeIsBeforeLock(freezeBlockTs, event);
 }

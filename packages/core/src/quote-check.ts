@@ -7,8 +7,9 @@ export interface QuoteCheckInput {
   quote: NormalizedQuote;
   expectedTokenAddress: string;
   expectedWrapper: NormalizedQuote["wrapper"];
-  referencePricePerShare: string;
-  lastPoolPricePerShare: string | null;
+  usReferencePricePerShare: string;
+  realPricePerShare: string | null;
+  realPriceAgeSeconds: number | null;
   marketOpen: boolean;
   maxPriceImpactPct: string;
   checkedAtMs: number;
@@ -76,7 +77,9 @@ function result(
               impactPct: quote.priceImpactPct,
               limitPct: limitPct ?? "unknown"
             })
-          : null;
+          : code === "REAL_PRICE_UNAVAILABLE"
+            ? refusal("REAL_PRICE_UNAVAILABLE", { ticker })
+            : null;
   return { result: check, refusal: checkRefusal };
 }
 
@@ -161,6 +164,27 @@ export function checkQuote(input: QuoteCheckInput): QuoteCheckOutput {
     );
   }
 
+  if (
+    !input.marketOpen &&
+    (input.realPricePerShare === null ||
+      input.realPriceAgeSeconds === null ||
+      !Number.isFinite(input.realPriceAgeSeconds) ||
+      input.realPriceAgeSeconds < 0 ||
+      input.realPriceAgeSeconds > 120)
+  ) {
+    return result(
+      input.ticker,
+      quote,
+      false,
+      "REAL_PRICE_UNAVAILABLE",
+      "The 24/7 price is missing or older than 120 seconds.",
+      null,
+      null,
+      null,
+      null
+    );
+  }
+
   const tokenAmount = positiveDecimal(
     quote.side === "buy" ? quote.outputAmount : quote.inputAmount,
     "quote token amount"
@@ -175,7 +199,7 @@ export function checkQuote(input: QuoteCheckInput): QuoteCheckOutput {
   const maxImpact = positiveDecimal(input.maxPriceImpactPct, "maximum price impact");
   const implied = cashAmount.div(tokenAmount.mul(multiplier));
   const reference = positiveDecimal(
-    input.marketOpen ? input.referencePricePerShare : (input.lastPoolPricePerShare ?? ""),
+    input.marketOpen ? input.usReferencePricePerShare : (input.realPricePerShare ?? ""),
     "reference price"
   );
   const deviation = implied.minus(reference).abs().div(reference).mul(100);

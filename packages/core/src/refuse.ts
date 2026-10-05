@@ -5,6 +5,8 @@ export const refusalCodes = [
   "TRADING_RESTRICTED",
   "POOL_TOO_THIN",
   "IMPACT_TOO_HIGH",
+  "PRICE_OFF_REAL",
+  "REAL_PRICE_UNAVAILABLE",
   "QUOTE_REJECTED",
   "QUOTE_STALE",
   "SIM_FAILED",
@@ -13,8 +15,10 @@ export const refusalCodes = [
   "AUDIT_UNAVAILABLE",
   "QUOTA_LOW",
   "TOKEN_NOT_ALLOWED",
+  "PERMISSION_EXPIRED",
   "SESSION_EXPIRING",
   "SESSION_LOST",
+  "CONDITION_NOT_MET",
   "NO_CONSENSUS",
   "EPS_BASIS_MISMATCH",
   "EXTRACT_UNVERIFIED",
@@ -37,6 +41,7 @@ export interface RefusalDetails {
   quotaLeftUsd?: string;
   quotaNeededUsd?: string;
   sessionEndsAt?: string;
+  gapPct?: string;
 }
 
 function required(details: RefusalDetails, field: keyof RefusalDetails): string {
@@ -61,7 +66,13 @@ export function refusal(code: RefusalCode, details: RefusalDetails): Refusal {
       sentence = `The ${t} pool holds $${required(details, "currentUsd")}; your plan needs at least $${required(details, "neededUsd")}.`;
       break;
     case "IMPACT_TOO_HIGH":
-      sentence = `Selling now would move the price ${required(details, "impactPct")}%; your limit is ${required(details, "limitPct")}%.`;
+      sentence = `Trading now would move the price ${required(details, "impactPct")}%; your limit is ${required(details, "limitPct")}%.`;
+      break;
+    case "PRICE_OFF_REAL":
+      sentence = `The token is ${required(details, "gapPct")}% away from the real price; your limit is ${required(details, "limitPct")}%.`;
+      break;
+    case "REAL_PRICE_UNAVAILABLE":
+      sentence = "We can't see the real price right now, so no trade.";
       break;
     case "QUOTE_REJECTED":
       sentence = `The price quote didn't make sense (${required(details, "actualPrice")} vs reference ${required(details, "referencePrice")}); no trade.`;
@@ -82,16 +93,22 @@ export function refusal(code: RefusalCode, details: RefusalDetails): Refusal {
       sentence = "The security check is unavailable, so no trade.";
       break;
     case "QUOTA_LOW":
-      sentence = `Your Binance App daily limit has $${required(details, "quotaLeftUsd")} left; this plan needs $${required(details, "quotaNeededUsd")}.`;
+      sentence = `Your limit has $${required(details, "quotaLeftUsd")} left; this plan needs $${required(details, "quotaNeededUsd")}.`;
       break;
     case "TOKEN_NOT_ALLOWED":
-      sentence = `Your Binance App settings don't allow trading ${t}.`;
+      sentence = `Your settings don't allow trading ${t}.`;
+      break;
+    case "PERMISSION_EXPIRED":
+      sentence = "Your permission for this plan has ended; nothing was traded.";
       break;
     case "SESSION_EXPIRING":
       sentence = `Your wallet session ends at ${required(details, "sessionEndsAt")}; please sign in again.`;
       break;
     case "SESSION_LOST":
       sentence = "Your wallet was signed out; nothing was traded.";
+      break;
+    case "CONDITION_NOT_MET":
+      sentence = "The price never reached your trigger, so nothing was done.";
       break;
     case "NO_CONSENSUS":
       sentence = "Too few analyst estimates to measure a surprise.";

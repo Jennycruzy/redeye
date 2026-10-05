@@ -1,14 +1,17 @@
 import type { Wrapper } from "@redeye/shared";
 
-export type EventKind = "earnings" | "scheduled_report" | "material_filing";
-export type PlanKind = "protect" | "hold" | "react";
+export type EventKind =
+  "overnight" | "weekend" | "holiday" | "earnings" | "scheduled_report" | "material_filing";
+export type PlanKind = "guard" | "buy_dip" | "protect" | "hold" | "react";
 export type DecisionAction = "sell" | "buy" | "hold" | "none";
 export type TradeDirection = "sell-only" | "buy-only" | "both";
 
 export interface EventContext {
   ticker: string;
   kind: EventKind;
-  releaseTs: number;
+  lockTs: number;
+  openTs: number;
+  releaseTs: number | null;
   consensus: {
     eps: string;
     basis: string;
@@ -35,6 +38,8 @@ export interface PlanContext {
     sellPct?: string;
     sellAtMs?: number;
     maxUsd?: string;
+    triggerDropPct?: string;
+    maxGapToRealPricePct?: string;
     surpriseThresholdPct?: string;
     unpricedThresholdPct?: string;
     direction?: TradeDirection;
@@ -76,7 +81,7 @@ export interface NormalizedQuote {
 export interface QuoteCheckResult {
   quoteId: string;
   passed: boolean;
-  code: "QUOTE_REJECTED" | "QUOTE_STALE" | "IMPACT_TOO_HIGH" | null;
+  code: "QUOTE_REJECTED" | "QUOTE_STALE" | "IMPACT_TOO_HIGH" | "REAL_PRICE_UNAVAILABLE" | null;
   reason: string;
   impliedPricePerShare: string | null;
   referencePricePerShare: string | null;
@@ -97,6 +102,22 @@ export interface Decision {
   refusal: Refusal | null;
 }
 
+export interface DecisionPrices {
+  C: string;
+  P: string | null;
+  T: string;
+  sources: {
+    C: string;
+    P: string | null;
+    T: string;
+  };
+  ages: {
+    C: number;
+    P: number | null;
+    T: number;
+  };
+}
+
 export interface DecisionInput {
   plan: PlanContext;
   event: EventContext;
@@ -108,5 +129,5 @@ export interface DecisionInput {
   poolDepthUsd: string;
   atMs: number;
   executionEnabled: boolean;
-  onChainMoveSinceReleasePct?: string;
+  prices: DecisionPrices;
 }

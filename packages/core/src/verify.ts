@@ -27,9 +27,9 @@ export function verifyReceipt(receipt: ReceiptBundle): ReceiptVerification {
   );
   if (eventKey !== receipt.event.eventKey)
     errors.push("eventKey does not match ticker, kind and expected date.");
-  if (receipt.event.releaseTs === null) errors.push("event releaseTs is missing.");
-  if (receipt.event.releaseTs !== null && receipt.freezeBlockTs >= receipt.event.releaseTs) {
-    errors.push("freeze block time is not before the earliest release source.");
+  if (receipt.event.lockTs === null) errors.push("event lockTs is missing.");
+  if (receipt.event.lockTs !== null && receipt.freezeBlockTs >= receipt.event.lockTs) {
+    errors.push("freeze block time is not before the event lock time.");
   }
   const planForHash = { ...receipt.plan, planId: null };
   const planHash = hashCanonical(planForHash);
@@ -58,8 +58,11 @@ export function verifyReceipt(receipt: ReceiptBundle): ReceiptVerification {
       errors.push(error instanceof Error ? error.message : String(error));
     }
   }
-  if (receipt.verdict.outcome === "kept" && receipt.fills.length === 0) {
-    errors.push("a kept receipt must include at least one confirmed fill.");
+  const hasTradeDecision = receipt.decisions.some(
+    ({ decision }) => decision.action === "buy" || decision.action === "sell"
+  );
+  if (receipt.verdict.outcome === "kept" && hasTradeDecision && receipt.fills.length === 0) {
+    errors.push("a kept trade receipt must include at least one confirmed fill.");
   }
   return {
     valid: errors.length === 0,

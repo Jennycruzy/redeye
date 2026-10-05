@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { createEventRecord, earliestPublicSourceMs, freezeIsBeforeRelease } from "./events.js";
+import {
+  createEventRecord,
+  createWindowRecord,
+  earliestPublicSourceMs,
+  freezeIsBeforeLock,
+  freezeIsBeforeRelease
+} from "./events.js";
 
 const sources = [
   {
@@ -58,5 +64,19 @@ describe("source-backed events", () => {
     });
     expect(freezeIsBeforeRelease(Date.parse("2026-08-26T20:19:59.000Z"), event)).toBe(true);
     expect(freezeIsBeforeRelease(Date.parse("2026-08-26T20:20:00.000Z"), event)).toBe(false);
+  });
+
+  it("creates off-hours windows without an issuer or a release source", () => {
+    const closeTs = Date.parse("2026-10-09T20:00:00.000Z");
+    const openTs = Date.parse("2026-10-12T13:30:00.000Z");
+    const event = createWindowRecord("weekend", "NVDA", closeTs, openTs);
+
+    expect(event.issuerCik).toBeNull();
+    expect(event.releaseTs).toBeNull();
+    expect(event.lockTs).toBe(closeTs);
+    expect(event.openTs).toBe(openTs);
+    expect(event.eventKey).toBeDefined();
+    expect(freezeIsBeforeLock(closeTs - 1, event)).toBe(true);
+    expect(freezeIsBeforeLock(closeTs, event)).toBe(false);
   });
 });
