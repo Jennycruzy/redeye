@@ -1,5 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -96,7 +95,8 @@ async function requestJson(name, url, options = {}) {
 
 function extractTopLevelKeys(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return [];
-  return Object.keys(body).sort();
+  const keys = Object.keys(body).sort();
+  return keys.length > 40 ? [...keys.slice(0, 40), `...${keys.length - 40} more`] : keys;
 }
 
 function summarize(result, extra = {}) {
@@ -141,7 +141,7 @@ async function run() {
     report.skipped.push({ name: "network", reason: "status-only mode" });
   } else {
     const rwaListUrl = "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/rwa/stock/detail/list/ai?type=3";
-    const marketStatusUrl = "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/rwa/market/status/ai";
+    const marketStatusUrl = "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/rwa/market/status/ai";
     const nasdaqUrl = `https://api.nasdaq.com/api/calendar/earnings?date=${encodeURIComponent(date)}`;
     const secTickerUrl = "https://www.sec.gov/files/company_tickers.json";
     const geckoUrl = "https://api.geckoterminal.com/api/v2/networks/bsc/pools";
@@ -149,7 +149,9 @@ async function run() {
 
     const [rwaList, marketStatus, nasdaq, secTicker, gecko, b402] = await Promise.all([
       requestJson("binance-rwa-bstock-list", rwaListUrl),
-      requestJson("binance-rwa-market-status", marketStatusUrl),
+      requestJson("binance-rwa-market-status", marketStatusUrl, {
+        headers: { "accept-encoding": "identity", "user-agent": "binance-web3/1.1 (Skill)" }
+      }),
       requestJson("nasdaq-earnings-calendar", nasdaqUrl, {
         headers: { "user-agent": "Mozilla/5.0 Redeye-M0/0.1" }
       }),
@@ -223,4 +225,3 @@ run().catch(async (error) => {
   console.error(JSON.stringify(failure, null, 2));
   process.exitCode = 1;
 });
-
