@@ -6,6 +6,7 @@ import { verifyExtractedReport } from "./extract.js";
 import { assertValidPlan, validatePlan } from "./plan-validation.js";
 import { checkQuote } from "./quote-check.js";
 import { hashDecision, hashPlan, hashVerdict, makeEventKey } from "./receipt.js";
+import { verifyReceipt } from "./verify.js";
 import { refusal } from "./refuse.js";
 import type {
   DecisionInput,
@@ -419,5 +420,58 @@ describe("v1.5 proof rules", () => {
       false
     );
     expect(() => assertClaimAllowed("x402", {})).toThrow("lacks the required evidence");
+  });
+
+  it("verifies the lead-story receipt hashes and freeze ordering", () => {
+    const eventRecord = {
+      v: 1 as const,
+      eventKey: makeEventKey("NVDA", "earnings", "2026-08-26"),
+      ticker: "NVDA",
+      kind: "earnings" as const,
+      issuerCik: "0001045810",
+      expectedDate: "2026-08-26",
+      sources: [
+        {
+          name: "edgar",
+          form: "8-K",
+          seenAt: "2026-08-26T20:20:00.000Z",
+          fetchedAt: "2026-08-26T20:20:01.000Z",
+          recordPath: "raw/sec/2026-08-26/release.json"
+        }
+      ],
+      releaseTs: Date.parse("2026-08-26T20:20:00.000Z"),
+      consensus: null
+    };
+    const decision = {
+      action: "hold" as const,
+      size: {},
+      wrapper: "bStock" as const,
+      reason: "Hold",
+      refusal: null
+    };
+    const input = { source: "fixture" };
+    const verdict = { outcome: "refused" as const, reason: "No action required." };
+    const receipt = {
+      v: 1 as const,
+      event: eventRecord,
+      plan: { ...plan(), planId: null },
+      planHash: hashPlan(plan()),
+      freezeTx: `0x${"1".repeat(64)}` as `0x${string}`,
+      freezeBlockTs: Date.parse("2026-08-26T20:19:59.000Z"),
+      decisions: [
+        {
+          at: Date.parse("2026-08-26T20:20:02.000Z"),
+          input,
+          decision,
+          decisionHash: hashDecision(input, decision)
+        }
+      ],
+      fills: [],
+      verdict,
+      verdictHash: hashVerdict(verdict)
+    };
+    const verified = verifyReceipt(receipt);
+    expect(verified.valid).toBe(true);
+    expect(verified.errors).toEqual([]);
   });
 });

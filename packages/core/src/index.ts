@@ -1,6 +1,7 @@
 export * from "./canonical.js";
 export * from "./claims.js";
 export * from "./decide.js";
+export * from "./events.js";
 export * from "./extract.js";
 export * from "./plan-validation.js";
 export * from "./quote-check.js";
@@ -8,3 +9,4 @@ export * from "./receipt.js";
 export * from "./refuse.js";
 export * from "./session.js";
 export * from "./types.js";
+export * from "./verify.js";

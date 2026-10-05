@@ -1,6 +1,7 @@
 import { encodePacked, keccak256 } from "viem";
-import type { Decision, EventContext, PlanContext } from "./types.js";
 import { hashCanonical } from "./canonical.js";
+import type { Decision, EventKind, PlanContext } from "./types.js";
+import type { EventRecord } from "./events.js";
 
 export interface ReceiptSource {
   name: string;
@@ -24,22 +25,18 @@ export interface ReceiptFill {
 
 export interface ReceiptBundle {
   v: 1;
-  event: EventContext & { eventKey: `0x${string}`; sources: ReceiptSource[] };
+  event: EventRecord;
   plan: PlanContext & { planId: number | null };
   planHash: `0x${string}`;
   freezeTx: `0x${string}`;
   freezeBlockTs: number;
-  decisions: Array<{ at: number; decision: Decision; decisionHash: `0x${string}` }>;
+  decisions: Array<{ at: number; input: unknown; decision: Decision; decisionHash: `0x${string}` }>;
   fills: ReceiptFill[];
   verdict: ReceiptVerdict;
   verdictHash: `0x${string}`;
 }
 
-export function makeEventKey(
-  ticker: string,
-  kind: EventContext["kind"],
-  releaseDate: string
-): `0x${string}` {
+export function makeEventKey(ticker: string, kind: EventKind, releaseDate: string): `0x${string}` {
   if (!/^[A-Z][A-Z0-9.-]{0,14}$/.test(ticker)) throw new Error("Event ticker must be uppercase.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(releaseDate))
     throw new Error("Event release date must be YYYY-MM-DD.");
@@ -47,7 +44,7 @@ export function makeEventKey(
 }
 
 export function hashPlan(plan: PlanContext): `0x${string}` {
-  return hashCanonical(plan);
+  return hashCanonical({ ...plan, planId: null });
 }
 
 export function hashDecision(input: unknown, decision: Decision): `0x${string}` {

@@ -49,6 +49,8 @@ The contract test suite is offline and does not deploy or move funds. Mainnet
 deployment, wallet execution, the filing feed, the web app and Agent Studio
 evidence are not represented as complete yet.
 
+Receipt verification instructions are in [`docs/verification.md`](docs/verification.md).
+
 M0 still validates endpoint reachability, response shape, source timestamps and
 local prerequisites before implementation depends on external behavior. Findings
 belong in [`docs/dx-log.md`](docs/dx-log.md).
