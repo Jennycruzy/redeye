@@ -9,7 +9,7 @@ interface Vm {
 }
 
 contract PlanBookTest {
-    Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Vm private constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     address private owner = address(0x1001);
     address private agent = address(0x1002);
@@ -24,7 +24,7 @@ contract PlanBookTest {
     }
 
     function _freeze(PlanBook book, bytes32 key) private returns (uint256 id) {
-        vm.prank(agent);
+        VM.prank(agent);
         id = book.freezePlan(user, key, planHash, "NVDA", uint64(block.timestamp + 1 days), 7);
     }
 
@@ -36,11 +36,11 @@ contract PlanBookTest {
         PlanBook book = _book();
         uint256 id = _freeze(book, eventKey);
 
-        vm.prank(agent);
+        VM.prank(agent);
         book.recordDecision(id, decisionHash);
-        vm.prank(agent);
+        VM.prank(agent);
         book.recordFill(id, bytes32(uint256(1)), 1);
-        vm.prank(agent);
+        VM.prank(agent);
         book.recordVerdict(id, 1, verdictHash);
 
         (uint256 kept, uint256 refused, uint256 broken, uint256 cancelled, uint256 open) = book.counts();
@@ -51,7 +51,7 @@ contract PlanBookTest {
         PlanBook book = _book();
         uint256 id = _freeze(book, eventKey);
 
-        vm.prank(agent);
+        VM.prank(agent);
         book.recordVerdict(id, 2, verdictHash);
 
         (, uint256 refused,,,) = book.counts();
@@ -63,7 +63,7 @@ contract PlanBookTest {
         _freeze(book, eventKey);
 
         bool reverted;
-        vm.prank(agent);
+        VM.prank(agent);
         try book.freezePlan(user, eventKey, planHash, "NVDA", uint64(block.timestamp + 1 days), 8) {
             reverted = false;
         } catch {
@@ -74,10 +74,10 @@ contract PlanBookTest {
 
     function testFreezeAfterReleaseReverts() external {
         PlanBook book = _book();
-        vm.warp(1000);
+        VM.warp(1000);
 
         bool reverted;
-        vm.prank(agent);
+        VM.prank(agent);
         try book.freezePlan(user, eventKey, planHash, "NVDA", 1000, 7) {
             reverted = false;
         } catch {
@@ -97,7 +97,7 @@ contract PlanBookTest {
         _assert(reverted, "non-agent wrote plan");
 
         address nextAgent = address(0x1004);
-        vm.prank(owner);
+        VM.prank(owner);
         book.setAgent(nextAgent);
         _assert(book.agent() == nextAgent, "agent did not rotate");
     }
@@ -106,7 +106,7 @@ contract PlanBookTest {
         PlanBook book = _book();
         uint256 id = _freeze(book, eventKey);
 
-        vm.prank(agent);
+        VM.prank(agent);
         book.cancelPlan(id);
         (,,, uint256 cancelled, uint256 open) = book.counts();
         _assert(cancelled == 1 && open == 0, "cancel not counted");

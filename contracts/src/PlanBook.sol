@@ -65,13 +65,21 @@ contract PlanBook {
     }
 
     modifier onlyOwner() {
-        if (msg.sender != owner) revert NotOwner();
+        _onlyOwner();
         _;
     }
 
     modifier onlyAgent() {
-        if (msg.sender != agent) revert NotAgent();
+        _onlyAgent();
         _;
+    }
+
+    function _onlyOwner() internal view {
+        if (msg.sender != owner) revert NotOwner();
+    }
+
+    function _onlyAgent() internal view {
+        if (msg.sender != agent) revert NotAgent();
     }
 
     function setAgent(address newAgent) external onlyOwner {
@@ -93,7 +101,7 @@ contract PlanBook {
         if (bytes(ticker).length == 0) revert EmptyTicker();
         if (block.timestamp >= releaseTs) revert ReleaseAlreadyStarted();
 
-        bytes32 uniqueKey = keccak256(abi.encode(planOwner, eventKey));
+        bytes32 uniqueKey = keccak256(abi.encodePacked(planOwner, eventKey));
         if (planForOwnerAndEvent[uniqueKey] != 0) revert DuplicatePlan();
 
         planId = nextPlanId++;
@@ -167,7 +175,7 @@ contract PlanBook {
     }
 
     function planIdFor(address planOwner, bytes32 eventKey) external view returns (uint256) {
-        return planForOwnerAndEvent[keccak256(abi.encode(planOwner, eventKey))];
+        return planForOwnerAndEvent[keccak256(abi.encodePacked(planOwner, eventKey))];
     }
 
     function _plan(uint256 planId) internal view returns (Plan storage plan) {
