@@ -1,0 +1,185 @@
+import type { AgentApiConfig, AgentRequest, AgentResponse, AgentStore } from "./types.js";
+import { StoreError } from "./sqlite-store.js";
+
+function json(status: number, body: unknown, config: AgentApiConfig): AgentResponse {
+  return {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      "access-control-allow-origin": config.siteOrigin,
+      "access-control-allow-headers": "content-type, authorization, x-owner-token",
+      "access-control-allow-methods": "GET, POST, OPTIONS"
+    },
+    body
+  };
+}
+
+function error(
+  status: number,
+  code: string,
+  reason: string,
+  config: AgentApiConfig
+): AgentResponse {
+  return json(status, { error: { code, reason } }, config);
+}
+
+function pathParts(pathname: string): string[] {
+  return pathname
+    .split("/")
+    .filter((part) => part.length > 0)
+    .map((part) => decodeURIComponent(part));
+}
+
+function ownerAuthorized(request: AgentRequest, config: AgentApiConfig): boolean {
+  const bearer = request.headers.get("authorization");
+  const token = request.headers.get("x-owner-token");
+  return token === config.ownerToken || bearer === `Bearer ${config.ownerToken}`;
+}
+
+function writeRoute(request: AgentRequest): boolean {
+  return request.method === "POST";
+}
+
+export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
+  if (config.ownerToken.trim().length === 0)
+    throw new Error("Agent API ownerToken must not be empty.");
+  if (config.siteOrigin.trim().length === 0)
+    throw new Error("Agent API siteOrigin must not be empty.");
+
+  return async function handle(request: AgentRequest): Promise<AgentResponse> {
+    if (request.method === "OPTIONS") return json(204, null, config);
+    const parts = pathParts(request.pathname);
+    const [root, id, tail] = parts;
+    try {
+      if (request.method === "GET" && root === "health" && parts.length === 1)
+        return json(200, await store.health(), config);
+      if (request.method === "GET" && root === "calendar" && parts.length === 1) {
+        const rawDays = request.query.get("days") ?? "21";
+        const days = Number(rawDays);
+        if (!Number.isInteger(days) || days < 1 || days > 31)
+          return error(400, "INVALID_DAYS", "days must be an integer from 1 to 31.", config);
+        return json(200, await store.calendar(days), config);
+      }
+      if (request.method === "GET" && root === "feed" && parts.length === 1)
+        return json(200, await store.feed(request.query.get("since")), config);
+      if (request.method === "GET" && root === "tokens" && id !== undefined && parts.length === 2)
+        return json(200, await store.token(id), config);
+      if (request.method === "GET" && root === "history" && id !== undefined && parts.length === 2)
+        return json(200, await store.history(id), config);
+      if (request.method === "GET" && root === "record" && parts.length === 1)
+        return json(200, await store.record(), config);
+      if (request.method === "GET" && root === "wallet" && parts.length === 1)
+        return json(200, await store.wallet(), config);
+      if (request.method === "GET" && root === "plans" && id !== undefined && parts.length === 2)
+        return json(200, await store.planGet(id), config);
+      if (
+        request.method === "GET" &&
+        root === "runs" &&
+        id !== undefined &&
+        tail === undefined &&
+        parts.length === 2
+      )
+        return json(200, await store.run(id), config);
+      if (
+        request.method === "GET" &&
+        root === "runs" &&
+        id !== undefined &&
+        tail === "events" &&
+        parts.length === 3
+      )
+        return json(200, await store.runEvents(id), config);
+      if (
+        request.method === "GET" &&
+        root === "runs" &&
+        id !== undefined &&
+        tail === "receipt" &&
+        parts.length === 3
+      )
+        return json(200, await store.receipt(id), config);
+      if (request.method === "POST" && root === "replay" && parts.length === 1) {
+        if (!ownerAuthorized(request, config))
+          return error(
+            401,
+            "OWNER_AUTH_REQUIRED",
+            "This action needs the agent owner token.",
+            config
+          );
+        return json(201, await store.replay(request.body), config);
+      }
+      if (request.method === "POST" && root === "auth" && id === "signin" && parts.length === 2) {
+        if (!ownerAuthorized(request, config))
+          return error(
+            401,
+            "OWNER_AUTH_REQUIRED",
+            "This action needs the agent owner token.",
+            config
+          );
+        return json(200, await store.authSignin(request.body), config);
+      }
+      if (
+        request.method === "GET" &&
+        root === "auth" &&
+        id === "verify" &&
+        tail !== undefined &&
+        parts.length === 3
+      ) {
+        if (!ownerAuthorized(request, config))
+          return error(
+            401,
+            "OWNER_AUTH_REQUIRED",
+            "This action needs the agent owner token.",
+            config
+          );
+        return json(200, await store.authVerify(tail), config);
+      }
+      if (request.method === "POST" && root === "plans" && parts.length === 1) {
+        if (!ownerAuthorized(request, config))
+          return error(
+            401,
+            "OWNER_AUTH_REQUIRED",
+            "This action needs the agent owner token.",
+            config
+          );
+        return json(201, await store.planDraft(request.body), config);
+      }
+      if (
+        request.method === "POST" &&
+        root === "plans" &&
+        id !== undefined &&
+        tail !== undefined &&
+        parts.length === 3
+      ) {
+        if (!ownerAuthorized(request, config))
+          return error(
+            401,
+            "OWNER_AUTH_REQUIRED",
+            "This action needs the agent owner token.",
+            config
+          );
+        if (tail !== "freeze" && tail !== "cancel")
+          return error(
+            404,
+            "PLAN_ACTION_NOT_FOUND",
+            "The requested plan action does not exist.",
+            config
+          );
+        return json(200, await store.planAction(id, { action: tail, body: request.body }), config);
+      }
+      if (writeRoute(request))
+        return error(
+          404,
+          "WRITE_ROUTE_NOT_FOUND",
+          "The requested write route does not exist.",
+          config
+        );
+      return error(404, "NOT_FOUND", "The requested Redeye resource does not exist.", config);
+    } catch (caught) {
+      if (caught instanceof StoreError)
+        return error(caught.status, caught.code, caught.message, config);
+      const reason =
+        caught instanceof Error ? caught.message : "The agent store failed without a reason.";
+      return error(500, "STORE_ERROR", reason, config);
+    }
+  };
+}

@@ -28,6 +28,8 @@ The current implementation establishes the first proof slice:
 - verbatim filing-value verification;
 - canonical plan, decision and verdict hashes;
 - a no-custody PlanBook contract with uniqueness and lifecycle tests.
+- a typed agent HTTP boundary and Node 22 SQLite store with explicit empty and
+  unconfigured states.
 
 The central story is deliberately narrow: a plan must be frozen before its
 release, then end as a confirmed action or a visible refusal. Until a live plan
@@ -48,6 +50,11 @@ pnpm contract:test
 The contract test suite is offline and does not deploy or move funds. Mainnet
 deployment, wallet execution, the filing feed, the web app and Agent Studio
 evidence are not represented as complete yet.
+
+The agent process requires Node 22, `OWNER_API_TOKEN` and `WEB_ORIGIN`. Build it
+with `pnpm agent:build`; it will refuse to start if those values are absent. The
+wallet, filing feed and PlanBook write services are intentionally not wired into
+the store yet, so they return named errors instead of simulated success.
 
 Receipt verification instructions are in [`docs/verification.md`](docs/verification.md).
 

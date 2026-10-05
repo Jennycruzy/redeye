@@ -12,6 +12,8 @@
     "m0": "node scripts/m0/probe.mjs",
     "m0:status": "node scripts/m0/probe.mjs --status-only",
     "verify": "node scripts/verify-receipt.mjs",
+    "agent:build": "pnpm --filter @redeye/agent build",
+    "agent:start": "pnpm --filter @redeye/agent start",
     "contract:test": "forge test --root contracts --offline",
     "contract:build": "forge build --root contracts --offline",
     "test": "pnpm --recursive --if-present test",

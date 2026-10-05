@@ -6,6 +6,7 @@ import {
   callRpc,
   ClientError,
   parseBstockList,
+  parseAssetMarketStatus,
   parseEarningsCalendar,
   parseGeckoPool,
   parseMarketStatus,
@@ -30,6 +31,12 @@ describe("recorded source clients", () => {
     expect(tokens.every((token) => token.chainId === "56")).toBe(true);
   });
 
+  it("keeps wrapper identity explicit when parsing a typed RWA list", async () => {
+    const record = await fixture("binance/rwa-bstock-list.json");
+    const tokens = parseBstockList(record);
+    expect(tokens.every((token) => token.wrapper === "bStock")).toBe(true);
+  });
+
   it("parses market status and preserves off-hours data", async () => {
     const record = await fixture("binance/rwa-market-status.json");
     const status = parseMarketStatus(record);
@@ -37,6 +44,36 @@ describe("recorded source clients", () => {
     expect(status.marketStatus).toBe("regular");
     expect(status.offhours?.openState).toBe(false);
     expect(status.reasonCode).toBeNull();
+  });
+
+  it("preserves the bStock asset status shape with a null market status", () => {
+    const status = parseAssetMarketStatus({
+      v: 1,
+      fetchedAt: "2026-10-05T00:00:00.000Z",
+      completedAt: "2026-10-05T00:00:00.100Z",
+      request: { method: "GET", url: "https://example.invalid/status" },
+      response: {
+        status: 200,
+        ok: true,
+        body: {
+          success: true,
+          code: "000000",
+          data: {
+            chainId: "56",
+            contractAddress: "0x0000000000000000000000000000000000000001",
+            openState: null,
+            marketStatus: null,
+            reasonCode: "TRADING",
+            reasonMsg: null,
+            nextOpenTime: null,
+            nextCloseTime: null
+          }
+        }
+      }
+    });
+
+    expect(status.reasonCode).toBe("TRADING");
+    expect(status.marketStatus).toBeNull();
   });
 
   it("parses Nasdaq estimates without filling empty EPS values", async () => {

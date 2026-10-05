@@ -54,6 +54,17 @@ export interface RwaMarketStatus {
   };
 }
 
+export interface RwaAssetMarketStatus {
+  chainId: string;
+  contractAddress: string;
+  openState: boolean | null;
+  marketStatus: MarketStatusName | null;
+  reasonCode: string | null;
+  reasonMsg: string | null;
+  nextOpenTime: number | null;
+  nextCloseTime: number | null;
+}
+
 export interface NasdaqEarningsRow {
   symbol: string;
   name: string;

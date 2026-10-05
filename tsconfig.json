@@ -4,6 +4,7 @@
   "references": [
     { "path": "./packages/shared" },
     { "path": "./packages/clients" },
-    { "path": "./packages/core" }
+    { "path": "./packages/core" },
+    { "path": "./apps/agent" }
   ]
 }

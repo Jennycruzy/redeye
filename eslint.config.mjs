@@ -3,7 +3,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["data/raw/**", "dist/**", "coverage/**", "node_modules/**"]
+    ignores: ["data/raw/**", "**/dist/**", "coverage/**", "node_modules/**"]
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,

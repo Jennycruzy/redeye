@@ -1,11 +1,29 @@
-import type { RwaMarketStatus, RwaToken, SourceRecord } from "@redeye/shared";
+import {
+  marketStatuses,
+  type RwaAssetMarketStatus,
+  type RwaMarketStatus,
+  type RwaToken,
+  type SourceRecord,
+  type Wrapper
+} from "@redeye/shared";
 import { ClientError } from "./errors.js";
 import { requestJson } from "./http.js";
 
-export const BINANCE_RWA_BSTOCK_LIST_URL =
-  "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/rwa/stock/detail/list/ai?type=3";
+export const BINANCE_RWA_LIST_URL =
+  "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/rwa/stock/detail/list/ai";
+export const BINANCE_RWA_BSTOCK_LIST_URL = `${BINANCE_RWA_LIST_URL}?type=3`;
 export const BINANCE_RWA_MARKET_STATUS_URL =
   "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/rwa/market/status/ai";
+export const BINANCE_RWA_ASSET_STATUS_URL =
+  "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/rwa/asset/market/status/ai";
+
+export type RwaListType = 1 | 2 | 3;
+
+function wrapperForType(type: RwaListType): Wrapper {
+  if (type === 1) return "Ondo";
+  if (type === 2) return "xStock";
+  return "bStock";
+}
 
 type JsonObject = Record<string, unknown>;
 
@@ -57,9 +75,23 @@ function parseMultiplier(value: unknown, field: string): string {
   return multiplier;
 }
 
-export function parseBstockList(record: SourceRecord<unknown>): RwaToken[] {
+function parseMarketStatusName(value: unknown, field: string): RwaMarketStatus["marketStatus"] {
+  if (value === null) return null;
+  if (
+    typeof value !== "string" ||
+    !marketStatuses.includes(value as (typeof marketStatuses)[number])
+  ) {
+    throw new ClientError("shape", `Invalid market status in ${field}.`, { field, value });
+  }
+  return value as RwaMarketStatus["marketStatus"];
+}
+
+export function parseRwaList(record: SourceRecord<unknown>, type: RwaListType): RwaToken[] {
+  if (type !== 1 && type !== 2 && type !== 3) {
+    throw new ClientError("shape", "Binance RWA list type must be 1, 2 or 3.", { type });
+  }
   const body = record.response.body;
-  assertBusinessSuccess(body, "Binance bStock list");
+  assertBusinessSuccess(body, `Binance ${wrapperForType(type)} list`);
   if (!Array.isArray(body.data)) {
     throw new ClientError("shape", "Binance bStock list data is not an array.");
   }
@@ -68,9 +100,13 @@ export function parseBstockList(record: SourceRecord<unknown>): RwaToken[] {
     if (!isObject(value)) {
       throw new ClientError("shape", "Binance bStock row is not an object.", { index });
     }
-    const type = requiredNumber(value.type, `data[${index}].type`);
-    if (type !== 3) {
-      throw new ClientError("shape", "Binance bStock row has an unexpected type.", { index, type });
+    const rowType = requiredNumber(value.type, `data[${index}].type`);
+    if (rowType !== type) {
+      throw new ClientError("shape", "Binance RWA row has an unexpected type.", {
+        index,
+        rowType,
+        expectedType: type
+      });
     }
     const decimals = requiredNumber(value.d, `data[${index}].d`);
     if (!Number.isInteger(decimals) || decimals < 0) {
@@ -84,11 +120,15 @@ export function parseBstockList(record: SourceRecord<unknown>): RwaToken[] {
       contractAddress: parseAddress(value.contractAddress, `data[${index}].contractAddress`),
       symbol: requiredString(value.symbol, `data[${index}].symbol`),
       ticker: requiredString(value.ticker, `data[${index}].ticker`),
-      wrapper: "bStock",
+      wrapper: wrapperForType(type),
       multiplier: parseMultiplier(value.multiplier, `data[${index}].multiplier`),
       decimals
     } satisfies RwaToken;
   });
+}
+
+export function parseBstockList(record: SourceRecord<unknown>): RwaToken[] {
+  return parseRwaList(record, 3);
 }
 
 function parseNullableString(value: unknown, field: string): string | null {
@@ -111,14 +151,9 @@ export function parseMarketStatus(record: SourceRecord<unknown>): RwaMarketStatu
   if (typeof data.openState !== "boolean") {
     throw new ClientError("shape", "Binance RWA market status openState is missing or invalid.");
   }
-  const marketStatus = data.marketStatus;
-  if (marketStatus !== null && typeof marketStatus !== "string") {
-    throw new ClientError("shape", "Binance RWA market status marketStatus is invalid.");
-  }
-
   const parsed: RwaMarketStatus = {
     openState: data.openState,
-    marketStatus: marketStatus as RwaMarketStatus["marketStatus"],
+    marketStatus: parseMarketStatusName(data.marketStatus, "data.marketStatus"),
     reasonCode: parseNullableString(data.reasonCode, "data.reasonCode"),
     reasonMsg: parseNullableString(data.reasonMsg, "data.reasonMsg"),
     nextOpenTime: parseNullableNumber(data.nextOpenTime, "data.nextOpenTime"),
@@ -139,12 +174,52 @@ export function parseMarketStatus(record: SourceRecord<unknown>): RwaMarketStatu
   return parsed;
 }
 
+export function parseAssetMarketStatus(record: SourceRecord<unknown>): RwaAssetMarketStatus {
+  const body = record.response.body;
+  assertBusinessSuccess(body, "Binance RWA asset market status");
+  if (!isObject(body.data)) {
+    throw new ClientError("shape", "Binance RWA asset market status data is not an object.");
+  }
+  const data = body.data;
+  const chainId = requiredString(data.chainId, "data.chainId");
+  const contractAddress = parseAddress(data.contractAddress, "data.contractAddress");
+  const openState = data.openState;
+  if (openState !== null && typeof openState !== "boolean") {
+    throw new ClientError("shape", "Binance RWA asset market status openState is invalid.");
+  }
+  return {
+    chainId,
+    contractAddress,
+    openState,
+    marketStatus: parseMarketStatusName(data.marketStatus, "data.marketStatus"),
+    reasonCode: parseNullableString(data.reasonCode, "data.reasonCode"),
+    reasonMsg: parseNullableString(data.reasonMsg, "data.reasonMsg"),
+    nextOpenTime: parseNullableNumber(data.nextOpenTime, "data.nextOpenTime"),
+    nextCloseTime: parseNullableNumber(data.nextCloseTime, "data.nextCloseTime")
+  } satisfies RwaAssetMarketStatus;
+}
+
 export async function fetchBstockList(): Promise<SourceRecord<unknown>> {
-  return requestJson<unknown>(BINANCE_RWA_BSTOCK_LIST_URL);
+  return fetchRwaList(3);
+}
+
+export async function fetchRwaList(type: RwaListType): Promise<SourceRecord<unknown>> {
+  return requestJson<unknown>(`${BINANCE_RWA_LIST_URL}?type=${type}`);
 }
 
 export async function fetchMarketStatus(): Promise<SourceRecord<unknown>> {
   return requestJson<unknown>(BINANCE_RWA_MARKET_STATUS_URL, {
     headers: { "accept-encoding": "identity", "user-agent": "binance-web3/1.1 (Skill)" }
   });
+}
+
+export async function fetchAssetMarketStatus(
+  chainId: string,
+  contractAddress: string
+): Promise<SourceRecord<unknown>> {
+  if (!/^\d+$/.test(chainId))
+    throw new ClientError("shape", "RWA chain id must be numeric.", { chainId });
+  const address = parseAddress(contractAddress, "contractAddress");
+  const query = new URLSearchParams({ chainId, contractAddress: address });
+  return requestJson<unknown>(`${BINANCE_RWA_ASSET_STATUS_URL}?${query.toString()}`);
 }
