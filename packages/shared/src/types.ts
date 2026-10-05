@@ -74,6 +74,30 @@ export interface NasdaqEarningsRow {
   fiscalQuarterEnding: string;
 }
 
+export interface XyzEquityPrice {
+  ticker: string;
+  coin: string;
+  midPrice: string | null;
+  markPrice: string;
+  price: string;
+  dayNotionalVolumeUsd: string;
+  fetchedAt: string;
+  source: string;
+}
+
+export interface XyzCandle {
+  coin: string;
+  interval: string;
+  openTimeMs: number;
+  closeTimeMs: number;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+  trades: number;
+}
+
 export interface SecFiling {
   cik: string;
   accessionNumber: string;

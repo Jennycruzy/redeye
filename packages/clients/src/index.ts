@@ -2,6 +2,7 @@ export * from "./edgar.js";
 export * from "./errors.js";
 export * from "./gecko.js";
 export * from "./http.js";
+export * from "./hyperliquid.js";
 export * from "./nasdaq.js";
 export * from "./raw-store.js";
 export * from "./rpc.js";

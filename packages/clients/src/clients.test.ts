@@ -10,7 +10,10 @@ import {
   parseEarningsCalendar,
   parseGeckoPool,
   parseMarketStatus,
+  parseXyzCandles,
+  parseXyzEquityPrices,
   parseSecSubmissions,
+  assertUsableXyzPrice,
   storeRawRecord
 } from "./index.js";
 
@@ -115,6 +118,72 @@ describe("recorded source clients", () => {
     expect(pool.address).toBe("0x172fcd41e0913e95784454622d1c3724f546f849");
     expect(pool.reserveUsd).toBe("13546025.6008");
     expect(pool.volume24hUsd).toBe("104444313.747797");
+  });
+
+  it("parses xyz equity prices and keeps the source and precise volume", async () => {
+    const record = await fixture("hyperliquid/xyz-equities-recorded-subset.json");
+    const prices = parseXyzEquityPrices(record);
+    const nvda = prices.find((price) => price.ticker === "NVDA");
+
+    expect(prices).toHaveLength(3);
+    expect(nvda).toMatchObject({
+      coin: "xyz:NVDA",
+      midPrice: "239.455",
+      markPrice: "239.47",
+      price: "239.455",
+      dayNotionalVolumeUsd: "56394452.6308300048",
+      source: "hyperliquid:xyz:NVDA"
+    });
+  });
+
+  it("falls back to the mark price when the xyz mid is missing", async () => {
+    const record = await fixture("hyperliquid/xyz-equities-recorded-subset.json");
+    const body = record.response.body as [
+      { universe: Array<Record<string, unknown>> },
+      Array<Record<string, unknown>>
+    ];
+    if (body[1][1]) body[1][1].midPx = null;
+
+    expect(parseXyzEquityPrices(record)[1]).toMatchObject({
+      midPrice: null,
+      markPrice: "239.47",
+      price: "239.47"
+    });
+  });
+
+  it("rejects stale xyz prices and prices in the wrong unit", async () => {
+    const record = await fixture("hyperliquid/xyz-equities-recorded-subset.json");
+    const nvda = parseXyzEquityPrices(record).find((price) => price.ticker === "NVDA");
+    expect(nvda).toBeDefined();
+    if (!nvda) return;
+
+    expect(assertUsableXyzPrice(nvda, "233.95", Date.parse("2026-10-05T22:41:54.000Z"))).toBe(nvda);
+    expect(() =>
+      assertUsableXyzPrice(nvda, "233.95", Date.parse("2026-10-05T22:41:55.000Z"))
+    ).toThrow("fresh fetch time");
+    expect(() =>
+      assertUsableXyzPrice(
+        { ...nvda, price: "100", midPrice: "100" },
+        "200",
+        Date.parse("2026-10-05T22:40:00.000Z")
+      )
+    ).toThrow("unit check");
+  });
+
+  it("parses recorded xyz candles without converting decimal fields", async () => {
+    const record = await fixture("hyperliquid/nvda-candles-2026-10-05.json");
+    const candles = parseXyzCandles(record);
+
+    expect(candles).toHaveLength(6);
+    expect(candles[0]).toMatchObject({
+      coin: "xyz:NVDA",
+      interval: "1m",
+      openTimeMs: 1791230400000,
+      open: "238.95",
+      close: "238.89",
+      volume: "686.573",
+      trades: 81
+    });
   });
 
   it("stores a raw source record below source and fetch date", async () => {

@@ -148,8 +148,9 @@ async function run() {
     const secTickerUrl = "https://www.sec.gov/files/company_tickers.json";
     const geckoUrl = "https://api.geckoterminal.com/api/v2/networks/bsc/pools";
     const b402Url = "https://web3.binance.com/build/api/v2/b402/supported";
+    const hyperliquidUrl = process.env.HYPERLIQUID_INFO_URL || "https://api.hyperliquid.xyz/info";
 
-    const [rwaList, marketStatus, nasdaq, secTicker, gecko, b402] = await Promise.all([
+    const [rwaList, marketStatus, nasdaq, secTicker, gecko, hyperliquid, b402] = await Promise.all([
       requestJson("binance-rwa-bstock-list", rwaListUrl),
       requestJson("binance-rwa-market-status", marketStatusUrl, {
         headers: { "accept-encoding": "identity", "user-agent": "binance-web3/1.1 (Skill)" }
@@ -161,6 +162,11 @@ async function run() {
         headers: { "user-agent": secUserAgent }
       }),
       requestJson("geckoterminal-bsc-pools", geckoUrl),
+      requestJson("hyperliquid-xyz-markets", hyperliquidUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "metaAndAssetCtxs", dex: "xyz" })
+      }),
       process.env.BINANCE_WEB3_API_KEY
         ? requestJson("binance-b402-supported", b402Url, {
             headers: { "X-OC-APIKEY": process.env.BINANCE_WEB3_API_KEY }
@@ -173,7 +179,12 @@ async function run() {
       summarize(marketStatus),
       summarize(nasdaq),
       summarize(secTicker),
-      summarize(gecko)
+      summarize(gecko),
+      summarize(hyperliquid, {
+        xyzAssetCount: Array.isArray(hyperliquid.body?.[0]?.universe)
+          ? hyperliquid.body[0].universe.length
+          : null
+      })
     );
     if (b402) report.probes.push(summarize(b402));
     else

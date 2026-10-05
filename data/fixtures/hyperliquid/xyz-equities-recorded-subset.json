@@ -1,0 +1,60 @@
+{
+  "v": 1,
+  "fetchedAt": "2026-10-05T22:39:54.000Z",
+  "completedAt": "2026-10-05T22:40:01.000Z",
+  "request": {
+    "method": "POST",
+    "url": "https://api.hyperliquid.xyz/info"
+  },
+  "response": {
+    "status": 200,
+    "ok": true,
+    "body": [
+      {
+        "universe": [
+          { "szDecimals": 3, "name": "xyz:TSLA", "maxLeverage": 20, "marginTableId": 20 },
+          { "szDecimals": 3, "name": "xyz:NVDA", "maxLeverage": 20, "marginTableId": 20 },
+          { "szDecimals": 2, "name": "xyz:INTC", "maxLeverage": 10, "marginTableId": 10 }
+        ]
+      },
+      [
+        {
+          "funding": "0.00000625",
+          "openInterest": "131083.402",
+          "prevDayPx": "372.83",
+          "dayNtlVlm": "36689131.7025199831",
+          "premium": "0.0003506644",
+          "oraclePx": "379.28",
+          "markPx": "379.4",
+          "midPx": "379.405",
+          "impactPxs": ["379.4", "379.426"],
+          "dayBaseVlm": "98222.6780000001"
+        },
+        {
+          "funding": "0.00000625",
+          "openInterest": "684313.0719999999",
+          "prevDayPx": "235.43",
+          "dayNtlVlm": "56394452.6308300048",
+          "premium": "-0.0000626383",
+          "oraclePx": "239.47",
+          "markPx": "239.47",
+          "midPx": "239.455",
+          "impactPxs": ["239.44", "239.47"],
+          "dayBaseVlm": "238097.482"
+        },
+        {
+          "funding": "0.00000625",
+          "openInterest": "583716.7999999999",
+          "prevDayPx": "118.07",
+          "dayNtlVlm": "54270255.3035999835",
+          "premium": "-0.0000283554",
+          "oraclePx": "116.38",
+          "markPx": "116.38",
+          "midPx": "116.375",
+          "impactPxs": ["116.3655", "116.3879"],
+          "dayBaseVlm": "465262.2900000004"
+        }
+      ]
+    ]
+  }
+}
