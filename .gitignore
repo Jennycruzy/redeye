@@ -1,0 +1,19 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+
+# Runtime evidence is generated locally and mirrored deliberately.
+data/raw/*
+!data/raw/.gitkeep
+data/derived/*
+!data/derived/.gitkeep
+
+# Local agent/runtime state
+.redeye/
+apps/agent/.state/
+
