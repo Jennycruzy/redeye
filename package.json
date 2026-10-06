@@ -9,8 +9,8 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "m0": "node scripts/m0/probe.mjs",
-    "m0:status": "node scripts/m0/probe.mjs --status-only",
+    "probe": "node scripts/probe.mjs",
+    "probe:status": "node scripts/probe.mjs --status-only",
     "verify": "node scripts/verify-receipt.mjs",
     "study:offhours": "node scripts/study/offhours.mjs",
     "study:offhours:test": "node --test scripts/study/offhours.test.mjs",

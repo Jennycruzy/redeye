@@ -1,16 +1,16 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadRepositoryEnv } from "../load-env.mjs";
+import { loadRepositoryEnv } from "./load-env.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(scriptDir, "../..");
+const repoRoot = resolve(scriptDir, "..");
 loadRepositoryEnv(repoRoot);
-const rawRoot = join(repoRoot, "data", "raw", "m0");
+const rawRoot = join(repoRoot, "data", "raw", "probes");
 const reportPath = join(rawRoot, "latest-report.json");
 
 const timeoutMs = 15_000;
-const date = process.env.M0_DATE || new Date().toISOString().slice(0, 10);
+const date = process.env.PROBE_DATE || new Date().toISOString().slice(0, 10);
 const rpcUrl = process.env.BSC_RPC_URL_LIVE || "https://bsc-dataseed.bnbchain.org";
 const secUserAgent = process.env.SEC_USER_AGENT?.trim() || null;
 
@@ -120,7 +120,7 @@ async function run() {
 
   const report = {
     v: 1,
-    kind: "m0_probe_report",
+    kind: "probe_report",
     startedAt: now(),
     date,
     executionEnabled: process.env.EXECUTION_ENABLED || "unset",
@@ -176,7 +176,7 @@ async function run() {
         headers: { "accept-encoding": "identity", "user-agent": "binance-web3/1.1 (Skill)" }
       }),
       requestJson("nasdaq-earnings-calendar", nasdaqUrl, {
-        headers: { "user-agent": "Mozilla/5.0 Redeye-M0/0.1" }
+        headers: { "user-agent": "Mozilla/5.0 Redeye/0.1" }
       }),
       secUserAgent
         ? requestJson("sec-company-tickers", secTickerUrl, {
@@ -240,13 +240,13 @@ async function run() {
     });
     report.probes.push(summarize(rpc, { expectedChainId: "0x38" }));
 
-    if (process.env.M0_POOL_ADDRESS) {
-      const poolUrl = `https://api.geckoterminal.com/api/v2/networks/bsc/pools/${encodeURIComponent(process.env.M0_POOL_ADDRESS)}`;
+    if (process.env.PROBE_POOL_ADDRESS) {
+      const poolUrl = `https://api.geckoterminal.com/api/v2/networks/bsc/pools/${encodeURIComponent(process.env.PROBE_POOL_ADDRESS)}`;
       report.probes.push(summarize(await requestJson("geckoterminal-configured-pool", poolUrl)));
     } else {
       report.skipped.push({
         name: "geckoterminal-configured-pool",
-        reason: "M0_POOL_ADDRESS is not set"
+        reason: "PROBE_POOL_ADDRESS is not set"
       });
     }
   }
@@ -289,7 +289,7 @@ async function run() {
 run().catch(async (error) => {
   const failure = {
     v: 1,
-    kind: "m0_probe_failure",
+    kind: "probe_failure",
     failedAt: now(),
     error: { name: error?.name || "Error", message: error?.message || String(error) }
   };
