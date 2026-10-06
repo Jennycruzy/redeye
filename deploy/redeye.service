@@ -1,0 +1,24 @@
+[Unit]
+Description=Redeye source-backed market service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/redeye
+EnvironmentFile=/home/ubuntu/redeye/.env
+ExecStart=/usr/bin/node /home/ubuntu/redeye/apps/agent/dist/main.js
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/redeye/.redeye /home/ubuntu/redeye/data
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
