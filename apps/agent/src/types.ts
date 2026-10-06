@@ -1,6 +1,8 @@
 export interface AgentStore {
   health(): Promise<unknown>;
   calendar(days: number): Promise<unknown>;
+  prices(tickers: string[]): Promise<unknown>;
+  windows(ticker: string): Promise<unknown>;
   feed(since: string | null): Promise<unknown>;
   token(ticker: string): Promise<unknown>;
   history(ticker: string): Promise<unknown>;

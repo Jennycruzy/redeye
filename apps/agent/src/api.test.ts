@@ -16,6 +16,8 @@ function store(): AgentStore {
   return {
     health: async () => ({ status: "ok", source: "fixture" }),
     calendar: async (days) => ({ days }),
+    prices: async (tickers) => ({ tickers }),
+    windows: async (ticker) => ({ ticker }),
     feed: async (since) => ({ since }),
     token: async (ticker) => ({ ticker }),
     history: async (ticker) => ({ ticker }),
@@ -72,6 +74,30 @@ describe("agent HTTP boundary", () => {
     expect(response.body).toEqual({
       error: { code: "INVALID_DAYS", reason: "days must be an integer from 1 to 31." }
     });
+  });
+
+  it("routes source-backed prices and rejects malformed ticker filters", async () => {
+    const api = createAgentApi(store(), config);
+    const response = await api(
+      request("/prices", { query: new URLSearchParams({ tickers: "NVDA,TSLA" }) })
+    );
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ tickers: ["NVDA", "TSLA"] });
+
+    const invalid = await api(
+      request("/prices", { query: new URLSearchParams({ tickers: "NVDA,NOT_A_TICKER" }) })
+    );
+    expect(invalid.status).toBe(400);
+    expect(invalid.body).toEqual({
+      error: { code: "INVALID_TICKER", reason: "tickers must contain uppercase stock symbols." }
+    });
+  });
+
+  it("routes an off-hours window lookup", async () => {
+    const api = createAgentApi(store(), config);
+    const response = await api(request("/windows/NVDA"));
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ ticker: "NVDA" });
   });
 
   it("allows only the two defined plan actions", async () => {

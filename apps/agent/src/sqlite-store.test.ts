@@ -66,6 +66,24 @@ describe("SQLite agent store boundary", () => {
       "PLANBOOK_NOT_CONFIGURED"
     );
   });
+
+  it("persists source-backed price and health snapshots", async () => {
+    const store = new SqliteAgentStore(new FakeDatabase());
+    await store.recordPriceSnapshot({
+      v: 1,
+      state: "ok",
+      ticker: "NVDA",
+      at: "2026-10-06T02:00:00.000Z"
+    });
+    await expect(store.prices(["NVDA"])).resolves.toMatchObject({
+      state: "ok",
+      tickers: ["NVDA"],
+      items: [{ ticker: "NVDA" }]
+    });
+
+    await store.recordHealthSnapshot({ v: 1, state: "ok", passes: 1 });
+    await expect(store.health()).resolves.toMatchObject({ v: 1, state: "ok", passes: 1 });
+  });
 });
 
 async function expectStoreFailure(operation: () => Promise<unknown>, code: string): Promise<void> {

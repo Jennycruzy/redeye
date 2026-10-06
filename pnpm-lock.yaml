@@ -35,9 +35,15 @@ importers:
 
   apps/agent:
     dependencies:
+      '@redeye/clients':
+        specifier: workspace:*
+        version: link:../../packages/clients
       '@redeye/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      decimal.js:
+        specifier: ^10.4.3
+        version: 10.6.0
 
   apps/web:
     dependencies:

@@ -114,6 +114,52 @@ export class SqliteAgentStore implements AgentStore {
       : { state: "ok", days, items };
   }
 
+  async prices(tickers: string[]): Promise<unknown> {
+    const requested = new Set(tickers.map((ticker) => ticker.toUpperCase()));
+    const items = this.many("price").filter((value) => {
+      if (requested.size === 0) return true;
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+      const ticker = (value as Record<string, unknown>).ticker;
+      return typeof ticker === "string" && requested.has(ticker.toUpperCase());
+    });
+    return items.length === 0
+      ? {
+          state: "empty",
+          tickers,
+          items: [],
+          reason: "No source-backed price snapshots have been recorded yet."
+        }
+      : { state: "ok", tickers, items };
+  }
+
+  async windows(ticker: string): Promise<unknown> {
+    const normalized = ticker.toUpperCase();
+    const items = this.many("window").filter((value) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+      return (value as Record<string, unknown>).ticker === normalized;
+    });
+    return items.length === 0
+      ? {
+          state: "empty",
+          ticker: normalized,
+          items: [],
+          reason: "No source-backed off-hours windows have been recorded yet."
+        }
+      : { state: "ok", ticker: normalized, items };
+  }
+
+  async recordPriceSnapshot(snapshot: unknown): Promise<void> {
+    const input = objectBody(snapshot, "price snapshot");
+    if (typeof input.ticker !== "string" || input.ticker.trim().length === 0) {
+      throw new StoreError(400, "TICKER_REQUIRED", "A price snapshot requires a ticker.");
+    }
+    this.put("price", input.ticker.toUpperCase(), input);
+  }
+
+  async recordHealthSnapshot(snapshot: unknown): Promise<void> {
+    this.put("health", "current", snapshot);
+  }
+
   async feed(since: string | null): Promise<unknown> {
     if (since !== null && !Number.isFinite(Date.parse(since))) {
       throw new StoreError(400, "INVALID_SINCE", "since must be an ISO timestamp.");

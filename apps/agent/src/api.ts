@@ -61,6 +61,25 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
           return error(400, "INVALID_DAYS", "days must be an integer from 1 to 31.", config);
         return json(200, await store.calendar(days), config);
       }
+      if (request.method === "GET" && root === "prices" && parts.length === 1) {
+        const rawTickers = request.query.get("tickers");
+        const tickers = rawTickers
+          ? rawTickers
+              .split(",")
+              .map((ticker) => ticker.trim().toUpperCase())
+              .filter((ticker) => ticker.length > 0)
+          : [];
+        if (tickers.some((ticker) => !/^[A-Z][A-Z0-9.-]{0,14}$/.test(ticker)))
+          return error(
+            400,
+            "INVALID_TICKER",
+            "tickers must contain uppercase stock symbols.",
+            config
+          );
+        return json(200, await store.prices(tickers), config);
+      }
+      if (request.method === "GET" && root === "windows" && id !== undefined && parts.length === 2)
+        return json(200, await store.windows(id), config);
       if (request.method === "GET" && root === "feed" && parts.length === 1)
         return json(200, await store.feed(request.query.get("since")), config);
       if (request.method === "GET" && root === "tokens" && id !== undefined && parts.length === 2)
