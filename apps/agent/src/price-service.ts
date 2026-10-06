@@ -4,10 +4,12 @@ import {
   fetchBstockList,
   fetchGeckoPool,
   fetchHistoricalPrices,
+  fetchGeckoPools,
   fetchXyzEquityPrices,
   parseBstockList,
   parseGeckoPool,
   parseHistoricalPrices,
+  parseGeckoPools,
   parseXyzEquityPrices,
   storeRawRecord,
   type NasdaqDailyPrice
@@ -90,6 +92,8 @@ export interface PriceServiceSources {
   parseHistorical: (record: SourceRecord<unknown>) => NasdaqDailyPrice[];
   pool: (address: string) => Promise<SourceRecord<unknown>>;
   parsePool: (record: SourceRecord<unknown>) => GeckoPoolSnapshot;
+  pools?: (addresses: string[]) => Promise<SourceRecord<unknown>>;
+  parsePools?: (record: SourceRecord<unknown>) => GeckoPoolSnapshot[];
 }
 
 export interface PriceServiceOptions {
@@ -230,8 +234,16 @@ const defaultSources: PriceServiceSources = {
   historical: fetchHistoricalPrices,
   parseHistorical: parseHistoricalPrices,
   pool: fetchGeckoPool,
-  parsePool: parseGeckoPool
+  parsePool: parseGeckoPool,
+  pools: fetchGeckoPools,
+  parsePools: parseGeckoPools
 };
+
+interface StoredPool {
+  snapshot: GeckoPoolSnapshot;
+  record: SourceRecord<unknown>;
+  path: string;
+}
 
 export class PriceService {
   private readonly sources: PriceServiceSources;
@@ -315,8 +327,9 @@ export class PriceService {
       const realByTicker = new Map(
         realPrices.map((price) => [price.ticker, { price, path: realResult.value.path }])
       );
+      const pools = await this.fetchPools(normalizedTickers);
       const snapshots = await Promise.all(
-        normalizedTickers.map((ticker) => this.buildSnapshot(ticker, atMs, at, realByTicker))
+        normalizedTickers.map((ticker) => this.buildSnapshot(ticker, atMs, at, realByTicker, pools))
       );
       const successful = snapshots.filter(
         (snapshot): snapshot is PriceSnapshotOk => snapshot.state === "ok"
@@ -386,7 +399,8 @@ export class PriceService {
     ticker: string,
     atMs: number,
     at: string,
-    realByTicker: Map<string, { price: XyzEquityPrice; path: string }>
+    realByTicker: Map<string, { price: XyzEquityPrice; path: string }>,
+    pools: Map<string, StoredPool>
   ): Promise<PriceSnapshot> {
     try {
       const token = this.tokensCache.get(ticker);
@@ -397,11 +411,11 @@ export class PriceService {
       if (!real) throw new Error(`Hyperliquid has no xyz price for ${ticker}.`);
 
       const close = await this.fetchClose(ticker, atMs);
-      const poolResult = await this.fetchAndStore(
-        `gecko-${ticker}`,
-        this.sources.pool(pool.address)
-      );
-      const poolSnapshot = this.sources.parsePool(poolResult.record);
+      const poolResult = pools.get(pool.address.toLowerCase());
+      if (!poolResult) {
+        throw new Error(`${ticker} pool was not returned by GeckoTerminal.`);
+      }
+      const poolSnapshot = poolResult.snapshot;
       if (poolSnapshot.address.toLowerCase() !== pool.address.toLowerCase()) {
         throw new Error(`${ticker} pool response address does not match the configured pool.`);
       }
@@ -474,6 +488,40 @@ export class PriceService {
         error: { ...failure, source: `price:${ticker}` }
       });
     }
+  }
+
+  private async fetchPools(tickers: string[]): Promise<Map<string, StoredPool>> {
+    const addresses = tickers.map((ticker) => {
+      const pool = this.options.poolMap[ticker];
+      if (!pool) throw new Error(`No source-backed pool mapping exists for ${ticker}.`);
+      return pool.address;
+    });
+
+    if (this.sources.pools && this.sources.parsePools) {
+      const result = await this.fetchAndStore("gecko-pools", this.sources.pools(addresses));
+      const map = new Map<string, StoredPool>();
+      for (const snapshot of this.sources.parsePools(result.record)) {
+        map.set(snapshot.address.toLowerCase(), {
+          snapshot,
+          record: result.record,
+          path: result.path
+        });
+      }
+      return map;
+    }
+
+    const map = new Map<string, StoredPool>();
+    for (const ticker of tickers) {
+      const pool = this.options.poolMap[ticker];
+      if (!pool) throw new Error(`No source-backed pool mapping exists for ${ticker}.`);
+      const result = await this.fetchAndStore(`gecko-${ticker}`, this.sources.pool(pool.address));
+      map.set(pool.address.toLowerCase(), {
+        snapshot: this.sources.parsePool(result.record),
+        record: result.record,
+        path: result.path
+      });
+    }
+    return map;
   }
 
   private async fetchClose(ticker: string, atMs: number): Promise<StoredRecord<NasdaqDailyPrice>> {

@@ -5,6 +5,8 @@ import { requestJson } from "./http.js";
 export const GECKOTERMINAL_BSC_POOLS_URL =
   "https://api.geckoterminal.com/api/v2/networks/bsc/pools";
 
+const MAX_MULTI_POOL_ADDRESSES = 30;
+
 type JsonObject = Record<string, unknown>;
 
 function isObject(value: unknown): value is JsonObject {
@@ -21,12 +23,10 @@ function stringField(value: unknown, field: string): string {
   return value;
 }
 
-export function parseGeckoPool(record: SourceRecord<unknown>): GeckoPoolSnapshot {
-  const body = record.response.body;
-  if (!isObject(body) || !isObject(body.data)) {
+function parseGeckoPoolData(data: unknown): GeckoPoolSnapshot {
+  if (!isObject(data)) {
     throw new ClientError("shape", "GeckoTerminal pool response is missing data.attributes.");
   }
-  const data = body.data;
   if (!isObject(data.attributes)) {
     throw new ClientError("shape", "GeckoTerminal pool response is missing data.attributes.");
   }
@@ -62,6 +62,22 @@ export function parseGeckoPool(record: SourceRecord<unknown>): GeckoPoolSnapshot
   } satisfies GeckoPoolSnapshot;
 }
 
+export function parseGeckoPool(record: SourceRecord<unknown>): GeckoPoolSnapshot {
+  const body = record.response.body;
+  if (!isObject(body)) {
+    throw new ClientError("shape", "GeckoTerminal pool response is missing data.attributes.");
+  }
+  return parseGeckoPoolData(body.data);
+}
+
+export function parseGeckoPools(record: SourceRecord<unknown>): GeckoPoolSnapshot[] {
+  const body = record.response.body;
+  if (!isObject(body) || !Array.isArray(body.data)) {
+    throw new ClientError("shape", "GeckoTerminal multi-pool response is missing data.");
+  }
+  return body.data.map(parseGeckoPoolData);
+}
+
 export async function fetchGeckoPool(address: string): Promise<SourceRecord<unknown>> {
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
     throw new ClientError("shape", "GeckoTerminal pool address is not an EVM address.", {
@@ -69,4 +85,17 @@ export async function fetchGeckoPool(address: string): Promise<SourceRecord<unkn
     });
   }
   return requestJson<unknown>(`${GECKOTERMINAL_BSC_POOLS_URL}/${address}`);
+}
+
+export async function fetchGeckoPools(addresses: string[]): Promise<SourceRecord<unknown>> {
+  if (
+    addresses.length === 0 ||
+    addresses.length > MAX_MULTI_POOL_ADDRESSES ||
+    addresses.some((address) => !/^0x[a-fA-F0-9]{40}$/.test(address))
+  ) {
+    throw new ClientError("shape", "GeckoTerminal multi-pool addresses are invalid.", {
+      count: addresses.length
+    });
+  }
+  return requestJson<unknown>(`${GECKOTERMINAL_BSC_POOLS_URL}/multi/${addresses.join(",")}`);
 }

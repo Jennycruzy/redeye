@@ -23,6 +23,17 @@ const store = await createSqliteAgentStore(databasePath);
 const poolMap = await loadPoolMap(
   process.env.REDEYE_POOL_MAP_PATH ?? "data/raw/offhours/pools.json"
 );
+const defaultPriceTickers = Object.keys(poolMap).filter(
+  (ticker) => ticker !== "AAPL" && ticker !== "SKHY"
+);
+const priceTickers = process.env.REDEYE_PRICE_TICKERS
+  ? process.env.REDEYE_PRICE_TICKERS.split(",")
+      .map((ticker) => ticker.trim().toUpperCase())
+      .filter((ticker) => ticker.length > 0)
+  : defaultPriceTickers;
+if (priceTickers.length === 0 || priceTickers.some((ticker) => poolMap[ticker] === undefined)) {
+  throw new Error("REDEYE_PRICE_TICKERS must contain only tickers with configured pools.");
+}
 const priceService = new PriceService({
   rawRoot: process.env.REDEYE_DATA_ROOT ?? "data",
   poolMap,
@@ -35,7 +46,7 @@ const windowService = new WindowService({
   saveWindow: (window) => store.recordWindow(window)
 });
 const server = startAgentServer(store, { ownerToken, siteOrigin }, port);
-void priceService.start(Object.keys(poolMap)).catch((error: unknown) => {
+void priceService.start(priceTickers).catch((error: unknown) => {
   console.error(
     JSON.stringify({
       code: "PRICE_SERVICE_START_FAILED",

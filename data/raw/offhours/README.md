@@ -1,4 +1,4 @@
-# Off-hours study raw data (F20)
+# Off-hours study raw data
 
 Frozen on 2026-10-05 around 21:10–21:16 UTC. This folder is the source of truth for the off-hours study.
 Rebuild the study from these files. Do not re-fetch them, because the hosted APIs can return different
@@ -13,14 +13,14 @@ values later.
 Sources: `api.hyperliquid.xyz/info` (candleSnapshot), `api.geckoterminal.com/api/v2/networks/bsc/pools/<pool>/ohlcv/hour`,
 `api.nasdaq.com/api/quote/<T>/historical`.
 
-Exclusions for F20: AAPL (the GeckoTerminal pool price comes back in the wrong unit) and SKHY (Hyperliquid's SKHX is
+Exclusions: AAPL (the GeckoTerminal pool price comes back in the wrong unit) and SKHY (Hyperliquid's SKHX is
 a different instrument from SKHY). That leaves 104 rows across 13 stocks.
 
 Reproduce (Python 3, standard library only), from this folder:
 
 ```
 python3 ../../../scripts/study/reference/build_rows.py   # rewrites study_rows.json (same bytes), 120 rows
-python3 ../../../scripts/study/reference/analyze.py      # F20 summary, 104 rows
+python3 ../../../scripts/study/reference/analyze.py      # summary, 104 rows
 ```
 
 SHA-256:

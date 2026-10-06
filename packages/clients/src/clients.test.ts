@@ -10,6 +10,7 @@ import {
   parseAssetMarketStatus,
   parseEarningsCalendar,
   parseGeckoPool,
+  parseGeckoPools,
   parseChartPoints,
   parseHistoricalPrices,
   parseMarketStatus,
@@ -200,6 +201,60 @@ describe("recorded source clients", () => {
     expect(pool.address).toBe("0x172fcd41e0913e95784454622d1c3724f546f849");
     expect(pool.reserveUsd).toBe("13546025.6008");
     expect(pool.volume24hUsd).toBe("104444313.747797");
+  });
+
+  it("parses GeckoTerminal's multi-pool response", () => {
+    const pool = {
+      type: "pool",
+      id: "bsc_0x172fcd41e0913e95784454622d1c3724f546f849",
+      attributes: {
+        address: "0x172fcd41e0913e95784454622d1c3724f546f849",
+        name: "NVDA / USDT",
+        pool_created_at: "2026-09-01T00:00:00Z",
+        base_token_price_usd: "235",
+        quote_token_price_usd: "1",
+        reserve_in_usd: "13546025.6008",
+        volume_usd: { h24: "104444313.747797" }
+      }
+    };
+    const record: SourceRecord<unknown> = {
+      v: 1,
+      fetchedAt: "2026-10-06T00:00:00.000Z",
+      completedAt: "2026-10-06T00:00:00.100Z",
+      request: { method: "GET", url: "https://example.invalid/pools/multi" },
+      response: { status: 200, ok: true, body: { data: [pool] } }
+    };
+
+    expect(parseGeckoPools(record)).toHaveLength(1);
+    expect(parseGeckoPools(record)[0]?.address).toBe(pool.attributes.address);
+  });
+
+  it("retries a rate-limited JSON request before succeeding", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "rate limited" }), {
+          status: 429,
+          headers: { "retry-after": "0" }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: "ok" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { requestJson } = await import("./http.js");
+    await expect(requestJson("https://example.invalid", { retryBaseMs: 0 })).resolves.toMatchObject(
+      {
+        response: { status: 200, body: { data: "ok" } }
+      }
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    vi.unstubAllGlobals();
   });
 
   it("parses xyz equity prices and keeps the source and precise volume", async () => {

@@ -37,6 +37,13 @@ async function sources(): Promise<PriceServiceSources> {
     },
     response: { status: 200, ok: true, body: {} }
   } satisfies SourceRecord<unknown>;
+  const pools = {
+    ...pool,
+    request: {
+      method: "GET" as const,
+      url: "https://api.geckoterminal.com/api/v2/networks/bsc/pools/multi"
+    }
+  } satisfies SourceRecord<unknown>;
   const parsedPool: GeckoPoolSnapshot = {
     network: "bsc",
     address: poolAddress,
@@ -58,7 +65,9 @@ async function sources(): Promise<PriceServiceSources> {
     },
     parseHistorical: parseHistoricalPrices,
     pool: async () => pool,
-    parsePool: () => parsedPool
+    parsePool: () => parsedPool,
+    pools: async () => pools,
+    parsePools: () => [parsedPool]
   };
 }
 
@@ -103,7 +112,7 @@ describe("source-backed price service", () => {
       const rawSources = await readdir(`${rawRoot}/raw`);
       expect(rawSources.sort()).toEqual([
         "binance-rwa-bstock-list",
-        "gecko-NVDA",
+        "gecko-pools",
         "hyperliquid",
         "nasdaq-NVDA"
       ]);

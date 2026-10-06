@@ -1,4 +1,4 @@
-# F20 summary: drops AAPL (pool price unit broken) and SKHY (Hyperliquid SKHX is a different instrument) -> 104 rows, 13 stocks.
+# Summary: drops AAPL (pool price unit broken) and SKHY (Hyperliquid SKHX is a different instrument) -> 104 rows, 13 stocks.
 # Run inside data/raw/offhours after build_rows.py: python3 ../../../scripts/study/reference/analyze.py
 import json,statistics as st
 rows=[r for r in json.load(open('study_rows.json')) if r['T'] not in ('AAPL','SKHY')]
