@@ -1,9 +1,12 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { loadEnvFile } from "node:process";
 import { loadPoolMap, PriceService } from "./price-service.js";
 import { createSqliteAgentStore } from "./sqlite-store.js";
 import { startAgentServer } from "./server.js";
 import { WindowService } from "./window-service.js";
+
+if (existsSync(".env")) loadEnvFile(".env");
 
 function required(name: string): string {
   const value = process.env[name];

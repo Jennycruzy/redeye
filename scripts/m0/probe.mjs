@@ -1,9 +1,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadRepositoryEnv } from "../load-env.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "../..");
+loadRepositoryEnv(repoRoot);
 const rawRoot = join(repoRoot, "data", "raw", "m0");
 const reportPath = join(rawRoot, "latest-report.json");
 
