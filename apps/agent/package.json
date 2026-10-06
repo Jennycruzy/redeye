@@ -10,6 +10,7 @@
     }
   },
   "dependencies": {
+    "@redeye/core": "workspace:*",
     "@redeye/clients": "workspace:*",
     "decimal.js": "^10.4.3",
     "@redeye/shared": "workspace:*"

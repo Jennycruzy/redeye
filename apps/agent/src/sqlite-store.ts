@@ -103,7 +103,7 @@ export class SqliteAgentStore implements AgentStore {
   }
 
   async calendar(days: number): Promise<unknown> {
-    const items = this.many("event");
+    const items = [...this.many("event"), ...this.many("window")];
     return items.length === 0
       ? {
           state: "empty",
@@ -158,6 +158,17 @@ export class SqliteAgentStore implements AgentStore {
 
   async recordHealthSnapshot(snapshot: unknown): Promise<void> {
     this.put("health", "current", snapshot);
+  }
+
+  async recordWindow(window: unknown): Promise<void> {
+    const input = objectBody(window, "window");
+    if (typeof input.ticker !== "string" || input.ticker.trim().length === 0) {
+      throw new StoreError(400, "TICKER_REQUIRED", "A window requires a ticker.");
+    }
+    if (typeof input.eventKey !== "string" || input.eventKey.trim().length === 0) {
+      throw new StoreError(400, "EVENT_KEY_REQUIRED", "A window requires an event key.");
+    }
+    this.put("window", `${input.ticker.toUpperCase()}:${input.eventKey}`, input);
   }
 
   async feed(since: string | null): Promise<unknown> {

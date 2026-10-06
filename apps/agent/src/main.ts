@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { loadPoolMap, PriceService } from "./price-service.js";
 import { createSqliteAgentStore } from "./sqlite-store.js";
 import { startAgentServer } from "./server.js";
+import { WindowService } from "./window-service.js";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -26,6 +27,10 @@ const priceService = new PriceService({
   saveSnapshot: (snapshot) => store.recordPriceSnapshot(snapshot),
   saveHealth: (health) => store.recordHealthSnapshot(health)
 });
+const windowService = new WindowService({
+  tickers: Object.keys(poolMap),
+  saveWindow: (window) => store.recordWindow(window)
+});
 const server = startAgentServer(store, { ownerToken, siteOrigin }, port);
 void priceService.start(Object.keys(poolMap)).catch((error: unknown) => {
   console.error(
@@ -35,9 +40,18 @@ void priceService.start(Object.keys(poolMap)).catch((error: unknown) => {
     })
   );
 });
+void windowService.start().catch((error: unknown) => {
+  console.error(
+    JSON.stringify({
+      code: "WINDOW_SERVICE_START_FAILED",
+      reason: error instanceof Error ? error.message : String(error)
+    })
+  );
+});
 
 const shutdown = (): void => {
   priceService.stop();
+  windowService.stop();
   server.close(() => store.close());
 };
 process.on("SIGINT", shutdown);

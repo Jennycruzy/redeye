@@ -38,6 +38,9 @@ importers:
       '@redeye/clients':
         specifier: workspace:*
         version: link:../../packages/clients
+      '@redeye/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@redeye/shared':
         specifier: workspace:*
         version: link:../../packages/shared

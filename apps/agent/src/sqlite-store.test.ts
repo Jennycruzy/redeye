@@ -84,6 +84,27 @@ describe("SQLite agent store boundary", () => {
     await store.recordHealthSnapshot({ v: 1, state: "ok", passes: 1 });
     await expect(store.health()).resolves.toMatchObject({ v: 1, state: "ok", passes: 1 });
   });
+
+  it("persists scheduled windows in the calendar and ticker view", async () => {
+    const store = new SqliteAgentStore(new FakeDatabase());
+    await store.recordWindow({
+      v: 1,
+      ticker: "NVDA",
+      eventKey: "0xwindow",
+      kind: "overnight",
+      lockTs: 1,
+      openTs: 2
+    });
+    await expect(store.calendar(21)).resolves.toMatchObject({
+      state: "ok",
+      items: [{ ticker: "NVDA", kind: "overnight" }]
+    });
+    await expect(store.windows("NVDA")).resolves.toMatchObject({
+      state: "ok",
+      ticker: "NVDA",
+      items: [{ eventKey: "0xwindow" }]
+    });
+  });
 });
 
 async function expectStoreFailure(operation: () => Promise<unknown>, code: string): Promise<void> {
