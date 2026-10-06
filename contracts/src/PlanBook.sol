@@ -60,6 +60,8 @@ contract PlanBook {
 
     mapping(uint256 => Plan) private plans;
     mapping(bytes32 => uint256) private planForOwnerAndEvent;
+    mapping(bytes32 => bool) private frozenPlanHashForOwner;
+    mapping(bytes32 => uint256) private planIdForHash;
 
     constructor(address initialOwner, address initialAgent) {
         if (initialOwner == address(0) || initialAgent == address(0)) revert ZeroAddress();
@@ -122,6 +124,9 @@ contract PlanBook {
             cancelled: false
         });
         planForOwnerAndEvent[uniqueKey] = planId;
+        bytes32 hashKey = keccak256(abi.encode(planOwner, planHash));
+        frozenPlanHashForOwner[hashKey] = true;
+        planIdForHash[hashKey] = planId;
         openCount++;
         emit PlanFrozen(planId, planOwner, eventKey, planHash, ticker, releaseTs, jobId);
     }
@@ -181,6 +186,18 @@ contract PlanBook {
 
     function planIdFor(address planOwner, bytes32 eventKey) external view returns (uint256) {
         return planForOwnerAndEvent[keccak256(abi.encodePacked(planOwner, eventKey))];
+    }
+
+    function isPlanHashFrozen(address planOwner, bytes32 planHash) external view returns (bool) {
+        return frozenPlanHashForOwner[keccak256(abi.encode(planOwner, planHash))];
+    }
+
+    function isPlanHashActive(address planOwner, bytes32 planHash) external view returns (bool) {
+        bytes32 hashKey = keccak256(abi.encode(planOwner, planHash));
+        if (!frozenPlanHashForOwner[hashKey]) return false;
+        uint256 planId = planIdForHash[hashKey];
+        Plan storage plan = plans[planId];
+        return !plan.cancelled && !plan.verdictRecorded;
     }
 
     function _plan(uint256 planId) internal view returns (Plan storage plan) {

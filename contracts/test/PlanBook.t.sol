@@ -111,4 +111,17 @@ contract PlanBookTest {
         (,,, uint256 cancelled, uint256 open) = book.counts();
         _assert(cancelled == 1 && open == 0, "cancel not counted");
     }
+
+    function testFrozenPlanHashCanBeCheckedByPermissionAccount() external {
+        PlanBook book = _book();
+        _freeze(book, eventKey);
+
+        _assert(book.isPlanHashFrozen(user, planHash), "frozen plan hash not indexed");
+        _assert(book.isPlanHashActive(user, planHash), "frozen plan hash not active");
+        _assert(!book.isPlanHashFrozen(user, keccak256("other")), "unknown hash reported frozen");
+
+        VM.prank(agent);
+        book.recordVerdict(1, 2, verdictHash);
+        _assert(!book.isPlanHashActive(user, planHash), "closed plan reported active");
+    }
 }
