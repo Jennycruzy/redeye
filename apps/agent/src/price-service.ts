@@ -397,12 +397,6 @@ export class PriceService {
       if (!real) throw new Error(`Hyperliquid has no xyz price for ${ticker}.`);
 
       const close = await this.fetchClose(ticker, atMs);
-      const usableReal = assertUsableXyzPrice(
-        real.price,
-        close.record.response.body.close,
-        atMs,
-        this.maxPriceAgeSeconds
-      );
       const poolResult = await this.fetchAndStore(
         `gecko-${ticker}`,
         this.sources.pool(pool.address)
@@ -411,14 +405,21 @@ export class PriceService {
       if (poolSnapshot.address.toLowerCase() !== pool.address.toLowerCase()) {
         throw new Error(`${ticker} pool response address does not match the configured pool.`);
       }
+      const checkedAtMs = this.now();
+      const usableReal = assertUsableXyzPrice(
+        real.price,
+        close.record.response.body.close,
+        checkedAtMs,
+        this.maxPriceAgeSeconds
+      );
       const tokenValue = decimalString(
         decimal(poolSnapshot.baseTokenPriceUsd, `${ticker} token price`).div(
           decimal(token.multiplier, `${ticker} multiplier`)
         )
       );
-      const closeAge = ageSeconds(close.record.fetchedAt, atMs);
-      const realAge = ageSeconds(usableReal.fetchedAt, atMs);
-      const tokenAge = ageSeconds(poolResult.record.fetchedAt, atMs);
+      const closeAge = ageSeconds(close.record.fetchedAt, checkedAtMs);
+      const realAge = ageSeconds(usableReal.fetchedAt, checkedAtMs);
+      const tokenAge = ageSeconds(poolResult.record.fetchedAt, checkedAtMs);
       if (
         Math.abs(Number(percentageDifference(tokenValue, close.record.response.body.close))) >=
         TOKEN_UNIT_DEVIATION_PCT

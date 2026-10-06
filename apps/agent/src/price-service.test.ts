@@ -112,6 +112,35 @@ describe("source-backed price service", () => {
     }
   });
 
+  it("accepts source records fetched after the refresh started", async () => {
+    const rawRoot = await mkdtemp(`${tmpdir()}/redeye-price-timing-`);
+    try {
+      let clockCalls = 0;
+      const service = new PriceService({
+        rawRoot,
+        poolMap: {
+          NVDA: {
+            address: poolAddress,
+            observedLiquidityUsd: "4353526",
+            createdAtMs: 1785310965000
+          }
+        },
+        sources: await sources(),
+        now: () => {
+          clockCalls += 1;
+          return clockCalls === 1
+            ? Date.parse("2026-10-05T22:40:00.000Z")
+            : Date.parse("2026-10-05T22:40:30.000Z");
+        }
+      });
+
+      const result = await service.refresh(["NVDA"]);
+      expect(result[0]).toMatchObject({ state: "ok", ticker: "NVDA" });
+    } finally {
+      await rm(rawRoot, { recursive: true, force: true });
+    }
+  });
+
   it("refuses a stale 24/7 price instead of using a default", async () => {
     const rawRoot = await mkdtemp(`${tmpdir()}/redeye-price-stale-`);
     try {
