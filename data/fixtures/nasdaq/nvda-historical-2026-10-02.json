@@ -1,0 +1,46 @@
+{
+  "v": 1,
+  "fetchedAt": "2026-10-06T00:49:21.000Z",
+  "completedAt": "2026-10-06T00:49:23.000Z",
+  "request": {
+    "method": "GET",
+    "url": "https://api.nasdaq.com/api/quote/NVDA/historical?assetclass=stocks&fromdate=2026-10-02&todate=2026-10-05&limit=10"
+  },
+  "response": {
+    "status": 200,
+    "ok": true,
+    "body": {
+      "data": {
+        "symbol": "NVDA",
+        "totalRecords": 1,
+        "tradesTable": {
+          "asOf": null,
+          "headers": {
+            "date": "Date",
+            "close": "Close/Last",
+            "volume": "Volume",
+            "open": "Open",
+            "high": "High",
+            "low": "Low"
+          },
+          "rows": [
+            {
+              "date": "10/02/2026",
+              "close": "$233.95",
+              "volume": "135,167,800",
+              "open": "$236.055",
+              "high": "$237.88",
+              "low": "$233.60"
+            }
+          ]
+        }
+      },
+      "message": null,
+      "status": {
+        "rCode": 200,
+        "bCodeMessage": null,
+        "developerMessage": null
+      }
+    }
+  }
+}

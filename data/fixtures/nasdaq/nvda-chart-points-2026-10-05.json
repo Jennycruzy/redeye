@@ -1,0 +1,32 @@
+{
+  "v": 1,
+  "fetchedAt": "2026-10-06T00:49:21.000Z",
+  "completedAt": "2026-10-06T00:49:29.000Z",
+  "request": {
+    "method": "GET",
+    "url": "https://api.nasdaq.com/api/quote/NVDA/chart?assetclass=stocks"
+  },
+  "response": {
+    "status": 200,
+    "ok": true,
+    "body": {
+      "data": {
+        "symbol": "NVDA",
+        "chart": [
+          {
+            "z": { "dateTime": "9:30 AM ET", "value": "235.61" },
+            "x": 1791192600000,
+            "y": 235.61
+          },
+          {
+            "z": { "dateTime": "1:30 PM ET", "value": "237.4916" },
+            "x": 1791207000000,
+            "y": 237.4916
+          }
+        ]
+      },
+      "message": null,
+      "status": { "rCode": 200, "bCodeMessage": null, "developerMessage": null }
+    }
+  }
+}

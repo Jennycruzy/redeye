@@ -9,6 +9,8 @@ import {
   parseAssetMarketStatus,
   parseEarningsCalendar,
   parseGeckoPool,
+  parseChartPoints,
+  parseHistoricalPrices,
   parseMarketStatus,
   parseXyzCandles,
   parseXyzEquityPrices,
@@ -86,6 +88,41 @@ describe("recorded source clients", () => {
     expect(rows).toHaveLength(3);
     expect(rows.find((row) => row.symbol === "NCPL")?.epsForecast).toBe("");
     expect(rows.find((row) => row.symbol === "AEHR")?.numberOfEstimates).toBe(2);
+  });
+
+  it("takes the official open and close from Nasdaq daily history", async () => {
+    const record = await fixture("nasdaq/nvda-historical-2026-10-02.json");
+    const rows = parseHistoricalPrices(record);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      date: "10/02/2026",
+      open: "236.055",
+      close: "233.95"
+    });
+  });
+
+  it("uses the published 5 October daily row for the official open", async () => {
+    const record = await fixture("nasdaq/nvda-historical-2026-10-05.json");
+    const rows = parseHistoricalPrices(record);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      date: "10/05/2026",
+      open: "236.09",
+      close: "238.90"
+    });
+  });
+
+  it("maps Nasdaq chart x values from New York wall-clock time", async () => {
+    const record = await fixture("nasdaq/nvda-chart-points-2026-10-05.json");
+    const points = parseChartPoints(record);
+
+    expect(points).toHaveLength(2);
+    expect(points[0]).toMatchObject({ localDateTime: "9:30 AM ET", price: "235.61" });
+    expect(new Date(points[0]?.atMs ?? 0).toISOString()).toBe("2026-10-05T13:30:00.000Z");
+    expect(points[1]).toMatchObject({ localDateTime: "1:30 PM ET", price: "237.4916" });
+    expect(new Date(points[1]?.atMs ?? 0).toISOString()).toBe("2026-10-05T17:30:00.000Z");
   });
 
   it("fails loudly when a source response loses a required field", async () => {

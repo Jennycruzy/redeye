@@ -3,11 +3,109 @@ import { ClientError } from "./errors.js";
 import { requestJson } from "./http.js";
 
 export const NASDAQ_EARNINGS_URL = "https://api.nasdaq.com/api/calendar/earnings";
+export const NASDAQ_HISTORICAL_URL = "https://api.nasdaq.com/api/quote";
+export const NASDAQ_CHART_URL = "https://api.nasdaq.com/api/quote";
+
+export interface NasdaqDailyPrice {
+  date: string;
+  open: string;
+  close: string;
+  high: string;
+  low: string;
+  volume: string;
+}
+
+export interface NasdaqChartPoint {
+  sourceX: number;
+  atMs: number;
+  localDateTime: string;
+  price: string;
+}
 
 type JsonObject = Record<string, unknown>;
 
 function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requiredPositivePrice(value: unknown, field: string, index?: number): string {
+  if (typeof value !== "string") {
+    throw new ClientError("shape", `Nasdaq ${field} is missing or invalid.`, {
+      field,
+      index,
+      value
+    });
+  }
+  const normalized = value.replace(/[ $,]/g, "");
+  if (!/^\d+(?:\.\d+)?$/.test(normalized) || Number(normalized) <= 0) {
+    throw new ClientError("shape", `Nasdaq ${field} is not a positive price.`, {
+      field,
+      index,
+      value
+    });
+  }
+  return normalized;
+}
+
+function requiredText(value: unknown, field: string, index?: number): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new ClientError("shape", `Nasdaq ${field} is missing or invalid.`, {
+      field,
+      index,
+      value
+    });
+  }
+  return value;
+}
+
+function requiredInteger(value: unknown, field: string, index?: number): number {
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new ClientError("shape", `Nasdaq ${field} is missing or invalid.`, {
+      field,
+      index,
+      value
+    });
+  }
+  return value;
+}
+
+function localWallClockToMs(sourceX: number): number {
+  const sourceDate = new Date(sourceX);
+  if (!Number.isFinite(sourceDate.getTime())) {
+    throw new ClientError("shape", "Nasdaq chart x is not a valid timestamp.", { sourceX });
+  }
+  const year = sourceDate.getUTCFullYear();
+  const month = sourceDate.getUTCMonth();
+  const day = sourceDate.getUTCDate();
+  const hour = sourceDate.getUTCHours();
+  const minute = sourceDate.getUTCMinutes();
+  const second = sourceDate.getUTCSeconds();
+  const millisecond = sourceDate.getUTCMilliseconds();
+  const guess = Date.UTC(year, month, day, hour, minute, second, millisecond);
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23"
+    })
+      .formatToParts(new Date(guess))
+      .map((part) => [part.type, part.value])
+  );
+  const displayedAsUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+    millisecond
+  );
+  return guess - (displayedAsUtc - guess);
 }
 
 function stringField(row: JsonObject, field: string, index: number): string {
@@ -53,6 +151,89 @@ export function parseEarningsCalendar(record: SourceRecord<unknown>): NasdaqEarn
       fiscalQuarterEnding: stringField(value, "fiscalQuarterEnding", index)
     } satisfies NasdaqEarningsRow;
   });
+}
+
+export function parseHistoricalPrices(record: SourceRecord<unknown>): NasdaqDailyPrice[] {
+  const body = record.response.body;
+  if (!isObject(body) || !isObject(body.data) || !isObject(body.data.tradesTable)) {
+    throw new ClientError("shape", "Nasdaq historical response is missing data.tradesTable.");
+  }
+  const rows = body.data.tradesTable.rows;
+  if (!Array.isArray(rows)) {
+    throw new ClientError("shape", "Nasdaq historical response is missing tradesTable.rows.");
+  }
+  return rows.map((value, index) => {
+    if (!isObject(value)) {
+      throw new ClientError("shape", "Nasdaq historical row is not an object.", { index });
+    }
+    const date = requiredText(value.date, `historical[${index}].date`, index);
+    if (!/^\d{2}\/\d{2}\/\d{4}$/.test(date)) {
+      throw new ClientError("shape", "Nasdaq historical date is not MM/DD/YYYY.", { index, date });
+    }
+    return {
+      date,
+      open: requiredPositivePrice(value.open, `historical[${index}].open`, index),
+      close: requiredPositivePrice(value.close, `historical[${index}].close`, index),
+      high: requiredPositivePrice(value.high, `historical[${index}].high`, index),
+      low: requiredPositivePrice(value.low, `historical[${index}].low`, index),
+      volume: requiredText(value.volume, `historical[${index}].volume`, index)
+    } satisfies NasdaqDailyPrice;
+  });
+}
+
+export function parseChartPoints(record: SourceRecord<unknown>): NasdaqChartPoint[] {
+  const body = record.response.body;
+  if (!isObject(body) || !isObject(body.data) || !Array.isArray(body.data.chart)) {
+    throw new ClientError("shape", "Nasdaq chart response is missing data.chart.");
+  }
+  return body.data.chart.map((value, index) => {
+    if (!isObject(value) || !isObject(value.z)) {
+      throw new ClientError("shape", "Nasdaq chart point is not an object.", { index });
+    }
+    const sourceX = requiredInteger(value.x, `chart[${index}].x`, index);
+    return {
+      sourceX,
+      atMs: localWallClockToMs(sourceX),
+      localDateTime: requiredText(value.z.dateTime, `chart[${index}].z.dateTime`, index),
+      price: requiredPositivePrice(value.z.value, `chart[${index}].z.value`, index)
+    } satisfies NasdaqChartPoint;
+  });
+}
+
+export function fetchHistoricalPrices(
+  ticker: string,
+  fromDate: string,
+  toDate: string
+): Promise<SourceRecord<unknown>> {
+  if (!/^[A-Z][A-Z0-9.-]{0,14}$/.test(ticker)) {
+    throw new ClientError("shape", "Nasdaq ticker must be uppercase.", { ticker });
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+    throw new ClientError("shape", "Nasdaq historical dates must be YYYY-MM-DD.", {
+      fromDate,
+      toDate
+    });
+  }
+  const query = new URLSearchParams({
+    assetclass: "stocks",
+    fromdate: fromDate,
+    todate: toDate,
+    limit: "5000"
+  });
+  return requestJson<unknown>(
+    `${NASDAQ_HISTORICAL_URL}/${encodeURIComponent(ticker)}/historical?${query.toString()}`,
+    { headers: { "user-agent": "Mozilla/5.0 Redeye/0.1" } }
+  );
+}
+
+export function fetchChart(ticker: string): Promise<SourceRecord<unknown>> {
+  if (!/^[A-Z][A-Z0-9.-]{0,14}$/.test(ticker)) {
+    throw new ClientError("shape", "Nasdaq ticker must be uppercase.", { ticker });
+  }
+  return requestJson<unknown>(
+    `${NASDAQ_CHART_URL}/${encodeURIComponent(ticker)}/chart?assetclass=stocks`,
+    { headers: { "user-agent": "Mozilla/5.0 Redeye/0.1" } }
+  );
 }
 
 export async function fetchEarningsCalendar(date: string): Promise<SourceRecord<unknown>> {
