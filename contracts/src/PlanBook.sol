@@ -9,6 +9,7 @@ contract PlanBook {
     error NotAgent();
     error ZeroAddress();
     error ZeroHash();
+    error ZeroStandingRunHash();
     error EmptyTicker();
     error ReleaseAlreadyStarted();
     error DuplicatePlan();
@@ -30,6 +31,7 @@ contract PlanBook {
         uint64 releaseTs,
         uint256 jobId
     );
+    event StandingPlanFrozen(uint256 indexed planId, bytes32 indexed standingRunHash);
     event DecisionRecorded(uint256 indexed planId, bytes32 decisionHash, uint64 at);
     event FillRecorded(uint256 indexed planId, bytes32 txHash, uint8 step);
     event VerdictRecorded(uint256 indexed planId, uint8 outcome, bytes32 verdictHash);
@@ -40,6 +42,7 @@ contract PlanBook {
         address owner;
         bytes32 eventKey;
         bytes32 planHash;
+        bytes32 standingRunHash;
         string ticker;
         uint64 releaseTs;
         uint256 jobId;
@@ -103,6 +106,35 @@ contract PlanBook {
         uint64 releaseTs,
         uint256 jobId
     ) external onlyAgent returns (uint256 planId) {
+        return _freezePlan(planOwner, eventKey, planHash, bytes32(0), ticker, releaseTs, jobId);
+    }
+
+    /// @notice Publishes one copy of a standing plan before its window lock boundary.
+    /// @dev The signed run fingerprint is carried by PlanAccount; each copy still
+    ///      has its own plan hash and event key in this public record.
+    function freezeStandingPlan(
+        address planOwner,
+        bytes32 eventKey,
+        bytes32 planHash,
+        bytes32 standingRunHash,
+        string calldata ticker,
+        uint64 releaseTs,
+        uint256 jobId
+    ) external onlyAgent returns (uint256 planId) {
+        if (standingRunHash == bytes32(0)) revert ZeroStandingRunHash();
+        planId = _freezePlan(planOwner, eventKey, planHash, standingRunHash, ticker, releaseTs, jobId);
+        emit StandingPlanFrozen(planId, standingRunHash);
+    }
+
+    function _freezePlan(
+        address planOwner,
+        bytes32 eventKey,
+        bytes32 planHash,
+        bytes32 standingRunHash,
+        string calldata ticker,
+        uint64 releaseTs,
+        uint256 jobId
+    ) internal returns (uint256 planId) {
         if (planOwner == address(0)) revert ZeroAddress();
         if (eventKey == bytes32(0) || planHash == bytes32(0)) revert ZeroHash();
         if (bytes(ticker).length == 0) revert EmptyTicker();
@@ -116,6 +148,7 @@ contract PlanBook {
             owner: planOwner,
             eventKey: eventKey,
             planHash: planHash,
+            standingRunHash: standingRunHash,
             ticker: ticker,
             releaseTs: releaseTs,
             jobId: jobId,
@@ -198,6 +231,26 @@ contract PlanBook {
         uint256 planId = planIdForHash[hashKey];
         Plan storage plan = plans[planId];
         return !plan.cancelled && !plan.verdictRecorded;
+    }
+
+    function isStandingPlanForRunAndEvent(
+        address planOwner,
+        bytes32 standingRunHash,
+        bytes32 planHash,
+        bytes32 eventKey
+    ) external view returns (bool) {
+        if (standingRunHash == bytes32(0) || planHash == bytes32(0) || eventKey == bytes32(0)) {
+            return false;
+        }
+        bytes32 hashKey = keccak256(abi.encode(planOwner, planHash));
+        uint256 planId = planIdForHash[hashKey];
+        if (planId == 0) return false;
+        Plan storage plan = plans[planId];
+        return
+            plan.standingRunHash == standingRunHash &&
+            plan.eventKey == eventKey &&
+            !plan.cancelled &&
+            !plan.verdictRecorded;
     }
 
     function _plan(uint256 planId) internal view returns (Plan storage plan) {

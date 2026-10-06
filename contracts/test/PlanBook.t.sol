@@ -124,4 +124,36 @@ contract PlanBookTest {
         book.recordVerdict(1, 2, verdictHash);
         _assert(!book.isPlanHashActive(user, planHash), "closed plan reported active");
     }
+
+    function testStandingPlanIsBoundToRunAndWindow() external {
+        PlanBook book = _book();
+        bytes32 runHash = keccak256("standing-run");
+        bytes32 standingPlanHash = keccak256("standing-plan");
+        bytes32 standingEventKey = keccak256("NVDA:overnight:2026-10-05");
+        VM.prank(agent);
+        book.freezeStandingPlan(
+            user,
+            standingEventKey,
+            standingPlanHash,
+            runHash,
+            "NVDA",
+            uint64(block.timestamp + 1 days),
+            9
+        );
+
+        _assert(
+            book.isStandingPlanForRunAndEvent(user, runHash, standingPlanHash, standingEventKey),
+            "standing plan was not bound"
+        );
+        _assert(
+            !book.isStandingPlanForRunAndEvent(
+                user, runHash, standingPlanHash, keccak256("NVDA:overnight:2026-10-06")
+            ),
+            "standing plan crossed a window"
+        );
+        _assert(
+            !book.isStandingPlanForRunAndEvent(user, keccak256("other-run"), standingPlanHash, standingEventKey),
+            "standing plan crossed a run"
+        );
+    }
 }

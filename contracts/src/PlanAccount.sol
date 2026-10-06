@@ -3,6 +3,12 @@ pragma solidity ^0.8.24;
 
 interface IPlanBook {
     function isPlanHashActive(address planOwner, bytes32 planHash) external view returns (bool);
+    function isStandingPlanForRunAndEvent(
+        address planOwner,
+        bytes32 standingRunHash,
+        bytes32 planHash,
+        bytes32 eventKey
+    ) external view returns (bool);
 }
 
 interface IERC20PlanAccount {
@@ -27,6 +33,7 @@ contract PlanAccount {
     error PermissionIsRevoked();
     error PermissionAlreadyUsed();
     error PlanNotFrozen();
+    error InvalidStandingPermission();
     error InvalidSignature();
     error TokenPairMismatch();
     error RouterMismatch();
@@ -43,14 +50,15 @@ contract PlanAccount {
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
     );
     bytes32 private constant PERMISSION_TYPEHASH = keccak256(
-        "PlanPermission(bytes32 planHash,address agent,address tokenIn,address tokenOut,uint256 maxAmount,address router,uint64 notBefore,uint64 notAfter,uint256 maxPriceDeviationBps)"
+        "PlanPermission(bytes32 planHash,bytes32 standingRunHash,address agent,address tokenIn,address tokenOut,uint256 maxAmount,address router,uint64 notBefore,uint64 notAfter,uint256 maxPriceDeviationBps)"
     );
     bytes32 private constant CALL_TYPEHASH = keccak256(
-        "PlanSwapCall(bytes32 permissionHash,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 referenceAmountOut,uint256 value,bytes32 dataHash)"
+        "PlanSwapCall(bytes32 permissionHash,bytes32 planHash,bytes32 eventKey,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 referenceAmountOut,uint256 value,bytes32 dataHash)"
     );
 
     struct Permission {
         bytes32 planHash;
+        bytes32 standingRunHash;
         address agent;
         address tokenIn;
         address tokenOut;
@@ -62,6 +70,8 @@ contract PlanAccount {
     }
 
     struct SwapCall {
+        bytes32 planHash;
+        bytes32 eventKey;
         address tokenIn;
         address tokenOut;
         uint256 amountIn;
@@ -77,6 +87,7 @@ contract PlanAccount {
 
     mapping(bytes32 => bool) public revoked;
     mapping(bytes32 => bool) public used;
+    mapping(bytes32 => bool) public usedForWindow;
 
     event PermissionRevoked(bytes32 indexed permissionHash, address indexed owner);
     event PermissionUsed(bytes32 indexed permissionHash, bytes32 indexed callHash);
@@ -112,6 +123,8 @@ contract PlanAccount {
             abi.encode(
                 CALL_TYPEHASH,
                 permissionHashValue,
+                swap.planHash,
+                swap.eventKey,
                 swap.tokenIn,
                 swap.tokenOut,
                 swap.amountIn,
@@ -143,7 +156,10 @@ contract PlanAccount {
     ) external payable returns (bytes memory result) {
         if (msg.sender != permission.agent) revert NotAgent();
         if (permission.agent == address(0) || permission.router == address(0)) revert ZeroAddress();
-        if (permission.planHash == bytes32(0)) revert ZeroHash();
+        if (permission.planHash == bytes32(0) && permission.standingRunHash == bytes32(0)) revert ZeroHash();
+        if (permission.planHash != bytes32(0) && permission.standingRunHash != bytes32(0)) {
+            revert InvalidStandingPermission();
+        }
         if (permission.notAfter < permission.notBefore) revert InvalidPermissionWindow();
         if (block.timestamp < permission.notBefore || block.timestamp > permission.notAfter) {
             revert PermissionExpired();
@@ -162,16 +178,27 @@ contract PlanAccount {
 
         bytes32 permissionHashValue = _permissionHash(permission);
         if (revoked[permissionHashValue]) revert PermissionIsRevoked();
-        if (!planBook.isPlanHashActive(accountOwner(), permission.planHash)) {
-            revert PlanNotFrozen();
+        bytes32 useKey = permissionHashValue;
+        if (permission.standingRunHash == bytes32(0)) {
+            if (swap.planHash != permission.planHash) revert PlanNotFrozen();
+            if (!planBook.isPlanHashActive(accountOwner(), permission.planHash)) revert PlanNotFrozen();
+            if (used[permissionHashValue]) revert PermissionAlreadyUsed();
+        } else {
+            if (
+                !planBook.isStandingPlanForRunAndEvent(
+                    accountOwner(), permission.standingRunHash, swap.planHash, swap.eventKey
+                )
+            ) revert PlanNotFrozen();
+            useKey = keccak256(abi.encode(permissionHashValue, swap.eventKey));
+            if (usedForWindow[useKey]) revert PermissionAlreadyUsed();
         }
 
         bytes32 digest = permissionDigest(permission, swap);
-        if (used[permissionHashValue]) revert PermissionAlreadyUsed();
         if (!_validOwnerSignature(digest, signature)) revert InvalidSignature();
         if (executing) revert ReentrantCall();
         executing = true;
-        used[permissionHashValue] = true;
+        if (permission.standingRunHash == bytes32(0)) used[permissionHashValue] = true;
+        else usedForWindow[useKey] = true;
         emit PermissionUsed(permissionHashValue, digest);
 
         if (permission.tokenIn != address(0)) {
@@ -200,6 +227,7 @@ contract PlanAccount {
                 abi.encode(
                     PERMISSION_TYPEHASH,
                     permission.planHash,
+                    permission.standingRunHash,
                     permission.agent,
                     permission.tokenIn,
                     permission.tokenOut,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {PlanAccount, IPlanBook} from "../src/PlanAccount.sol";
+import {PlanAccount} from "../src/PlanAccount.sol";
 import {PlanBook} from "../src/PlanBook.sol";
 
 interface VmPlanAccount {
@@ -56,6 +56,7 @@ contract PlanAccountTest {
     ) private view returns (PlanAccount.Permission memory permission) {
         permission = PlanAccount.Permission({
             planHash: planHash,
+            standingRunHash: bytes32(0),
             agent: agent,
             tokenIn: address(token),
             tokenOut: tokenOut,
@@ -73,6 +74,8 @@ contract PlanAccountTest {
         PlanAccountRouter router
     ) private view returns (PlanAccount.SwapCall memory swap) {
         swap = PlanAccount.SwapCall({
+            planHash: planHash,
+            eventKey: eventKey,
             tokenIn: address(token),
             tokenOut: tokenOut,
             amountIn: 100,
@@ -217,5 +220,75 @@ contract PlanAccountTest {
         PlanBook book = new PlanBook(address(this), agent);
         PlanAccount delegated = new PlanAccount(address(book), address(0));
         _assert(delegated.accountOwner() == address(delegated), "delegated owner mismatch");
+    }
+
+    function testStandingPermissionAllowsOneCallPerFrozenWindowOnly() external {
+        address user = VM.addr(USER_KEY);
+        PlanBook book = new PlanBook(user, agent);
+        bytes32 runHash = keccak256("standing-run");
+        bytes32 firstPlanHash = keccak256("standing-plan-1");
+        bytes32 secondPlanHash = keccak256("standing-plan-2");
+        bytes32 firstEventKey = keccak256("TSLA:overnight:2026-10-05");
+        bytes32 secondEventKey = keccak256("TSLA:overnight:2026-10-06");
+        VM.prank(agent);
+        book.freezeStandingPlan(
+            user, firstEventKey, firstPlanHash, runHash, "TSLA", uint64(block.timestamp + 1 days), 1
+        );
+        VM.prank(agent);
+        book.freezeStandingPlan(
+            user, secondEventKey, secondPlanHash, runHash, "TSLA", uint64(block.timestamp + 2 days), 2
+        );
+
+        PlanAccountToken token = new PlanAccountToken();
+        PlanAccountRouter router = new PlanAccountRouter();
+        PlanAccount account = new PlanAccount(address(book), user);
+        PlanAccount.Permission memory permission = PlanAccount.Permission({
+            planHash: bytes32(0),
+            standingRunHash: runHash,
+            agent: agent,
+            tokenIn: address(token),
+            tokenOut: tokenOut,
+            maxAmount: 100,
+            router: address(router),
+            notBefore: uint64(block.timestamp),
+            notAfter: uint64(block.timestamp + 1 hours),
+            maxPriceDeviationBps: 100
+        });
+        PlanAccount.SwapCall memory firstSwap = _swap(token, router);
+        firstSwap.planHash = firstPlanHash;
+        firstSwap.eventKey = firstEventKey;
+        bytes memory firstSignature = _signature(account, permission, firstSwap);
+        VM.prank(agent);
+        account.executeSwap(permission, firstSignature, firstSwap);
+
+        PlanAccount.SwapCall memory secondSwap = _swap(token, router);
+        secondSwap.planHash = secondPlanHash;
+        secondSwap.eventKey = secondEventKey;
+        bytes memory secondSignature = _signature(account, permission, secondSwap);
+        VM.prank(agent);
+        account.executeSwap(permission, secondSignature, secondSwap);
+        _assert(router.calls() == 2, "standing permission did not reach both windows");
+
+        bool replayReverted;
+        VM.prank(agent);
+        try account.executeSwap(permission, secondSignature, secondSwap) {
+            replayReverted = false;
+        } catch {
+            replayReverted = true;
+        }
+        _assert(replayReverted, "standing permission replayed a window");
+
+        PlanAccount.SwapCall memory unknownSwap = _swap(token, router);
+        unknownSwap.planHash = keccak256("not-frozen");
+        unknownSwap.eventKey = keccak256("TSLA:overnight:2026-10-07");
+        bytes memory unknownSignature = _signature(account, permission, unknownSwap);
+        VM.prank(agent);
+        bool unknownReverted;
+        try account.executeSwap(permission, unknownSignature, unknownSwap) {
+            unknownReverted = false;
+        } catch {
+            unknownReverted = true;
+        }
+        _assert(unknownReverted, "unfrozen standing plan was accepted");
     }
 }
