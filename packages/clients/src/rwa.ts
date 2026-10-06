@@ -75,6 +75,49 @@ function parseMultiplier(value: unknown, field: string): string {
   return multiplier;
 }
 
+export interface RwaMultiplierSources {
+  list: string;
+  asset: string;
+  contract: string | null;
+}
+
+function normalizedMultiplier(value: string, field: string): string {
+  if (!/^\d+(?:\.\d+)?$/.test(value)) {
+    throw new ClientError("shape", `Invalid positive decimal in ${field}.`, { field, value });
+  }
+  const [integerPart = "", fractionPart = ""] = value.split(".");
+  const integer = integerPart.replace(/^0+(?=\d)/, "");
+  const fraction = fractionPart.replace(/0+$/, "");
+  if (integer === "0" && fraction.length === 0) {
+    throw new ClientError("shape", `Invalid positive decimal in ${field}.`, { field, value });
+  }
+  return fraction.length === 0 ? integer : `${integer}.${fraction}`;
+}
+
+/**
+ * Compares the three independent share-count sources without converting them
+ * through JavaScript Number, which would lose precision for long multipliers.
+ */
+export function validateMultiplierAgreement(sources: RwaMultiplierSources): RwaMultiplierSources {
+  const normalized = {
+    list: normalizedMultiplier(sources.list, "list multiplier"),
+    asset: normalizedMultiplier(sources.asset, "asset multiplier"),
+    contract:
+      sources.contract === null
+        ? null
+        : normalizedMultiplier(sources.contract, "contract multiplier")
+  } satisfies RwaMultiplierSources;
+  const values = [normalized.list, normalized.asset];
+  if (normalized.contract !== null) values.push(normalized.contract);
+  if (values.some((value) => value !== normalized.list)) {
+    throw new ClientError("shape", "Binance RWA multiplier sources disagree.", {
+      sources,
+      normalized
+    });
+  }
+  return normalized;
+}
+
 function parseMarketStatusName(value: unknown, field: string): RwaMarketStatus["marketStatus"] {
   if (value === null) return null;
   if (
@@ -129,6 +172,16 @@ export function parseRwaList(record: SourceRecord<unknown>, type: RwaListType): 
 
 export function parseBstockList(record: SourceRecord<unknown>): RwaToken[] {
   return parseRwaList(record, 3);
+}
+
+export function parseAssetMultiplier(record: SourceRecord<unknown>): string | null {
+  const body = record.response.body;
+  assertBusinessSuccess(body, "Binance RWA asset multiplier");
+  if (!isObject(body.data)) {
+    throw new ClientError("shape", "Binance RWA asset multiplier data is not an object.");
+  }
+  if (body.data.multiplier === undefined || body.data.multiplier === null) return null;
+  return parseMultiplier(body.data.multiplier, "data.multiplier");
 }
 
 function parseNullableString(value: unknown, field: string): string | null {

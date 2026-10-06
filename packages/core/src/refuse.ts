@@ -13,6 +13,10 @@ export const refusalCodes = [
   "ORDER_FAILED",
   "AUDIT_FLAGGED",
   "AUDIT_UNAVAILABLE",
+  "AUDIT_NO_DATA",
+  "MULTIPLIER_MISMATCH",
+  "NO_SIZE_LIQUIDITY",
+  "LOCK_MISSED",
   "QUOTA_LOW",
   "TOKEN_NOT_ALLOWED",
   "PERMISSION_EXPIRED",
@@ -42,6 +46,11 @@ export interface RefusalDetails {
   quotaNeededUsd?: string;
   sessionEndsAt?: string;
   gapPct?: string;
+  multiplierA?: string;
+  multiplierB?: string;
+  displayedGapPct?: string;
+  orderUsd?: string;
+  sizedPricePerShare?: string;
 }
 
 function required(details: RefusalDetails, field: keyof RefusalDetails): string {
@@ -91,6 +100,18 @@ export function refusal(code: RefusalCode, details: RefusalDetails): Refusal {
       break;
     case "AUDIT_UNAVAILABLE":
       sentence = "The security check is unavailable, so no trade.";
+      break;
+    case "AUDIT_NO_DATA":
+      sentence = `The security check has no data on ${t}; its address is from Binance's official stock list.`;
+      break;
+    case "MULTIPLIER_MISMATCH":
+      sentence = `Binance's sources disagree on how many shares one ${t} is (${required(details, "multiplierA")} vs ${required(details, "multiplierB")}), so no trade.`;
+      break;
+    case "NO_SIZE_LIQUIDITY":
+      sentence = `${t} looks ${required(details, "displayedGapPct")}% cheaper on screen, but a $${required(details, "orderUsd")} order would only get ${required(details, "sizedPricePerShare")}; no trade.`;
+      break;
+    case "LOCK_MISSED":
+      sentence = "This window's copy wasn't locked before the close, so it didn't run.";
       break;
     case "QUOTA_LOW":
       sentence = `Your limit has $${required(details, "quotaLeftUsd")} left; this plan needs $${required(details, "quotaNeededUsd")}.`;

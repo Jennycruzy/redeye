@@ -6,6 +6,7 @@ import {
   callRpc,
   ClientError,
   parseBstockList,
+  parseAssetMultiplier,
   parseAssetMarketStatus,
   parseEarningsCalendar,
   parseGeckoPool,
@@ -16,7 +17,8 @@ import {
   parseXyzEquityPrices,
   parseSecSubmissions,
   assertUsableXyzPrice,
-  storeRawRecord
+  storeRawRecord,
+  validateMultiplierAgreement
 } from "./index.js";
 
 async function fixture(name: string): Promise<SourceRecord<unknown>> {
@@ -79,6 +81,49 @@ describe("recorded source clients", () => {
 
     expect(status.reasonCode).toBe("TRADING");
     expect(status.marketStatus).toBeNull();
+  });
+
+  it("compares long multipliers without losing decimal precision", () => {
+    expect(
+      validateMultiplierAgreement({
+        list: "1.000778223752807865000",
+        asset: "1.000778223752807865",
+        contract: "1.0007782237528078650"
+      })
+    ).toEqual({
+      list: "1.000778223752807865",
+      asset: "1.000778223752807865",
+      contract: "1.000778223752807865"
+    });
+  });
+
+  it("fails loudly when share-count sources disagree", () => {
+    expect(() => validateMultiplierAgreement({ list: "1", asset: "10", contract: null })).toThrow(
+      "multiplier sources disagree"
+    );
+  });
+
+  it("parses an optional per-asset multiplier without inventing one", () => {
+    const base = {
+      v: 1 as const,
+      fetchedAt: "2026-10-05T00:00:00.000Z",
+      completedAt: "2026-10-05T00:00:00.100Z",
+      request: { method: "GET" as const, url: "https://example.invalid/status" },
+      response: {
+        status: 200,
+        ok: true,
+        body: {
+          success: true,
+          code: "000000",
+          data: { multiplier: "10.000000000000000000" }
+        }
+      }
+    };
+    expect(parseAssetMultiplier(base)).toBe("10.000000000000000000");
+    const missing = structuredClone(base);
+    const missingData = (missing.response.body as { data: { multiplier?: string } }).data;
+    delete missingData.multiplier;
+    expect(parseAssetMultiplier(missing)).toBeNull();
   });
 
   it("parses Nasdaq estimates without filling empty EPS values", async () => {

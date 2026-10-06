@@ -39,6 +39,16 @@ function triggerDropPct(input: DecisionInput, real: Decimal): Decimal {
   return close.minus(real).div(close).mul(100);
 }
 
+function triggerRisePct(input: DecisionInput, real: Decimal): Decimal {
+  const close = decimal(input.prices.C, "US close");
+  if (close.lte(0)) throw new Error("US close must be greater than zero.");
+  return real.minus(close).div(close).mul(100);
+}
+
+function tokenBelowRealGapPct(input: DecisionInput, real: Decimal): Decimal {
+  return real.minus(decimal(input.prices.T, "token price")).div(real).mul(100);
+}
+
 function refused(
   code: RefusalCode,
   input: DecisionInput,
@@ -239,6 +249,52 @@ function buyDip(input: DecisionInput): Decision {
   };
 }
 
+function sellRise(input: DecisionInput): Decision {
+  const real = realPrice(input);
+  if ("action" in real) return real;
+  const trigger = decimal(
+    required(input.plan.params.triggerRisePct, "triggerRisePct"),
+    "triggerRisePct"
+  );
+  const rise = triggerRisePct(input, real);
+  if (rise.lt(trigger)) {
+    return input.atMs >= input.event.openTs
+      ? refused("CONDITION_NOT_MET", input)
+      : noTrade(
+          `Sell-the-rise plan is waiting: the 24/7 price is ${rise.toSignificantDigits(30).toString()}% above the close; the trigger is ${trigger.toString()}%.`
+        );
+  }
+  if (input.atMs >= input.event.openTs) return refused("WINDOW_CLOSED", input);
+  const maximumGap = decimal(
+    required(input.plan.params.maxGapToRealPricePct, "maxGapToRealPricePct"),
+    "maxGapToRealPricePct"
+  );
+  const gap = tokenBelowRealGapPct(input, real);
+  if (gap.gt(maximumGap)) {
+    return refused("PRICE_OFF_REAL", input, {
+      gapPct: gap.toSignificantDigits(30).toString(),
+      limitPct: maximumGap.toString()
+    });
+  }
+  const gate = commonTradeGate(input);
+  if (gate) return gate;
+  const quote = quoteFor(input, "sell");
+  if ("action" in quote) return quote;
+  const sellPct = decimal(required(input.plan.params.sellPct, "sellPct"), "sellPct");
+  const shares = decimal(input.plan.heldShares, "heldShares")
+    .mul(sellPct)
+    .div(100)
+    .toSignificantDigits(30)
+    .toString();
+  return {
+    action: "sell",
+    size: { shares },
+    wrapper: quote.quote.wrapper,
+    reason: `Sell the rise: 24/7 price ${rise.toSignificantDigits(30).toString()}% above the close; token is no more than ${gap.toSignificantDigits(30).toString()}% below it.`,
+    refusal: null
+  };
+}
+
 function react(input: DecisionInput): Decision {
   if (input.event.kind !== "earnings" || input.event.consensus === null) {
     return refused("NO_CONSENSUS", input);
@@ -312,6 +368,7 @@ export function decide(input: DecisionInput): Decision {
   }
   if (input.plan.kind === "guard") return guard(input);
   if (input.plan.kind === "buy_dip") return buyDip(input);
+  if (input.plan.kind === "sell_rise") return sellRise(input);
   if (input.plan.kind === "protect") return protect(input);
   return react(input);
 }

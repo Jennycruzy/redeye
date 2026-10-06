@@ -21,6 +21,16 @@ export interface ReceiptFill {
   step: number;
   txHash: `0x${string}`;
   confirmedAt: string;
+  transfers?: ReceiptTransferExpectation[];
+}
+
+export interface ReceiptTransferExpectation {
+  tokenAddress: string;
+  account: string;
+  direction: "in" | "out";
+  amountRaw: string;
+  txHash?: `0x${string}`;
+  logIndex?: number;
 }
 
 export interface ReceiptBundle {

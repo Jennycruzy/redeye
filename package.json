@@ -19,7 +19,7 @@
     "web:build": "pnpm --filter @redeye/web build",
     "contract:test": "forge test --root contracts --offline",
     "contract:build": "forge build --root contracts --offline",
-    "test": "pnpm study:offhours:test && pnpm --recursive --if-present test",
+    "test": "pnpm study:offhours:test && node --test scripts/reconcile.test.mjs && pnpm --recursive --if-present test",
     "typecheck": "pnpm --recursive --if-present typecheck",
     "lint": "pnpm --recursive --if-present lint",
     "format:check": "prettier --check ."

@@ -4,7 +4,7 @@ import { assertClaimAllowed, canPublishClaim } from "./claims.js";
 import { decide } from "./decide.js";
 import { verifyExtractedReport } from "./extract.js";
 import { assertValidPlan, planLockDeadlineMs, validatePlan } from "./plan-validation.js";
-import { checkQuote } from "./quote-check.js";
+import { checkQuote, compareFillToQuote } from "./quote-check.js";
 import { hashDecision, hashPlan, hashVerdict, makeEventKey } from "./receipt.js";
 import { verifyReceipt } from "./verify.js";
 import { refusal, refusalCodes } from "./refuse.js";
@@ -237,6 +237,102 @@ describe("quote checks", () => {
 
     expect(checked.result.code).toBe("REAL_PRICE_UNAVAILABLE");
     expect(checked.refusal?.sentence).toBe("We can't see the real price right now, so no trade.");
+  });
+
+  it("blocks a multiplier disagreement and keeps the source values", () => {
+    const checked = checkQuote({
+      ticker: "NVDA",
+      quote: quote(),
+      expectedTokenAddress: tokenAddress,
+      expectedWrapper: "bStock",
+      usReferencePricePerShare: "25",
+      realPricePerShare: "24",
+      realPriceAgeSeconds: 10,
+      marketOpen: true,
+      maxPriceImpactPct: "1",
+      checkedAtMs: 1000,
+      multiplierSources: { list: "1", asset: "10", contract: "1" }
+    });
+
+    expect(checked.result.code).toBe("MULTIPLIER_MISMATCH");
+    expect(checked.result.stage).toBe("multiplier");
+    expect(checked.result.multiplierA).toBe("1");
+    expect(checked.result.multiplierB).toBe("10");
+    expect(checked.checks.map((entry) => entry.stage)).toEqual(["quote", "multiplier"]);
+    expect(checked.refusal?.sentence).toBe(
+      "Binance's sources disagree on how many shares one NVDA is (1 vs 10), so no trade."
+    );
+  });
+
+  it("rejects an exact-sized quote that is too far from the displayed price", () => {
+    const checked = checkQuote({
+      ticker: "NVDA",
+      quote: quote(),
+      expectedTokenAddress: tokenAddress,
+      expectedWrapper: "bStock",
+      usReferencePricePerShare: "25",
+      realPricePerShare: "24",
+      realPriceAgeSeconds: 10,
+      marketOpen: true,
+      maxPriceImpactPct: "1",
+      checkedAtMs: 1000,
+      displayedPricePerShare: "20"
+    });
+
+    expect(checked.result.code).toBe("NO_SIZE_LIQUIDITY");
+    expect(checked.result.stage).toBe("sized_quote");
+    expect(checked.result.orderUsd).toBe("25");
+    expect(checked.result.sizedPricePerShare).toBe("25");
+    expect(checked.refusal?.sentence).toBe(
+      "NVDA looks 25% cheaper on screen, but a $25 order would only get 25; no trade."
+    );
+  });
+
+  it("compares the simulated output with the quoted output", () => {
+    const checked = checkQuote({
+      ticker: "NVDA",
+      quote: quote(),
+      expectedTokenAddress: tokenAddress,
+      expectedWrapper: "bStock",
+      usReferencePricePerShare: "25",
+      realPricePerShare: "24",
+      realPriceAgeSeconds: 10,
+      marketOpen: true,
+      maxPriceImpactPct: "1",
+      checkedAtMs: 1000,
+      simulation: { outputAmount: "24" }
+    });
+
+    expect(checked.result.code).toBe("SIM_FAILED");
+    expect(checked.result.stage).toBe("simulation");
+    expect(checked.result.quoteOutputAmount).toBe("25");
+    expect(checked.result.simulationOutputAmount).toBe("24");
+    expect(checked.checks.map((entry) => entry.stage)).toEqual(["quote", "simulation"]);
+    expect(checked.refusal?.sentence).toContain(
+      "Simulation output 24 differs from quoted output 25"
+    );
+  });
+
+  it("checks a confirmed fill against the quote and the reference", () => {
+    const checked = compareFillToQuote({
+      ticker: "NVDA",
+      quote: quote(),
+      filledOutputAmount: "24.9",
+      filledPricePerShare: "24.9",
+      referencePricePerShare: "25"
+    });
+    expect(checked.passed).toBe(true);
+    expect(checked.deviationFromQuotePct).toBe("0.4");
+
+    const rejected = compareFillToQuote({
+      ticker: "NVDA",
+      quote: quote(),
+      filledOutputAmount: "23",
+      filledPricePerShare: "23",
+      referencePricePerShare: "25"
+    });
+    expect(rejected.passed).toBe(false);
+    expect(rejected.deviationFromQuotePct).toBe("8");
   });
 });
 
@@ -525,6 +621,106 @@ describe("deterministic decisions", () => {
     expect(result.refusal?.code).toBe("PRICE_OFF_REAL");
   });
 
+  it("executes Sell the rise when the rise trigger and one-sided price band pass", () => {
+    const candidate = quote({ outputAmount: "104.8" });
+    const check = checkQuote({
+      ticker: "NVDA",
+      quote: candidate,
+      expectedTokenAddress: tokenAddress,
+      expectedWrapper: "bStock",
+      usReferencePricePerShare: "100",
+      realPricePerShare: "105",
+      realPriceAgeSeconds: 10,
+      marketOpen: false,
+      maxPriceImpactPct: "1",
+      checkedAtMs: 1000
+    }).result;
+    const result = decide(
+      decisionInput({
+        event: event({ kind: "overnight", lockTs: 1000, openTs: 10_000, releaseTs: null }),
+        plan: plan({
+          kind: "sell_rise",
+          params: {
+            maxPriceImpactPct: "1",
+            minPoolDepthUsd: "50000",
+            triggerRisePct: "4",
+            sellPct: "25",
+            maxGapToRealPricePct: "0.3"
+          }
+        }),
+        quotes: [candidate],
+        quoteChecks: [check],
+        atMs: 2000,
+        prices: {
+          C: "100",
+          P: "105",
+          T: "104.8",
+          sources: { C: "nasdaq", P: "hyperliquid:xyz:NVDA", T: "pool" },
+          ages: { C: 3600, P: 10, T: 5 }
+        }
+      })
+    );
+
+    expect(result.action).toBe("sell");
+    expect(result.size.shares).toBe("0.5");
+  });
+
+  it("records an unmet Sell the rise trigger as kept at the open", () => {
+    const result = decide(
+      decisionInput({
+        event: event({ kind: "overnight", lockTs: 1000, openTs: 10_000, releaseTs: null }),
+        plan: plan({
+          kind: "sell_rise",
+          params: {
+            maxPriceImpactPct: "1",
+            minPoolDepthUsd: "50000",
+            triggerRisePct: "4",
+            sellPct: "25",
+            maxGapToRealPricePct: "0.3"
+          }
+        }),
+        atMs: 10_000,
+        prices: {
+          C: "100",
+          P: "103",
+          T: "103",
+          sources: { C: "nasdaq", P: "hyperliquid:xyz:NVDA", T: "pool" },
+          ages: { C: 3600, P: 10, T: 5 }
+        }
+      })
+    );
+
+    expect(result.refusal?.code).toBe("CONDITION_NOT_MET");
+  });
+
+  it("refuses Sell the rise when the token is too far below the real price", () => {
+    const result = decide(
+      decisionInput({
+        event: event({ kind: "weekend", lockTs: 1000, openTs: 10_000, releaseTs: null }),
+        plan: plan({
+          kind: "sell_rise",
+          params: {
+            maxPriceImpactPct: "1",
+            minPoolDepthUsd: "50000",
+            triggerRisePct: "4",
+            sellPct: "25",
+            maxGapToRealPricePct: "0.3"
+          }
+        }),
+        atMs: 2000,
+        prices: {
+          C: "100",
+          P: "105",
+          T: "104",
+          sources: { C: "nasdaq", P: "hyperliquid:xyz:NVDA", T: "pool" },
+          ages: { C: 3600, P: 10, T: 5 }
+        }
+      })
+    );
+
+    expect(result.refusal?.code).toBe("PRICE_OFF_REAL");
+  });
+
   it("buys a dip when its price condition and quote pass", () => {
     const candidate = quote({
       id: "dip-buy",
@@ -597,7 +793,12 @@ describe("deterministic decisions", () => {
           quotaLeftUsd: "10",
           quotaNeededUsd: "25",
           sessionEndsAt: "2026-10-05T23:00:00.000Z",
-          gapPct: "2.1"
+          gapPct: "2.1",
+          multiplierA: "1",
+          multiplierB: "10",
+          displayedGapPct: "25",
+          orderUsd: "25",
+          sizedPricePerShare: "25"
         }).sentence.length
       ).toBeGreaterThan(0);
     }
@@ -670,6 +871,55 @@ describe("v1.5 proof rules", () => {
       ])
     );
     expect(new Date(planLockDeadlineMs(window)).toISOString()).toBe("2026-10-09T19:55:00.000Z");
+  });
+
+  it("validates Sell the rise bounds and a rebuy time after the open", () => {
+    const window = event({
+      kind: "overnight",
+      lockTs: Date.parse("2026-10-10T20:00:00.000Z"),
+      openTs: Date.parse("2026-10-11T13:30:00.000Z"),
+      releaseTs: null,
+      consensus: null
+    });
+    const valid = validatePlan(
+      plan({
+        kind: "sell_rise",
+        params: {
+          maxPriceImpactPct: "1",
+          minPoolDepthUsd: "50000",
+          triggerRisePct: "4",
+          sellPct: "25",
+          maxGapToRealPricePct: "0.3",
+          rebuyAtMs: window.openTs + 30 * 60 * 1000
+        }
+      }),
+      window
+    );
+    expect(valid.valid).toBe(true);
+
+    const invalid = validatePlan(
+      plan({
+        kind: "sell_rise",
+        params: {
+          maxPriceImpactPct: "1",
+          minPoolDepthUsd: "50000",
+          triggerRisePct: "0.5",
+          sellPct: "5",
+          maxGapToRealPricePct: "3",
+          rebuyAtMs: window.openTs - 1
+        }
+      }),
+      window
+    );
+    expect(invalid.valid).toBe(false);
+    expect(invalid.issues.map((issue) => issue.field)).toEqual(
+      expect.arrayContaining([
+        "params.triggerRisePct",
+        "params.sellPct",
+        "params.maxGapToRealPricePct",
+        "params.rebuyAtMs"
+      ])
+    );
   });
 
   it("creates stable event and receipt hashes", () => {

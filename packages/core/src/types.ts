@@ -2,7 +2,7 @@ import type { Wrapper } from "@redeye/shared";
 
 export type EventKind =
   "overnight" | "weekend" | "holiday" | "earnings" | "scheduled_report" | "material_filing";
-export type PlanKind = "guard" | "buy_dip" | "protect" | "hold" | "react";
+export type PlanKind = "guard" | "buy_dip" | "sell_rise" | "protect" | "hold" | "react";
 export type DecisionAction = "sell" | "buy" | "hold" | "none";
 export type TradeDirection = "sell-only" | "buy-only" | "both";
 
@@ -28,6 +28,7 @@ export interface ExtractedReport {
 
 export interface PlanContext {
   kind: PlanKind;
+  standingRunId?: string | null;
   ticker: string;
   wrapper: Wrapper;
   tokenAddress: string;
@@ -39,7 +40,9 @@ export interface PlanContext {
     sellAtMs?: number;
     maxUsd?: string;
     triggerDropPct?: string;
+    triggerRisePct?: string;
     maxGapToRealPricePct?: string;
+    rebuyAtMs?: number | null;
     surpriseThresholdPct?: string;
     unpricedThresholdPct?: string;
     direction?: TradeDirection;
@@ -78,15 +81,42 @@ export interface NormalizedQuote {
   quotedAtMs: number;
 }
 
+export type QuoteCheckCode =
+  | "QUOTE_REJECTED"
+  | "QUOTE_STALE"
+  | "IMPACT_TOO_HIGH"
+  | "REAL_PRICE_UNAVAILABLE"
+  | "MULTIPLIER_MISMATCH"
+  | "NO_SIZE_LIQUIDITY"
+  | "SIM_FAILED";
+
+export type QuoteCheckStage = "quote" | "multiplier" | "sized_quote" | "simulation" | "all";
+
+export interface MultiplierSources {
+  list: string;
+  asset: string;
+  contract: string | null;
+}
+
 export interface QuoteCheckResult {
   quoteId: string;
   passed: boolean;
-  code: "QUOTE_REJECTED" | "QUOTE_STALE" | "IMPACT_TOO_HIGH" | "REAL_PRICE_UNAVAILABLE" | null;
+  code: QuoteCheckCode | null;
+  stage: QuoteCheckStage;
   reason: string;
   impliedPricePerShare: string | null;
   referencePricePerShare: string | null;
   deviationPct: string | null;
   effectiveCostPerShare: string | null;
+  multiplierSources: MultiplierSources | null;
+  multiplierA: string | null;
+  multiplierB: string | null;
+  displayedPricePerShare: string | null;
+  sizedPricePerShare: string | null;
+  orderUsd: string | null;
+  quoteOutputAmount: string | null;
+  simulationOutputAmount: string | null;
+  deviationFromQuotePct: string | null;
 }
 
 export interface Refusal {

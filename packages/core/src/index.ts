@@ -8,5 +8,6 @@ export * from "./quote-check.js";
 export * from "./receipt.js";
 export * from "./refuse.js";
 export * from "./session.js";
+export * from "./standing.js";
 export * from "./types.js";
 export * from "./verify.js";

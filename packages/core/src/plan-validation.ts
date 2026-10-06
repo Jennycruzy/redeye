@@ -85,8 +85,8 @@ export function validatePlan(plan: PlanContext, event: EventContext): PlanValida
     });
   }
 
-  if (plan.kind === "buy_dip" && !isOffHours(event.kind)) {
-    issues.push({ field: "kind", message: "Buy the dip is allowed only for off-hours windows." });
+  if ((plan.kind === "buy_dip" || plan.kind === "sell_rise") && !isOffHours(event.kind)) {
+    issues.push({ field: "kind", message: "This plan is allowed only for off-hours windows." });
   }
   if (plan.kind === "protect" && event.kind !== "earnings" && event.kind !== "scheduled_report") {
     issues.push({ field: "kind", message: "Protect is allowed only for scheduled releases." });
@@ -120,6 +120,37 @@ export function validatePlan(plan: PlanContext, event: EventContext): PlanValida
     const maxUsd = numberValue(plan.params.maxUsd, "params.maxUsd", issues);
     if (maxUsd !== null && maxUsd.lt(5)) {
       issues.push({ field: "params.maxUsd", message: "must be at least 5 USD." });
+    }
+  }
+
+  if (plan.kind === "sell_rise") {
+    const trigger = numberValue(plan.params.triggerRisePct, "params.triggerRisePct", issues);
+    between(trigger, "1", "20", "params.triggerRisePct", issues);
+    const sellPct = numberValue(plan.params.sellPct, "params.sellPct", issues);
+    between(sellPct, "10", "100", "params.sellPct", issues);
+    const maximumGap = numberValue(
+      plan.params.maxGapToRealPricePct,
+      "params.maxGapToRealPricePct",
+      issues
+    );
+    between(maximumGap, "0.1", "2", "params.maxGapToRealPricePct", issues);
+  }
+
+  if (
+    (plan.kind === "guard" || plan.kind === "sell_rise") &&
+    plan.params.rebuyAtMs !== undefined &&
+    plan.params.rebuyAtMs !== null
+  ) {
+    const rebuyAt = numberValue(plan.params.rebuyAtMs, "params.rebuyAtMs", issues);
+    if (rebuyAt !== null) {
+      const earliest = new Decimal(event.openTs);
+      const latest = earliest.plus(6 * 60 * 60 * 1000);
+      if (rebuyAt.lt(earliest) || rebuyAt.gt(latest)) {
+        issues.push({
+          field: "params.rebuyAtMs",
+          message: "must be between the open and six hours after the open."
+        });
+      }
     }
   }
 

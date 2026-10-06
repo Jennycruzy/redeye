@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { encodePacked, keccak256, toBytes } from "viem";
+import { reconcileReceipt } from "./reconcile.mjs";
 
 function canonical(value) {
   if (value === null) return "null";
@@ -71,13 +72,17 @@ if (!path) {
     if (receipt.verdict.outcome === "kept" && hasTradeDecision && receipt.fills.length === 0) {
       errors.push("kept trade receipt has no fill");
     }
+    const reconciliation = await reconcileReceipt(receipt);
+    if (!reconciliation.valid)
+      errors.push(...reconciliation.errors.map((error) => `reconciliation: ${error}`));
     const result = {
       valid: errors.length === 0,
       errors,
       computed: {
         eventKey: computedEventKey,
         planHash: computedPlanHash,
-        verdictHash: computedVerdictHash
+        verdictHash: computedVerdictHash,
+        reconciliation
       }
     };
     console.log(JSON.stringify(result, null, 2));
