@@ -1,6 +1,6 @@
-# Redeye
+Redeye is the agent for when Wall Street is closed. Before the market shuts it writes down what it will do with your stock token, locks that on chain, and at the next open shows whether it kept its word.
 
-Redeye helps a tokenized-stock holder decide before a company reports, then publishes evidence of what happened.
+Redeye reads the last US close, a source-labelled 24/7 equity price, and the token's own BNB Smart Chain price. It turns a plain plan into deterministic checks, publishes the plan fingerprint before the window starts, and keeps the result visible.
 
 Status: deterministic core and PlanBook proof layer in progress. Live execution is
 disabled and no mainnet deployment is claimed by this repository yet.
@@ -23,7 +23,9 @@ Execution is disabled by default and must remain disabled during probes.
 The current implementation establishes the first proof slice:
 
 - typed source records and fail-loud public-data parsers;
-- deterministic Protect, Hold and React decisions;
+- deterministic overnight, weekend, holiday, Protect, Hold, React, Guard and Buy-the-dip decisions;
+- a source-labelled Hyperliquid `xyz` price client with age and unit checks;
+- a frozen off-hours study rebuilt from committed raw records with a Node command;
 - quote freshness, address, reference-price and price-impact checks;
 - verbatim filing-value verification;
 - canonical plan, decision and verdict hashes;
@@ -31,10 +33,10 @@ The current implementation establishes the first proof slice:
 - a typed agent HTTP boundary and Node 22 SQLite store with explicit empty and
   unconfigured states.
 
-The central story is deliberately narrow: a plan must be frozen before its
-release, then end as a confirmed action or a visible refusal. Until a live plan
-resolves, replay output must be labeled `REPLAY` and simulations must be labeled
-`SIMULATED`.
+The central story is deliberately narrow: a plan must be frozen before the
+market-close window, then end as a confirmed action or a visible refusal. Until
+a live plan resolves, replay output must be labeled `REPLAY` and simulations
+must be labeled `SIMULATED`.
 
 ## Verification
 

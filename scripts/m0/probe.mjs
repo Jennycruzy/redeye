@@ -10,7 +10,7 @@ const reportPath = join(rawRoot, "latest-report.json");
 const timeoutMs = 15_000;
 const date = process.env.M0_DATE || new Date().toISOString().slice(0, 10);
 const rpcUrl = process.env.BSC_RPC_URL_LIVE || "https://bsc-dataseed.bnbchain.org";
-const secUserAgent = process.env.SEC_USER_AGENT || "Redeye (contact@example.com)";
+const secUserAgent = process.env.SEC_USER_AGENT?.trim() || null;
 
 const requiredNodeMajor = 22;
 const nodeMajor = Number(process.versions.node.split(".")[0]);
@@ -38,7 +38,7 @@ async function requestJson(name, url, options = {}) {
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const headers = {
     accept: "application/json",
-    "user-agent": "Redeye-M0/0.1 (+https://example.invalid/redeye)",
+    "user-agent": "Redeye/0.1",
     ...(options.headers || {})
   };
 
@@ -134,7 +134,25 @@ async function run() {
     },
     probes: [],
     skipped: [],
-    warnings: []
+    warnings: [],
+    assumptionChecks: {
+      A12: {
+        status: "pending",
+        evidence: "Requires a funded Agentic Wallet and $2 swaps during a night and a weekend."
+      },
+      A18: {
+        status: "pending",
+        evidence: "Requires a real phone test of Face ID from Telegram."
+      },
+      A20: {
+        status: "pending",
+        evidence: "Requires 60-second refresh and weekend-gap observation over the covered stocks."
+      },
+      A21: {
+        status: "pending",
+        evidence: "Requires a simulated and executed swap from the user's smart account."
+      }
+    }
   };
 
   if (statusOnly) {
@@ -158,9 +176,11 @@ async function run() {
       requestJson("nasdaq-earnings-calendar", nasdaqUrl, {
         headers: { "user-agent": "Mozilla/5.0 Redeye-M0/0.1" }
       }),
-      requestJson("sec-company-tickers", secTickerUrl, {
-        headers: { "user-agent": secUserAgent }
-      }),
+      secUserAgent
+        ? requestJson("sec-company-tickers", secTickerUrl, {
+            headers: { "user-agent": secUserAgent }
+          })
+        : Promise.resolve(null),
       requestJson("geckoterminal-bsc-pools", geckoUrl),
       requestJson("hyperliquid-xyz-markets", hyperliquidUrl, {
         method: "POST",
@@ -178,7 +198,6 @@ async function run() {
       summarize(rwaList),
       summarize(marketStatus),
       summarize(nasdaq),
-      summarize(secTicker),
       summarize(gecko),
       summarize(hyperliquid, {
         xyzAssetCount: Array.isArray(hyperliquid.body?.[0]?.universe)
@@ -186,6 +205,25 @@ async function run() {
           : null
       })
     );
+    if (secTicker) {
+      report.probes.push(summarize(secTicker));
+    } else {
+      report.skipped.push({
+        name: "sec-company-tickers",
+        reason: "SEC_USER_AGENT is not set to a real contact address"
+      });
+    }
+    const xyzShapeObserved =
+      hyperliquid.ok &&
+      Array.isArray(hyperliquid.body?.[0]?.universe) &&
+      Array.isArray(hyperliquid.body?.[1]) &&
+      hyperliquid.body[0].universe.length === hyperliquid.body[1].length;
+    report.assumptionChecks.A20 = {
+      status: xyzShapeObserved ? "partial" : "failed",
+      evidence: xyzShapeObserved
+        ? `The public response contains ${hyperliquid.body[0].universe.length} matched xyz markets; refresh limits and weekend continuity remain unmeasured.`
+        : "The public xyz response did not contain matched market and context arrays."
+    };
     if (b402) report.probes.push(summarize(b402));
     else
       report.skipped.push({
@@ -212,7 +250,12 @@ async function run() {
   }
 
   if (!report.prerequisites.nodeRequirementSatisfied) {
-    report.warnings.push("Node 22 or newer is required before M1 CI and package work.");
+    report.warnings.push("Node 22 or newer is required before automated checks and package work.");
+  }
+  if (!secUserAgent) {
+    report.warnings.push(
+      "SEC_USER_AGENT is required before any SEC request; no SEC request was made."
+    );
   }
   if (report.executionEnabled !== "false") {
     report.warnings.push(

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+/// @notice Public record of plans and their proof hashes. It holds no funds.
+/// @dev The historical field name `releaseTs` is the lock boundary for every
+///      window. A plan cannot be frozen at or after that lock time.
 contract PlanBook {
     error NotOwner();
     error NotAgent();
@@ -88,6 +91,8 @@ contract PlanBook {
         agent = newAgent;
     }
 
+    /// @notice Publishes a plan before its lock boundary.
+    /// @param releaseTs The UTC lock time; the legacy ABI name is retained for compatibility.
     function freezePlan(
         address planOwner,
         bytes32 eventKey,
