@@ -29,7 +29,7 @@ The current implementation establishes the first proof slice:
 - quote freshness, address, reference-price and price-impact checks;
 - verbatim filing-value verification;
 - canonical plan, decision and verdict hashes;
-- a no-custody PlanBook contract with uniqueness and lifecycle tests.
+- a no-custody PlanBook contract with uniqueness and lifecycle tests;
 - a typed agent HTTP boundary and Node 22 SQLite store with explicit empty and
   unconfigured states;
 - a live source-backed price service for the US close, 24/7 price and token price,
@@ -66,6 +66,9 @@ The web shell is source-driven and responsive at 360px. Build it with
 `REPLAY` lead card; it does not render sample prices, hashes or counters.
 
 Receipt verification instructions are in [`docs/verification.md`](docs/verification.md).
+
+The read-only service checks and the source-derived study rebuild are documented in
+[`docs/verification.md`](docs/verification.md).
 
 The source probe validates endpoint reachability, response shape, source timestamps and
 local prerequisites before implementation depends on external behavior. Findings

@@ -90,7 +90,7 @@ function LeadCard({ record }: { record: unknown }) {
             <strong>{displayTime(live.freezeBlockTs ?? live.freezeTs)}</strong>
           </div>
           <div>
-            <span>Earliest release source</span>
+            <span>Lock boundary source</span>
             <strong>{displayTime(live.releaseTs ?? live.releaseAt)}</strong>
           </div>
           <div>
@@ -117,7 +117,7 @@ function LeadCard({ record }: { record: unknown }) {
       <div className="eyebrow">
         Lead story <ReplayStamp />
       </div>
-      <h2>NVDA · 26 Aug release night</h2>
+      <h2>NVDA · 26 Aug earnings replay</h2>
       <p>
         No live plan has resolved on this agent yet. The lead story is available as a recorded
         replay; it cannot move money or count in the public record.
@@ -244,8 +244,8 @@ function Landing() {
           <div className="panel">
             <div className="section-heading">
               <div>
-                <div className="eyebrow">Release watch</div>
-                <h2>Next releases</h2>
+                <div className="eyebrow">Market and earnings watch</div>
+                <h2>Next events</h2>
               </div>
               <a href="/data">View data</a>
             </div>
@@ -255,7 +255,7 @@ function Landing() {
               <ErrorState message={calendar.message} retry={calendar.retry} />
             ) : calendarItems.length === 0 ? (
               <EmptyState
-                title="No source-backed releases available"
+                title="No source-backed events available"
                 reason="The agent has not recorded a calendar snapshot yet."
               />
             ) : (
@@ -484,7 +484,7 @@ function ReplayPage() {
       <div className="eyebrow">
         <ReplayStamp />
       </div>
-      <h1>Replay a past release.</h1>
+      <h1>Replay an earnings night.</h1>
       <p className="lede">
         Replay uses recorded source times, minute bars and pool state. It never writes to PlanBook,
         creates a job or moves money.
@@ -492,7 +492,7 @@ function ReplayPage() {
       <section className="panel replay-choice">
         <h2>NVDA · 26 Aug 2026</h2>
         <p>
-          Recorded release-night data is the first judge path. The result stays stamped REPLAY on
+          Recorded earnings-night data is the first judge path. The result stays stamped REPLAY on
           every panel.
         </p>
         <a className="button secondary" href="/replay/nvda-2026-08-26">
@@ -527,7 +527,7 @@ function EvidencePage() {
         </div>
         <div>
           <StatusBadge tone="warn">REPLAY</StatusBadge>
-          <strong>NVDA release-night story</strong>
+          <strong>NVDA earnings-night story</strong>
           <span>Recorded data only until a live plan resolves.</span>
         </div>
         <div>
