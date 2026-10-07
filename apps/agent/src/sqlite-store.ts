@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { AgentStore } from "./types.js";
 
 interface SqliteStatement {
@@ -48,7 +50,10 @@ function sourceRows(rows: Array<Record<string, unknown>>): unknown[] {
 }
 
 export class SqliteAgentStore implements AgentStore {
-  constructor(private readonly database: SqliteDatabase) {
+  constructor(
+    private readonly database: SqliteDatabase,
+    private readonly studyRoot = "data/derived/offhours"
+  ) {
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS documents (
         kind TEXT NOT NULL,
@@ -100,6 +105,40 @@ export class SqliteAgentStore implements AgentStore {
         reason: "No source-backed health snapshot has been recorded yet."
       }
     );
+  }
+
+  async study(): Promise<unknown> {
+    try {
+      const [summaryJson, summaryText, csv] = await Promise.all([
+        readFile(join(this.studyRoot, "summary.json"), "utf8"),
+        readFile(join(this.studyRoot, "summary.txt"), "utf8"),
+        readFile(join(this.studyRoot, "study_rows.csv"), "utf8")
+      ]);
+      let summary: unknown;
+      try {
+        summary = JSON.parse(summaryJson);
+      } catch {
+        throw new StoreError(
+          500,
+          "STUDY_CORRUPT",
+          "The generated study summary is not valid JSON."
+        );
+      }
+      return {
+        state: "ok",
+        source: this.studyRoot,
+        summary,
+        summaryText,
+        csv
+      };
+    } catch (error) {
+      if (error instanceof StoreError) throw error;
+      return {
+        state: "empty",
+        source: this.studyRoot,
+        reason: "The generated off-hours study is not available yet."
+      };
+    }
   }
 
   async calendar(days: number): Promise<unknown> {
@@ -323,8 +362,11 @@ export class SqliteAgentStore implements AgentStore {
   }
 }
 
-export async function createSqliteAgentStore(path: string): Promise<SqliteAgentStore> {
+export async function createSqliteAgentStore(
+  path: string,
+  studyRoot = "data/derived/offhours"
+): Promise<SqliteAgentStore> {
   const sqlite = await import("node:sqlite");
   const database = new sqlite.DatabaseSync(path);
-  return new SqliteAgentStore(database);
+  return new SqliteAgentStore(database, studyRoot);
 }

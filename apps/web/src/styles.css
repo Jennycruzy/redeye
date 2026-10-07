@@ -259,6 +259,36 @@ p {
 .current-prices {
   margin: 18px 0;
 }
+.study-panel {
+  margin: 18px 0;
+}
+.study-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  margin-top: 22px;
+}
+.study-summary {
+  margin-top: 18px;
+  border-top: 1px solid #293944;
+  padding-top: 14px;
+}
+.study-summary summary {
+  color: #f4b860;
+  cursor: pointer;
+  font-weight: 800;
+}
+.study-summary pre {
+  max-height: 360px;
+  overflow: auto;
+  color: #aeb9c4;
+  font:
+    0.78rem/1.55 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+  white-space: pre-wrap;
+}
 .price-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -432,6 +462,7 @@ footer {
   }
   .proof-grid,
   .counter-grid,
+  .study-metrics,
   .two-column,
   .truth-strip {
     grid-template-columns: 1fr 1fr;
@@ -467,6 +498,7 @@ footer {
   }
   .proof-grid,
   .counter-grid,
+  .study-metrics,
   .two-column,
   .price-grid,
   .truth-strip {

@@ -19,7 +19,10 @@ const port = Number(process.env.AGENT_PORT ?? "8787");
 const ownerToken = required("OWNER_API_TOKEN");
 const siteOrigin = required("WEB_ORIGIN");
 mkdirSync(dirname(databasePath), { recursive: true });
-const store = await createSqliteAgentStore(databasePath);
+const store = await createSqliteAgentStore(
+  databasePath,
+  process.env.REDEYE_DERIVED_ROOT ?? "data/derived/offhours"
+);
 const poolMap = await loadPoolMap(
   process.env.REDEYE_POOL_MAP_PATH ?? "data/raw/offhours/pools.json"
 );

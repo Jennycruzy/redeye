@@ -4,6 +4,7 @@ export interface ApiError {
 
 export interface AgentClient {
   health(): Promise<unknown>;
+  study(): Promise<unknown>;
   prices(): Promise<unknown>;
   record(): Promise<unknown>;
   feed(): Promise<unknown>;
@@ -34,6 +35,7 @@ async function get(path: string): Promise<unknown> {
 
 export const agentClient: AgentClient = {
   health: () => get("/health"),
+  study: () => get("/study"),
   prices: () => get("/prices"),
   record: () => get("/record"),
   feed: () => get("/feed"),

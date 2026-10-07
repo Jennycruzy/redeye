@@ -1,5 +1,6 @@
 export interface AgentStore {
   health(): Promise<unknown>;
+  study(): Promise<unknown>;
   calendar(days: number): Promise<unknown>;
   prices(tickers: string[]): Promise<unknown>;
   windows(ticker: string): Promise<unknown>;

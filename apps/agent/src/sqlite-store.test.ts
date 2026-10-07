@@ -34,12 +34,13 @@ class FakeDatabase {
 
 describe("SQLite agent store boundary", () => {
   it("returns explicit empty states and persists drafts and replays", async () => {
-    const store = new SqliteAgentStore(new FakeDatabase());
+    const store = new SqliteAgentStore(new FakeDatabase(), "/path/that/does/not/exist");
     expect(await store.health()).toMatchObject({
       state: "degraded",
       code: "HEALTH_SNAPSHOT_MISSING"
     });
     expect(await store.calendar(21)).toMatchObject({ state: "empty", items: [] });
+    expect(await store.study()).toMatchObject({ state: "empty" });
     expect(await store.wallet()).toMatchObject({ state: "disconnected", connected: false });
 
     const draft = (await store.planDraft({ ticker: "NVDA", kind: "hold" })) as {

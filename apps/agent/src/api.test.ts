@@ -15,6 +15,7 @@ function request(pathname: string, overrides: Partial<AgentRequest> = {}): Agent
 function store(): AgentStore {
   return {
     health: async () => ({ status: "ok", source: "fixture" }),
+    study: async () => ({ state: "ok", source: "fixture" }),
     calendar: async (days) => ({ days }),
     prices: async (tickers) => ({ tickers }),
     windows: async (ticker) => ({ ticker }),
@@ -44,6 +45,13 @@ describe("agent HTTP boundary", () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ status: "ok", source: "fixture" });
     expect(response.headers["access-control-allow-origin"]).toBe(config.siteOrigin);
+  });
+
+  it("routes the generated off-hours study without an owner token", async () => {
+    const api = createAgentApi(store(), config);
+    const response = await api(request("/study"));
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ state: "ok", source: "fixture" });
   });
 
   it("rejects writes without the owner token", async () => {

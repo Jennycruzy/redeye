@@ -54,6 +54,8 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
     try {
       if (request.method === "GET" && root === "health" && parts.length === 1)
         return json(200, await store.health(), config);
+      if (request.method === "GET" && root === "study" && parts.length === 1)
+        return json(200, await store.study(), config);
       if (request.method === "GET" && root === "calendar" && parts.length === 1) {
         const rawDays = request.query.get("days") ?? "21";
         const days = Number(rawDays);

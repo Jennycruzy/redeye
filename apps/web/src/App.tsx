@@ -353,9 +353,19 @@ function RecordPage() {
 function DataPage() {
   const feed = useAgent(useCallback(() => agentClient.feed(), []));
   const health = useAgent(useCallback(() => agentClient.health(), []));
+  const study = useAgent(useCallback(() => agentClient.study(), []));
   const prices = useAgent(useCallback(() => agentClient.prices(), []));
   const healthValue = health.status === "ready" ? health.value : null;
+  const studyValue = study.status === "ready" ? study.value : null;
   const priceItems = prices.status === "ready" ? asItems(prices.value) : [];
+  const studySummary =
+    isObject(studyValue) && isObject(studyValue.summary) ? studyValue.summary : null;
+  const studyStocks =
+    isObject(studySummary) && Array.isArray(studySummary.stocks) ? studySummary.stocks : [];
+  const csvHref =
+    isObject(studyValue) && typeof studyValue.csv === "string"
+      ? `data:text/csv;charset=utf-8,${encodeURIComponent(studyValue.csv)}`
+      : null;
   return (
     <main className="container page">
       <div className="eyebrow">Source-backed data</div>
@@ -394,6 +404,53 @@ function DataPage() {
                 <PriceTriple key={displayValue(item.ticker)} item={item} />
               ))}
           </div>
+        )}
+      </section>
+      <section className="panel study-panel">
+        <div className="section-heading">
+          <div>
+            <div className="eyebrow">Off-hours study</div>
+            <h2>Measured token vs 24/7 price</h2>
+          </div>
+          {csvHref ? (
+            <a className="button secondary" href={csvHref} download="offhours-study.csv">
+              Download CSV
+            </a>
+          ) : null}
+        </div>
+        {study.status === "loading" ? (
+          <div className="skeleton" />
+        ) : study.status === "error" ? (
+          <ErrorState message={study.message} retry={study.retry} />
+        ) : !studySummary ? (
+          <EmptyState
+            title="Study output is not available"
+            reason={displayValue(payloadValue(studyValue, "reason"))}
+          />
+        ) : (
+          <>
+            <div className="study-metrics">
+              <LiveCounter
+                label="Stock-weekend rows"
+                value={payloadValue(studySummary, "samples")}
+                source="Generated from frozen raw records"
+              />
+              <LiveCounter
+                label="Stocks"
+                value={studyStocks.length}
+                source="Exclusions remain explicit"
+              />
+              <LiveCounter
+                label="Median weekend gap"
+                value={`${displayValue(payloadValue(studySummary, "medianWeekendGap"))}%`}
+                source="Friday close to Monday open"
+              />
+            </div>
+            <details className="study-summary">
+              <summary>Read the generated summary</summary>
+              <pre>{displayValue(payloadValue(studyValue, "summaryText"))}</pre>
+            </details>
+          </>
         )}
       </section>
       {feed.status === "loading" ? (
