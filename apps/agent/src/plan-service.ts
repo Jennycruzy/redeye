@@ -79,15 +79,37 @@ export interface StoredPlan {
 export interface PlanRecordItem {
   id: string;
   planId: number;
+  owner: Address;
+  status: PlanStatus;
   ticker: string;
   kind: PlanKind;
+  promise: string;
   window: EventRecord["kind"];
-  lockTs: number;
+  /** Block time of the lock transaction, in milliseconds. */
+  lockedAt: number;
+  closeTs: number;
   openTs: number;
   freezeTx: Hex;
   outcome: Outcome | null;
   reason: string | null;
+  openPrice: string | null;
   verdictTx: Hex | null;
+}
+
+/** The plan in one plain sentence, as shown in the public record. */
+export function describePlan(plan: PlanContext): string {
+  const shares = `${plan.heldShares} ${plan.ticker} shares`;
+  const { params } = plan;
+  if (plan.kind === "guard") {
+    return `If the 24/7 price falls ${params.triggerDropPct}% below the close, sell ${params.sellPct}% of ${shares}.`;
+  }
+  if (plan.kind === "buy_dip") {
+    return `If the 24/7 price falls ${params.triggerDropPct}% below the close, buy up to $${params.maxUsd} of ${plan.ticker}.`;
+  }
+  if (plan.kind === "sell_rise") {
+    return `If the 24/7 price rises ${params.triggerRisePct}% above the close, sell ${params.sellPct}% of ${shares}.`;
+  }
+  return `Hold ${shares} through the window and report the result at the open.`;
 }
 
 export interface PlanStore {
@@ -301,6 +323,7 @@ export class PlanService {
     const cancelled: StoredPlan = { ...stored, status: "cancelled" };
     await this.options.store.savePlan(cancelled);
     await this.options.store.saveRunEvent(id, "cancelled", { txHash: write.txHash });
+    await this.saveRecord(cancelled);
     return cancelled;
   }
 
@@ -328,9 +351,14 @@ export class PlanService {
     }
   }
 
+  /** Rewrites every public record row from the stored plans, so the record always matches them. */
+  async refreshRecord(): Promise<void> {
+    for (const stored of await this.options.store.listPlans()) await this.saveRecord(stored);
+  }
+
   start(intervalMs = 60_000): () => void {
     if (this.timer !== null) throw new Error("The plan service is already running.");
-    void this.tick();
+    void this.refreshRecord().then(() => this.tick());
     this.timer = setInterval(() => void this.tick(), intervalMs);
     return () => this.stop();
   }
@@ -520,19 +548,24 @@ export class PlanService {
   }
 
   private async saveRecord(stored: StoredPlan): Promise<void> {
-    const { plan, event, freeze } = stored;
-    if (!plan || !event || !freeze || stored.planId === undefined) return;
+    const { plan, event, freeze, owner } = stored;
+    if (!plan || !event || !freeze || !owner || stored.planId === undefined) return;
     await this.options.store.saveRecordItem({
       id: stored.id,
       planId: stored.planId,
+      owner,
+      status: stored.status,
       ticker: plan.ticker,
       kind: plan.kind,
+      promise: describePlan(plan),
       window: event.kind,
-      lockTs: event.lockTs ?? 0,
+      lockedAt: freeze.blockTs * 1000,
+      closeTs: event.lockTs ?? 0,
       openTs: event.openTs ?? 0,
       freezeTx: freeze.txHash,
       outcome: stored.verdict?.outcome ?? null,
       reason: stored.verdict?.reason ?? null,
+      openPrice: stored.verdict?.openPrice ?? null,
       verdictTx: stored.verdictChain?.txHash ?? null
     });
   }

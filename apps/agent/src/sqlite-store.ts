@@ -260,8 +260,20 @@ export class SqliteAgentStore implements AgentStore, PlanStore {
   }
 
   async record(): Promise<unknown> {
-    const items = this.many("record");
-    return { state: items.length === 0 ? "empty" : "ok", items };
+    const items = (this.many("record") as PlanRecordItem[]).sort(
+      (left, right) => right.lockedAt - left.lockedAt
+    );
+    const count = (outcome: PlanRecordItem["outcome"]) =>
+      items.filter((item) => item.outcome === outcome).length;
+    return {
+      state: items.length === 0 ? "empty" : "ok",
+      kept: count("kept"),
+      refused: count("refused"),
+      broken: count("broken"),
+      open: items.filter((item) => item.status === "locked" || item.status === "decided").length,
+      cancelled: items.filter((item) => item.status === "cancelled").length,
+      items
+    };
   }
 
   async wallet(): Promise<unknown> {

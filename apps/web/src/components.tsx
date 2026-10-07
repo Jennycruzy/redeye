@@ -134,27 +134,70 @@ export function ErrorState({ message, retry }: { message: string; retry: () => v
   );
 }
 
+const OUTCOME_TONE = { kept: "good", refused: "warn", broken: "bad" } as const;
+
+function txLink(hash: unknown, label: string) {
+  if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash)) return null;
+  return (
+    <a href={`https://bscscan.com/tx/${hash}`} target="_blank" rel="noreferrer">
+      {label}
+    </a>
+  );
+}
+
+/** Minutes between two millisecond timestamps, written for people. */
+export function leadTime(earlierMs: unknown, laterMs: unknown): string {
+  if (typeof earlierMs !== "number" || typeof laterMs !== "number") return "Unavailable";
+  const minutes = Math.round((laterMs - earlierMs) / 60_000);
+  if (minutes < 0) return "after the close";
+  const hours = Math.floor(minutes / 60);
+  return hours > 0
+    ? `${hours} h ${minutes % 60} min before the close`
+    : `${minutes} min before the close`;
+}
+
+export function OutcomeBadge({ item }: { item: Record<string, unknown> }) {
+  const outcome = item.outcome;
+  if (outcome === "kept" || outcome === "refused" || outcome === "broken") {
+    return <StatusBadge tone={OUTCOME_TONE[outcome]}>{outcome.toUpperCase()}</StatusBadge>;
+  }
+  if (item.status === "cancelled") return <StatusBadge>CANCELLED</StatusBadge>;
+  return <StatusBadge tone="warn">RUNNING</StatusBadge>;
+}
+
+export function PlanLinks({ item }: { item: Record<string, unknown> }) {
+  return (
+    <span className="plan-links">
+      {txLink(item.freezeTx, "Lock")}
+      {txLink(item.verdictTx, "Result")}
+    </span>
+  );
+}
+
 export function RecordRow({ item }: { item: Record<string, unknown> }) {
   return (
     <article className="record-row">
       <div>
-        <StatusBadge
-          tone={item.verdict === "kept" ? "good" : item.verdict === "broken" ? "bad" : "warn"}
-        >
-          {displayValue(item.verdict ?? item.status)}
-        </StatusBadge>
+        <OutcomeBadge item={item} />
       </div>
       <div>
-        <strong>{displayValue(item.ticker)}</strong>
-        <span>{displayValue(item.kind ?? item.event)}</span>
+        <strong>
+          {displayValue(item.ticker)} · {displayValue(item.window)}
+        </strong>
+        <span>{displayValue(item.promise)}</span>
       </div>
       <div>
-        <span>Frozen</span>
-        <strong>{displayTime(item.freezeBlockTs ?? item.createdAt)}</strong>
+        <span>Locked</span>
+        <strong>{leadTime(item.lockedAt, item.closeTs)}</strong>
       </div>
       <div>
-        <span>Release source</span>
-        <strong>{displayTime(item.releaseTs ?? item.releaseAt)}</strong>
+        <span>Result</span>
+        <strong>
+          {typeof item.outcome === "string"
+            ? `${displayValue(item.reason)}${typeof item.openPrice === "string" ? ` · open $${item.openPrice}` : ""}`
+            : `at the open, ${displayTime(item.openTs)}`}
+        </strong>
+        <PlanLinks item={item} />
       </div>
     </article>
   );

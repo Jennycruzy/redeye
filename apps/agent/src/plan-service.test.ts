@@ -163,7 +163,17 @@ describe("plan service", () => {
     ]);
     expect(locked.plan).toMatchObject({ tokenAddress: NVDA_TOKEN, wrapper: "bStock" });
     expect(await h.store.record()).toMatchObject({
-      items: [{ id: locked.id, planId: 1, outcome: null }]
+      open: 1,
+      items: [
+        {
+          id: locked.id,
+          planId: 1,
+          status: "locked",
+          outcome: null,
+          closeTs: CLOSE,
+          promise: "If the 24/7 price falls 3% below the close, sell 50% of 2 NVDA shares."
+        }
+      ]
     });
   });
 
@@ -230,7 +240,11 @@ describe("plan service", () => {
     expect(verifyReceipt(receipt as Parameters<typeof verifyReceipt>[0])).toMatchObject({
       valid: true
     });
-    expect(await h.store.record()).toMatchObject({ items: [{ outcome: "kept" }] });
+    expect(await h.store.record()).toMatchObject({
+      kept: 1,
+      open: 0,
+      items: [{ status: "done", outcome: "kept", openPrice: "198.10" }]
+    });
   });
 
   it("publishes a refusal when a triggered plan cannot trade yet", async () => {
@@ -317,6 +331,11 @@ describe("plan service", () => {
     const locked = await lockedGuard(h);
     expect((await h.service.cancel(locked.id)).status).toBe("cancelled");
     expect(h.chain.cancels).toEqual([1]);
+    expect(await h.store.record()).toMatchObject({
+      cancelled: 1,
+      open: 0,
+      items: [{ status: "cancelled" }]
+    });
 
     const late = await harness();
     const running = await lockedGuard(late);

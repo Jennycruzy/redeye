@@ -4,6 +4,9 @@ import {
   EmptyState,
   ErrorState,
   LiveCounter,
+  leadTime,
+  OutcomeBadge,
+  PlanLinks,
   PriceTriple,
   RecordRow,
   ReplayStamp,
@@ -72,43 +75,46 @@ function Navigation({ path }: { path: string }) {
 
 function LeadCard({ record }: { record: unknown }) {
   const items = asItems(record);
-  const live = items[0];
+  // The latest finished plan leads; a plan still running is shown until one finishes.
+  const live = items.find((item) => typeof item.outcome === "string") ?? items[0];
   if (live !== undefined) {
-    const verdict = displayValue(live.verdict ?? live.outcome ?? live.status);
-    const runId = live.runId ?? live.id;
+    const finished = typeof live.outcome === "string";
     return (
       <section className="lead-card live-card">
         <div className="eyebrow">
-          Most recent completed plan <StatusBadge tone="good">LIVE RECORD</StatusBadge>
+          {finished ? "Latest finished plan" : "Plan running now"} <OutcomeBadge item={live} />
         </div>
         <h2>
-          {displayValue(live.ticker)} · {displayValue(live.kind ?? live.event)}
+          {displayValue(live.ticker)} · {displayValue(live.window)} window
         </h2>
+        <p>{displayValue(live.promise)}</p>
         <div className="proof-grid">
           <div>
-            <span>Frozen on chain</span>
-            <strong>{displayTime(live.freezeBlockTs ?? live.freezeTs)}</strong>
+            <span>Locked on chain</span>
+            <strong>{displayTime(live.lockedAt)}</strong>
           </div>
           <div>
-            <span>Lock boundary source</span>
-            <strong>{displayTime(live.releaseTs ?? live.releaseAt)}</strong>
+            <span>US close</span>
+            <strong>
+              {displayTime(live.closeTs)} · {leadTime(live.lockedAt, live.closeTs)}
+            </strong>
           </div>
           <div>
-            <span>Decision</span>
-            <strong>{displayValue(live.decision ?? live.action)}</strong>
+            <span>What happened</span>
+            <strong>
+              {finished ? displayValue(live.reason) : "Checking every minute until the open"}
+            </strong>
           </div>
           <div>
-            <span>Verdict</span>
-            <strong>{verdict}</strong>
+            <span>Opening price</span>
+            <strong>
+              {typeof live.openPrice === "string"
+                ? `$${live.openPrice}`
+                : `At the open, ${displayTime(live.openTs)}`}
+            </strong>
           </div>
         </div>
-        {typeof runId === "string" && runId.length > 0 ? (
-          <a className="button primary" href={`/runs/${runId}`}>
-            Open proof
-          </a>
-        ) : (
-          <StatusBadge tone="warn">VERIFY UNAVAILABLE</StatusBadge>
-        )}
+        <PlanLinks item={live} />
       </section>
     );
   }
@@ -187,14 +193,13 @@ function Landing() {
         <LeadCard record={recordValue} />
         <section className="counter-grid">
           <LiveCounter
-            label="Filings watched today"
-            value={payloadValue(healthValue, "filingsSeenToday")}
+            label="Price checks since start"
+            value={payloadValue(healthValue, "passes")}
           />
           <LiveCounter
-            label="Agent uptime"
-            value={
-              payloadValue(healthValue, "uptime") ?? payloadValue(healthValue, "uptimeSeconds")
-            }
+            label="Plans running"
+            value={payloadValue(recordValue, "open")}
+            source="Agent /record"
           />
           <LiveCounter
             label="Plans kept"
@@ -311,8 +316,8 @@ function Landing() {
             <h2>Every action ends as proof or a refusal.</h2>
           </div>
           <p>
-            The LLM extracts filing text. Deterministic code decides. A trade is called executed
-            only after terminal order status and chain confirmation.
+            The plan is locked on chain before the close. Fixed rules decide, every minute, from
+            sourced prices. The result is written on chain at the open, whatever it is.
           </p>
           <a href="/evidence">What is real?</a>
         </section>
@@ -326,7 +331,7 @@ function RecordPage() {
   return (
     <main className="container page">
       <div className="eyebrow">Public record</div>
-      <h1>Every frozen plan stays visible.</h1>
+      <h1>Every locked plan stays visible.</h1>
       <p className="lede">
         Kept, refused, broken and cancelled plans remain inspectable. Nothing is quietly dropped.
       </p>
@@ -336,11 +341,19 @@ function RecordPage() {
         <ErrorState message={record.message} retry={record.retry} />
       ) : asItems(record.value).length === 0 ? (
         <EmptyState
-          title="No frozen plans yet"
+          title="No locked plans yet"
           reason="The record is empty until the first plan is written on chain."
         />
       ) : (
         <div className="record-list">
+          <p className="record-totals">
+            {["kept", "refused", "broken", "open", "cancelled"]
+              .map(
+                (key) =>
+                  `${displayValue(payloadValue(record.value, key))} ${key === "open" ? "running" : key}`
+              )
+              .join(" · ")}
+          </p>
           {asItems(record.value).map((item, index) => (
             <RecordRow item={item} key={`${displayValue(item.id)}-${index}`} />
           ))}
@@ -521,19 +534,17 @@ function EvidencePage() {
         <div>
           <StatusBadge tone="good">REAL</StatusBadge>
           <strong>PlanBook lifecycle contract</strong>
-          <span>
-            Compiled and covered by offline Foundry tests; mainnet deployment is not claimed.
-          </span>
+          <span>Live on BNB Smart Chain at 0xC7B8…9057; plans are locked and graded there.</span>
         </div>
         <div>
-          <StatusBadge tone="warn">REPLAY</StatusBadge>
-          <strong>NVDA earnings-night story</strong>
-          <span>Recorded data only until a live plan resolves.</span>
+          <StatusBadge tone="good">REAL</StatusBadge>
+          <strong>Off-hours plans</strong>
+          <span>Locked before the close, checked every minute, graded at the open.</span>
         </div>
         <div>
           <StatusBadge tone="warn">NOT WIRED</StatusBadge>
-          <strong>Agentic Wallet execution</strong>
-          <span>Startup refuses wallet writes until the executor is configured.</span>
+          <strong>Trading from a plan</strong>
+          <span>A triggered plan is published as refused until wallet trading is connected.</span>
         </div>
         <div>
           <StatusBadge tone="warn">NOT WIRED</StatusBadge>
