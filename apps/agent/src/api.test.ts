@@ -108,9 +108,15 @@ describe("agent HTTP boundary", () => {
     expect(response.body).toEqual({ ticker: "NVDA" });
   });
 
-  it("allows only the two defined plan actions", async () => {
+  it("routes lock and cancel and rejects other plan actions", async () => {
     const headers = new Headers({ "x-owner-token": config.ownerToken });
     const api = createAgentApi(store(), config);
+    const locked = await api(request("/plans/7/lock", { method: "POST", headers }));
+    expect(locked.status).toBe(200);
+    expect(locked.body).toMatchObject({ id: "7", body: { action: "lock" } });
+    const unsigned = await api(request("/plans/7/lock", { method: "POST" }));
+    expect(unsigned.status).toBe(401);
+
     const response = await api(request("/plans/7/delete", { method: "POST", headers }));
     expect(response.status).toBe(404);
     expect(response.body).toEqual({

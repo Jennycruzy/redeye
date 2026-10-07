@@ -10,10 +10,11 @@
     }
   },
   "dependencies": {
-    "@redeye/core": "workspace:*",
     "@redeye/clients": "workspace:*",
+    "@redeye/core": "workspace:*",
+    "@redeye/shared": "workspace:*",
     "decimal.js": "^10.4.3",
-    "@redeye/shared": "workspace:*"
+    "viem": "^2.21.54"
   },
   "scripts": {
     "test": "vitest run",

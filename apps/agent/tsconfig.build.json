@@ -6,5 +6,5 @@
     "emitDeclarationOnly": false,
     "outDir": "dist"
   },
-  "exclude": ["src/**/*.test.ts"]
+  "exclude": ["src/**/*.test.ts", "src/fake-database.ts"]
 }

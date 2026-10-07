@@ -178,7 +178,7 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
             "This action needs the agent owner token.",
             config
           );
-        if (tail !== "freeze" && tail !== "cancel")
+        if (tail !== "lock" && tail !== "freeze" && tail !== "cancel")
           return error(
             404,
             "PLAN_ACTION_NOT_FOUND",

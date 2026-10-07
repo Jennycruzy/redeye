@@ -1,36 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { FakeDatabase } from "./fake-database.js";
 import { SqliteAgentStore } from "./sqlite-store.js";
-
-class FakeDatabase {
-  private readonly rows = new Map<string, { payload: string; createdAt: string }>();
-
-  exec(sql: string): void {
-    void sql;
-  }
-
-  prepare(sql: string) {
-    return {
-      get: (...parameters: unknown[]) => {
-        if (!sql.includes("WHERE kind = ? AND document_key = ?")) return undefined;
-        const row = this.rows.get(`${parameters[0]}:${parameters[1]}`);
-        return row === undefined ? undefined : { payload: row.payload };
-      },
-      all: (...parameters: unknown[]) => {
-        const kind = String(parameters[0]);
-        return [...this.rows.entries()]
-          .filter(([key]) => key.startsWith(`${kind}:`))
-          .sort((left, right) => left[1].createdAt.localeCompare(right[1].createdAt))
-          .map(([, row]) => ({ payload: row.payload }));
-      },
-      run: (...parameters: unknown[]) => {
-        const key = `${parameters[0]}:${parameters[1]}`;
-        this.rows.set(key, { payload: String(parameters[2]), createdAt: String(parameters[3]) });
-      }
-    };
-  }
-
-  close(): void {}
-}
 
 describe("SQLite agent store boundary", () => {
   it("returns explicit empty states and persists drafts and replays", async () => {

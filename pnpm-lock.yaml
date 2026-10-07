@@ -47,6 +47,9 @@ importers:
       decimal.js:
         specifier: ^10.4.3
         version: 10.6.0
+      viem:
+        specifier: ^2.21.54
+        version: 2.57.3(typescript@5.9.3)
 
   apps/web:
     dependencies:

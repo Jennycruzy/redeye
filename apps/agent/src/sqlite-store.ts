@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ReceiptBundle } from "@redeye/core";
+import { PlanError, type PlanRecordItem, type PlanStore, type StoredPlan } from "./plan-service.js";
+import type { PriceSnapshotOk } from "./price-service.js";
 import type { AgentStore } from "./types.js";
+
+export type PlanActionHandler = (id: string, action: string) => Promise<unknown>;
 
 interface SqliteStatement {
   all(...parameters: unknown[]): Array<Record<string, unknown>>;
@@ -49,7 +54,9 @@ function sourceRows(rows: Array<Record<string, unknown>>): unknown[] {
   return rows.map((row) => jsonPayload(row)).filter((value): value is unknown => value !== null);
 }
 
-export class SqliteAgentStore implements AgentStore {
+export class SqliteAgentStore implements AgentStore, PlanStore {
+  private planActionHandler: PlanActionHandler | null = null;
+
   constructor(
     private readonly database: SqliteDatabase,
     private readonly studyRoot = "data/derived/offhours"
@@ -275,7 +282,8 @@ export class SqliteAgentStore implements AgentStore {
   }
 
   async run(runId: string): Promise<unknown> {
-    const run = this.one("run", runId);
+    // A locked plan is its own run; replay runs are stored separately.
+    const run = this.one("run", runId) ?? this.one("plan", runId);
     if (run === null)
       throw new StoreError(404, "RUN_NOT_FOUND", "The requested run does not exist.");
     return run;
@@ -351,14 +359,63 @@ export class SqliteAgentStore implements AgentStore {
     return draft;
   }
 
+  setPlanActions(handler: PlanActionHandler): void {
+    this.planActionHandler = handler;
+  }
+
   async planAction(id: string, body: unknown): Promise<unknown> {
-    void id;
-    void body;
-    throw new StoreError(
-      503,
-      "PLANBOOK_NOT_CONFIGURED",
-      "PlanBook and the execution service are not configured on this agent."
-    );
+    const input = objectBody(body, "plan action");
+    if (this.planActionHandler === null) {
+      throw new StoreError(
+        503,
+        "PLANBOOK_NOT_CONFIGURED",
+        "PlanBook and the execution service are not configured on this agent."
+      );
+    }
+    if (typeof input.action !== "string") {
+      throw new StoreError(400, "PLAN_ACTION_REQUIRED", "A plan action is required.");
+    }
+    try {
+      return await this.planActionHandler(id, input.action);
+    } catch (caught) {
+      if (caught instanceof PlanError)
+        throw new StoreError(caught.status, caught.code, caught.message);
+      throw caught;
+    }
+  }
+
+  async getPlan(id: string): Promise<StoredPlan | null> {
+    return this.one("plan", id) as StoredPlan | null;
+  }
+
+  async savePlan(plan: StoredPlan): Promise<void> {
+    this.put("plan", plan.id, plan);
+  }
+
+  async listPlans(): Promise<StoredPlan[]> {
+    return this.many("plan") as StoredPlan[];
+  }
+
+  async saveRunEvent(runId: string, step: string, payload: Record<string, unknown>): Promise<void> {
+    this.put("run-event", `${runId}:${step}`, {
+      ...payload,
+      runId,
+      step,
+      at: new Date().toISOString()
+    });
+  }
+
+  async saveReceipt(runId: string, receipt: ReceiptBundle): Promise<void> {
+    this.put("receipt", runId, receipt);
+  }
+
+  async saveRecordItem(item: PlanRecordItem): Promise<void> {
+    this.put("record", item.id, item);
+  }
+
+  async latestPrice(ticker: string): Promise<PriceSnapshotOk | null> {
+    const snapshot = this.one("price", ticker.toUpperCase()) as { state?: string } | null;
+    return snapshot?.state === "ok" ? (snapshot as PriceSnapshotOk) : null;
   }
 }
 

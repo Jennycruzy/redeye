@@ -1,6 +1,10 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { loadEnvFile } from "node:process";
+import type { Address, Hex } from "viem";
+import { createPlanChain } from "./plan-chain.js";
+import { PlanService } from "./plan-service.js";
+import { listedBstock, nasdaqOfficialOpen } from "./plan-sources.js";
 import { loadPoolMap, PriceService } from "./price-service.js";
 import { createSqliteAgentStore } from "./sqlite-store.js";
 import { startAgentServer } from "./server.js";
@@ -37,8 +41,9 @@ const priceTickers = process.env.REDEYE_PRICE_TICKERS
 if (priceTickers.length === 0 || priceTickers.some((ticker) => poolMap[ticker] === undefined)) {
   throw new Error("REDEYE_PRICE_TICKERS must contain only tickers with configured pools.");
 }
+const rawRoot = process.env.REDEYE_DATA_ROOT ?? "data";
 const priceService = new PriceService({
-  rawRoot: process.env.REDEYE_DATA_ROOT ?? "data",
+  rawRoot,
   poolMap,
   maxPriceAgeSeconds: Number(process.env.PRICE_MAX_AGE_S ?? "120"),
   saveSnapshot: (snapshot) => store.recordPriceSnapshot(snapshot),
@@ -48,6 +53,27 @@ const windowService = new WindowService({
   tickers: Object.keys(poolMap),
   saveWindow: (window) => store.recordWindow(window)
 });
+const planBookAddress = process.env.PLANBOOK_ADDRESS?.trim();
+const agentKey = process.env.AGENT_PRIVATE_KEY?.trim();
+const planChain =
+  planBookAddress && agentKey
+    ? createPlanChain({
+        rpcUrl: process.env.BSC_RPC_URL_LIVE ?? "https://bsc-dataseed.bnbchain.org",
+        planBook: planBookAddress as Address,
+        privateKey: (agentKey.startsWith("0x") ? agentKey : `0x${agentKey}`) as Hex
+      })
+    : null;
+const planService = new PlanService({
+  store,
+  chain: planChain,
+  latestPrice: (ticker) => store.latestPrice(ticker),
+  listedToken: (ticker) => listedBstock(rawRoot, ticker),
+  officialOpen: (ticker, date) => nasdaqOfficialOpen(rawRoot, ticker, date)
+});
+store.setPlanActions((id, action) =>
+  action === "cancel" ? planService.cancel(id) : planService.lock(id)
+);
+planService.start();
 const server = startAgentServer(store, { ownerToken, siteOrigin }, port);
 void priceService.start(priceTickers).catch((error: unknown) => {
   console.error(
@@ -68,6 +94,7 @@ void windowService.start().catch((error: unknown) => {
 
 const shutdown = (): void => {
   priceService.stop();
+  planService.stop();
   windowService.stop();
   server.close(() => store.close());
 };
