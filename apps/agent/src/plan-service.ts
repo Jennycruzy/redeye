@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  checkQuote,
   createStandingRun,
   createWindowRecord,
   decide,
@@ -16,18 +17,24 @@ import {
   type EventContext,
   type EventRecord,
   type PlanContext,
+  type NormalizedQuote,
   type PlanKind,
+  type QuoteCheckResult,
   type ReceiptBundle,
   type ReceiptVerdict,
   type RefusalCode,
-  type StandingPlanRun
+  type StandingPlanRun,
+  type WalletContext
 } from "@redeye/core";
+import Decimal from "decimal.js";
+import type { OrderResult, QuoteRequest } from "./agentic-wallet.js";
 import type { Address, Hex } from "viem";
 import type { ChainWrite, Outcome, PlanChain } from "./plan-chain.js";
 import type { PriceSnapshotOk } from "./price-service.js";
 
 const WINDOW_PLAN_KINDS: readonly PlanKind[] = ["guard", "buy_dip", "sell_rise", "hold"];
 const EVALUATION_LOG_INTERVAL_MS = 5 * 60 * 1000;
+const ORDER_LOOKUP_GIVE_UP_MS = 10 * 60 * 1000;
 /** After this long without an official open, the result is published without it. */
 const OPEN_PRICE_WAIT_MS = 24 * 60 * 60 * 1000;
 
@@ -62,6 +69,28 @@ export interface StoredDecision {
   chain: ChainWrite | null;
 }
 
+/** Places a plan's trade. The Binance Agentic Wallet implements it. */
+export interface Trader {
+  address(): Promise<Address>;
+  context(requiredQuotaUsd: string, requiredUntilMs: number): Promise<WalletContext>;
+  quote(request: QuoteRequest): Promise<NormalizedQuote>;
+  swap(quote: NormalizedQuote, slippagePct: string): Promise<OrderResult>;
+  waitForOrder(orderId: string): Promise<OrderResult>;
+  findOrder(quote: NormalizedQuote, sinceMs: number): Promise<OrderResult | null>;
+}
+
+export interface StoredTrade {
+  wallet: Address;
+  quote: NormalizedQuote;
+  check: QuoteCheckResult;
+  /** Saved before the swap is sent, so a restart can find the order. */
+  submittedAt: number;
+  order: OrderResult | null;
+  /** Whole tokens (sell: USDT, buy: stock token) that reached the wallet, read from chain. */
+  received: string | null;
+  fillChain: ChainWrite | null;
+}
+
 export interface StoredPlan {
   v: 1;
   id: string;
@@ -76,6 +105,7 @@ export interface StoredPlan {
   freeze?: ChainWrite;
   lastEvaluation?: { at: number; action: Decision["action"]; refusal: string | null };
   decision?: StoredDecision;
+  trade?: StoredTrade;
   verdict?: ReceiptVerdict & { verdictHash: Hex };
   verdictChain?: ChainWrite | null;
   lastError?: { at: string; message: string };
@@ -173,6 +203,8 @@ export interface PlanServiceOptions {
   latestPrice(ticker: string): Promise<PriceSnapshotOk | null>;
   listedToken(ticker: string): Promise<ListedToken | null>;
   officialOpen(ticker: string, nyDate: string): Promise<OfficialOpen | null>;
+  /** Null until a wallet is connected; plans that may trade are then refused. */
+  trader?: Trader | null;
   now?: () => number;
   newId?: () => string;
 }
@@ -223,6 +255,18 @@ function invalid(issues: Array<{ field: string; message: string }>): PlanError {
 
 function ageSeconds(fetchedAt: string, atMs: number): number {
   return Math.max(0, Math.floor((atMs - Date.parse(fetchedAt)) / 1000));
+}
+
+const USDT_ADDRESS: Address = "0x55d398326f99059fF775485246999027B3197955";
+
+/** USD per real share actually achieved, from the amounts that moved on chain. */
+function actionPricePerShare(trade: StoredTrade): string {
+  const { quote } = trade;
+  const received = new Decimal(trade.received ?? "0");
+  const sent = new Decimal(quote.inputAmount);
+  const [usd, tokens] = quote.side === "sell" ? [received, sent] : [sent, received];
+  if (tokens.lte(0)) return "0";
+  return usd.div(tokens.mul(quote.multiplier)).toSignificantDigits(12).toString();
 }
 
 function withoutError(stored: StoredPlan): StoredPlan {
@@ -407,8 +451,11 @@ export class PlanService {
         try {
           await this.advance(stored);
         } catch (error) {
+          // Re-read first: the failed step may have saved progress (such as a sent trade)
+          // that must not be overwritten by the copy this pass started with.
+          const latest = (await this.options.store.getPlan(stored.id)) ?? stored;
           await this.options.store.savePlan({
-            ...stored,
+            ...latest,
             lastError: {
               at: new Date(this.now()).toISOString(),
               message: error instanceof Error ? error.message : String(error)
@@ -546,7 +593,7 @@ export class PlanService {
     if (!token.multiplierAgreement) {
       throw new PlanError(409, "MULTIPLIER_MISMATCH", `${ticker} share counts disagree.`);
     }
-    return {
+    const plan: PlanContext = {
       kind,
       standingRunId,
       ticker,
@@ -554,6 +601,22 @@ export class PlanService {
       tokenAddress: token.address,
       heldShares: text(input.heldShares, "heldShares"),
       params: paramsFrom(input)
+    };
+    if (input.door === undefined || input.door === null) return plan;
+    if (input.door !== "agentic_wallet") {
+      throw new PlanError(400, "PLAN_INVALID", "door must be agentic_wallet when set.");
+    }
+    if (!this.options.trader) {
+      throw new PlanError(
+        503,
+        "WALLET_NOT_CONNECTED",
+        "No Agentic Wallet is connected, so this plan could not trade."
+      );
+    }
+    return {
+      ...plan,
+      door: "agentic_wallet",
+      auditNoDataAccepted: input.auditNoDataAccepted === true
     };
   }
 
@@ -615,19 +678,154 @@ export class PlanService {
     if (atMs < context.lockTs) return;
 
     if (stored.status === "locked") {
-      const input = await this.decisionInput(plan, context, atMs);
+      let input = await this.decisionInput(plan, context, atMs);
       if (input === null) return;
-      const decision = decide(input);
+      let decision = decide(input);
       const atOpen = atMs >= context.openTs;
+      // EXECUTION_DISABLED means the trigger and price checks passed; a plan that may
+      // trade is now checked again with a real quote and the wallet's limits.
+      if (!atOpen && plan.door !== undefined && decision.refusal?.code === "EXECUTION_DISABLED") {
+        const armed = await this.tradeInput(plan, input);
+        if (armed !== null) {
+          input = armed;
+          decision = decide(armed);
+        }
+      }
       await this.logEvaluation(stored, input, decision);
       if (!atOpen && !isTerminal(decision)) return;
       if (atOpen && decision.refusal?.code === "REAL_PRICE_UNAVAILABLE") return;
       stored = await this.recordDecision(stored, input, decision);
     }
 
+    if (stored.status === "decided" && this.tradePending(stored)) {
+      stored = await this.trade(stored);
+      if (this.tradePending(stored)) return;
+    }
+
     if (stored.status === "decided" && atMs >= context.openTs) {
       await this.publishResult(stored, atMs);
     }
+  }
+
+  /** The decision input with a checked quote and the wallet's state, or null without a wallet. */
+  private async tradeInput(plan: PlanContext, input: DecisionInput): Promise<DecisionInput | null> {
+    const trader = this.options.trader;
+    if (!trader) return null;
+    const token = await this.options.listedToken(plan.ticker);
+    if (token === null) return null;
+    const side = plan.kind === "buy_dip" ? "buy" : "sell";
+    const real = new Decimal(input.prices.P ?? input.prices.T);
+    let amount: string;
+    let orderUsd: Decimal;
+    if (side === "sell") {
+      const shares = new Decimal(plan.heldShares).mul(plan.params.sellPct ?? "0").div(100);
+      amount = shares.div(token.multiplier).toDecimalPlaces(18, Decimal.ROUND_DOWN).toString();
+      orderUsd = shares.mul(real);
+    } else {
+      amount = new Decimal(plan.params.maxUsd ?? "0")
+        .toDecimalPlaces(18, Decimal.ROUND_DOWN)
+        .toString();
+      orderUsd = new Decimal(amount);
+    }
+    const quote = await trader.quote({
+      side,
+      tokenAddress: plan.tokenAddress,
+      multiplier: token.multiplier,
+      amount,
+      displayedPricePerShare: input.prices.T
+    });
+    const checked = checkQuote({
+      ticker: plan.ticker,
+      quote,
+      expectedTokenAddress: plan.tokenAddress,
+      expectedWrapper: plan.wrapper,
+      usReferencePricePerShare: input.prices.C,
+      realPricePerShare: input.prices.P,
+      realPriceAgeSeconds: input.prices.ages.P,
+      marketOpen: false,
+      maxPriceImpactPct: plan.params.maxPriceImpactPct,
+      checkedAtMs: this.now(),
+      displayedPricePerShare: input.prices.T
+    });
+    const wallet = await trader.context(orderUsd.toDecimalPlaces(2).toString(), this.now());
+    return {
+      ...input,
+      executionEnabled: true,
+      wallet,
+      quotes: [quote],
+      // Only the overall result: an earlier stage can pass while a later one fails.
+      quoteChecks: [checked.result]
+    };
+  }
+
+  /** True while a decided trade still needs sending, confirming or recording on chain. */
+  private tradePending(stored: StoredPlan): boolean {
+    const action = stored.decision?.decision.action;
+    if (action !== "buy" && action !== "sell") return false;
+    const order = stored.trade?.order;
+    if (order === undefined || order === null || order.status === "PENDING") return true;
+    if (order.status === "FAILED" || order.txHash === null) return false;
+    return stored.trade?.fillChain === null;
+  }
+
+  /**
+   * Sends the decided trade, or follows up on one already sent. The decision is on
+   * chain before this runs, so the promise always comes before the trade.
+   */
+  private async trade(stored: StoredPlan): Promise<StoredPlan> {
+    const trader = this.options.trader;
+    const decision = stored.decision;
+    if (!trader || decision === undefined)
+      throw new Error("No wallet is connected for this trade.");
+    const quote = decision.input.quotes[0];
+    const check = decision.input.quoteChecks[0];
+    if (quote === undefined || check === undefined) throw new Error("The trade has no quote.");
+
+    let trade = stored.trade;
+    if (trade === undefined) {
+      trade = {
+        wallet: await trader.address(),
+        quote,
+        check,
+        submittedAt: this.now(),
+        order: null,
+        received: null,
+        fillChain: null
+      };
+      await this.options.store.savePlan({ ...stored, trade });
+      const slippage = stored.plan?.params.maxPriceImpactPct ?? "1";
+      trade = { ...trade, order: await trader.swap(quote, slippage) };
+    } else if (trade.order === null) {
+      const found = await trader.findOrder(quote, trade.submittedAt);
+      // Saved as sent, but the wallet has no such order: the swap never left the agent.
+      const lost =
+        found === null && this.now() - trade.submittedAt > ORDER_LOOKUP_GIVE_UP_MS
+          ? { orderId: "not-found", status: "FAILED" as const, txHash: null }
+          : null;
+      trade = { ...trade, order: found ?? lost };
+    } else if (trade.order.status === "PENDING") {
+      trade = { ...trade, order: await trader.waitForOrder(trade.order.orderId) };
+    }
+
+    const order = trade.order;
+    if (order?.status === "FINISHED" && order.txHash !== null && trade.fillChain === null) {
+      const received = quote.side === "sell" ? USDT_ADDRESS : (quote.tokenAddress as Address);
+      const chain = this.requireChain();
+      trade = {
+        ...trade,
+        received: await chain.received(order.txHash, received, trade.wallet),
+        fillChain: await chain.recordFill(this.requirePlanId(stored), order.txHash, 1)
+      };
+    }
+    const next: StoredPlan = { ...withoutError(stored), trade };
+    await this.options.store.savePlan(next);
+    await this.options.store.saveRunEvent(stored.id, `trade:${order?.status ?? "LOOKUP"}`, {
+      orderId: order?.orderId ?? null,
+      status: order?.status ?? null,
+      txHash: order?.txHash ?? null,
+      received: trade.received
+    });
+    return next;
   }
 
   private async decisionInput(
@@ -730,11 +928,16 @@ export class PlanService {
     const open = await this.options.officialOpen(plan.ticker, nyDate(openTs));
     if (open === null && atMs - openTs < OPEN_PRICE_WAIT_MS) return;
 
-    const outcome = outcomeFor(decision.decision);
+    const trade = stored.trade;
+    const failedOrder = trade?.order?.status === "FAILED";
+    const outcome = failedOrder ? "refused" : outcomeFor(decision.decision);
     const verdict: ReceiptVerdict = {
       outcome,
-      reason: decision.decision.refusal?.code ?? decision.decision.reason,
-      ...(open === null ? {} : { openPrice: open.value })
+      reason: failedOrder
+        ? "ORDER_FAILED"
+        : (decision.decision.refusal?.code ?? decision.decision.reason),
+      ...(open === null ? {} : { openPrice: open.value }),
+      ...(trade?.received ? { actionPrice: actionPricePerShare(trade) } : {})
     };
     const verdictHash = hashVerdict(verdict);
     const write = await this.requireChain().recordVerdict(
@@ -780,7 +983,16 @@ export class PlanService {
           decisionHash: decision.decisionHash
         }
       ],
-      fills: [],
+      fills:
+        stored.trade?.order?.txHash && stored.trade.fillChain
+          ? [
+              {
+                step: 1,
+                txHash: stored.trade.order.txHash,
+                confirmedAt: new Date(stored.trade.fillChain.blockTs * 1000).toISOString()
+              }
+            ]
+          : [],
       verdict: verdictBody,
       verdictHash
     };

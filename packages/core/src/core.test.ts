@@ -1016,6 +1016,29 @@ describe("v1.5 proof rules", () => {
         "params.rebuyAtMs"
       ])
     );
+
+    const tradingParams = {
+      maxPriceImpactPct: "1",
+      minPoolDepthUsd: "50000",
+      triggerRisePct: "4",
+      sellPct: "25",
+      maxGapToRealPricePct: "0.3"
+    };
+    const unaccepted = validatePlan(
+      plan({ kind: "sell_rise", door: "agentic_wallet", params: tradingParams }),
+      window
+    );
+    expect(unaccepted.issues.map((issue) => issue.field)).toEqual(["auditNoDataAccepted"]);
+    const accepted = validatePlan(
+      plan({
+        kind: "sell_rise",
+        door: "agentic_wallet",
+        auditNoDataAccepted: true,
+        params: tradingParams
+      }),
+      window
+    );
+    expect(accepted.valid).toBe(true);
   });
 
   it("creates stable event and receipt hashes", () => {

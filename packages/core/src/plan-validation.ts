@@ -199,6 +199,16 @@ export function validatePlan(plan: PlanContext, event: EventContext): PlanValida
     }
   }
 
+  if (plan.door !== undefined && plan.door !== "agentic_wallet") {
+    issues.push({ field: "door", message: "must be agentic_wallet when set." });
+  }
+  if (plan.door !== undefined && plan.auditNoDataAccepted !== true) {
+    issues.push({
+      field: "auditNoDataAccepted",
+      message: "must be true: the security audit has no data for stock tokens."
+    });
+  }
+
   return { valid: issues.length === 0, issues };
 }
 

@@ -1,6 +1,7 @@
 import {
   createPublicClient,
   createWalletClient,
+  formatUnits,
   http,
   parseAbi,
   parseEventLogs,
@@ -14,9 +15,15 @@ export const PLAN_BOOK_ABI = parseAbi([
   "function freezePlan(address planOwner, bytes32 eventKey, bytes32 planHash, string ticker, uint64 releaseTs, uint256 jobId) returns (uint256)",
   "function freezeStandingPlan(address planOwner, bytes32 eventKey, bytes32 planHash, bytes32 standingRunHash, string ticker, uint64 releaseTs, uint256 jobId) returns (uint256)",
   "function recordDecision(uint256 planId, bytes32 decisionHash)",
+  "function recordFill(uint256 planId, bytes32 txHash, uint8 step)",
   "function recordVerdict(uint256 planId, uint8 outcome, bytes32 verdictHash)",
   "function cancelPlan(uint256 planId)",
   "event PlanFrozen(uint256 indexed planId, address indexed owner, bytes32 indexed eventKey, bytes32 planHash, string ticker, uint64 releaseTs, uint256 jobId)"
+]);
+
+const ERC20_ABI = parseAbi([
+  "event Transfer(address indexed from, address indexed to, uint256 value)",
+  "function decimals() view returns (uint8)"
 ]);
 
 /** PlanBook outcome codes. */
@@ -44,6 +51,12 @@ export interface PlanChain {
   readonly agentAddress: Address;
   freeze(input: FreezeInput): Promise<ChainWrite & { planId: number }>;
   recordDecision(planId: number, decisionHash: Hex): Promise<ChainWrite>;
+  recordFill(planId: number, txHash: Hex, step: number): Promise<ChainWrite>;
+  /**
+   * The amount of `token` that reached `account` in a mined transaction, read from its
+   * Transfer logs, in whole-token units.
+   */
+  received(txHash: Hex, token: Address, account: Address): Promise<string>;
   recordVerdict(planId: number, outcome: Outcome, verdictHash: Hex): Promise<ChainWrite>;
   cancel(planId: number): Promise<ChainWrite>;
 }
@@ -62,7 +75,12 @@ export function createPlanChain(options: PlanChainOptions): PlanChain {
 
   async function send(
     functionName:
-      "freezePlan" | "freezeStandingPlan" | "recordDecision" | "recordVerdict" | "cancelPlan",
+      | "freezePlan"
+      | "freezeStandingPlan"
+      | "recordDecision"
+      | "recordFill"
+      | "recordVerdict"
+      | "cancelPlan",
     args: readonly unknown[]
   ) {
     // Simulating first turns a contract revert into a readable error before any fee is spent.
@@ -121,6 +139,31 @@ export function createPlanChain(options: PlanChainOptions): PlanChain {
     },
     async recordDecision(planId, decisionHash) {
       return (await send("recordDecision", [BigInt(planId), decisionHash])).write;
+    },
+    async recordFill(planId, txHash, step) {
+      return (await send("recordFill", [BigInt(planId), txHash, step])).write;
+    },
+    async received(txHash, token, account) {
+      const receipt = await reader.getTransactionReceipt({ hash: txHash });
+      if (receipt.status !== "success") throw new Error(`Transaction failed: ${txHash}`);
+      const transfers = parseEventLogs({
+        abi: ERC20_ABI,
+        eventName: "Transfer",
+        logs: receipt.logs
+      });
+      const raw = transfers
+        .filter(
+          (log) =>
+            log.address.toLowerCase() === token.toLowerCase() &&
+            log.args.to.toLowerCase() === account.toLowerCase()
+        )
+        .reduce((sum, log) => sum + log.args.value, 0n);
+      const decimals = await reader.readContract({
+        address: token,
+        abi: ERC20_ABI,
+        functionName: "decimals"
+      });
+      return formatUnits(raw, decimals);
     },
     async recordVerdict(planId, outcome, verdictHash) {
       return (await send("recordVerdict", [BigInt(planId), OUTCOME_CODES[outcome], verdictHash]))

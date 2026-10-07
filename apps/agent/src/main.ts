@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { loadEnvFile } from "node:process";
 import type { Address, Hex } from "viem";
+import { AgenticWallet, createBawRunner } from "./agentic-wallet.js";
 import { createPlanChain } from "./plan-chain.js";
 import { PlanService } from "./plan-service.js";
 import { listedBstock, nasdaqOfficialOpen } from "./plan-sources.js";
@@ -63,9 +64,14 @@ const planChain =
         privateKey: (agentKey.startsWith("0x") ? agentKey : `0x${agentKey}`) as Hex
       })
     : null;
+// Trading stays off unless EXECUTION_ENABLED is exactly "true"; plans that may trade
+// are then refused at lock time instead of failing later.
+const trader =
+  process.env.EXECUTION_ENABLED === "true" ? new AgenticWallet(createBawRunner()) : null;
 const planService = new PlanService({
   store,
   chain: planChain,
+  trader,
   latestPrice: (ticker) => store.latestPrice(ticker),
   listedToken: (ticker) => listedBstock(rawRoot, ticker),
   officialOpen: (ticker, date) => nasdaqOfficialOpen(rawRoot, ticker, date)

@@ -26,9 +26,18 @@ export interface ExtractedReport {
   verified: boolean;
 }
 
+/** Who places the plan's trades. Absent means the plan never trades. */
+export type TradeDoor = "agentic_wallet";
+
 export interface PlanContext {
   kind: PlanKind;
   standingRunId?: string | null;
+  door?: TradeDoor;
+  /**
+   * The owner's explicit acceptance that the security audit has no data for this
+   * token. Required before a plan may trade; locked with the plan.
+   */
+  auditNoDataAccepted?: boolean;
   ticker: string;
   wrapper: Wrapper;
   tokenAddress: string;

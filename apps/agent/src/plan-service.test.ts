@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createWindowRecord, hashPlan, nextWindow, verifyReceipt } from "@redeye/core";
 import type { Hex } from "viem";
+import { AgenticWallet, type BawRunner } from "./agentic-wallet.js";
 import type { ChainWrite, FreezeInput, Outcome, PlanChain } from "./plan-chain.js";
 import { PlanError, PlanService, type OfficialOpen, type StoredPlan } from "./plan-service.js";
 import type { PriceSnapshotOk } from "./price-service.js";
@@ -21,6 +22,10 @@ class FakeChain implements PlanChain {
   readonly decisions: Array<{ planId: number; hash: Hex }> = [];
   readonly verdicts: Array<{ planId: number; outcome: Outcome; hash: Hex }> = [];
   readonly cancels: number[] = [];
+  readonly fills: Array<{ planId: number; txHash: Hex; step: number }> = [];
+  /** Shared with the fake wallet so tests can check the order of on-chain steps. */
+  readonly log: string[] = [];
+  receivedAmount = "0";
   private block = 0;
 
   constructor(private readonly clock: () => number) {}
@@ -41,7 +46,18 @@ class FakeChain implements PlanChain {
 
   async recordDecision(planId: number, hash: Hex) {
     this.decisions.push({ planId, hash });
+    this.log.push("decision");
     return this.write();
+  }
+
+  async recordFill(planId: number, txHash: Hex, step: number) {
+    this.fills.push({ planId, txHash, step });
+    this.log.push("fill");
+    return this.write();
+  }
+
+  async received() {
+    return this.receivedAmount;
   }
 
   async recordVerdict(planId: number, outcome: Outcome, hash: Hex) {
@@ -53,6 +69,62 @@ class FakeChain implements PlanChain {
     this.cancels.push(planId);
     return this.write();
   }
+}
+
+const WALLET = "0xDA11FAba6da586c4EEE689b3387Af0b0fd00aae2";
+
+/** Stands in for the `baw` tool, answering with the reply shapes Binance documents. */
+class FakeBaw {
+  readonly calls: string[][] = [];
+  sessionEnd = "2026-10-09T14:54:10+00:00";
+  quotaLeft = 1000;
+  /** USDT per stock token in quotes. */
+  pricePerToken = "191.5";
+  /** Status returned on each order lookup, in turn; the last one repeats. */
+  statuses: Array<"PENDING" | "FINISHED" | "FAILED"> = ["FINISHED"];
+  /** When set, the swap reaches the wallet but the reply is lost, like a crash. */
+  loseSwapReply = false;
+  private orders: string[] = [];
+
+  constructor(private readonly log: string[]) {}
+
+  run: BawRunner = async (args) => {
+    this.calls.push(args);
+    const [group, command] = args;
+    const flag = (name: string) => args[args.indexOf(name) + 1] ?? "";
+    if (group === "wallet" && command === "settings") {
+      return {
+        dailyLimit: 1000,
+        quotaLeft: this.quotaLeft,
+        tradeAllTokens: false,
+        sessionExpireTime: this.sessionEnd,
+        inactiveSignOutTime: this.sessionEnd
+      };
+    }
+    if (group === "wallet" && command === "address") {
+      return { addresses: [{ binanceChainId: "56", chainName: "BSC", address: WALLET }] };
+    }
+    if (group === "market-order" && command === "quote") {
+      const qty = Number(flag("--fromTokenQty"));
+      const selling = flag("--fromToken").toLowerCase() === NVDA_TOKEN;
+      const price = Number(this.pricePerToken);
+      return { toCoinAmount: String(selling ? qty * price : qty / price), slippage: 0.01 };
+    }
+    if (group === "market-order" && command === "swap") {
+      this.log.push("swap");
+      this.orders.push(`order-${this.orders.length + 1}`);
+      if (this.loseSwapReply) throw new Error("connection reset");
+      return { orderId: this.orders.at(-1) };
+    }
+    if (group === "market-order" && command === "list") {
+      const orderId = args.includes("--orderId") ? flag("--orderId") : this.orders.at(-1);
+      if (orderId === undefined) return { list: [] };
+      const status = this.statuses.length > 1 ? this.statuses.shift()! : this.statuses[0]!;
+      const txHash = status === "FINISHED" ? `0x${"ab".repeat(32)}` : null;
+      return { list: [{ orderId, status, txHash }] };
+    }
+    throw new Error(`unexpected baw call: ${args.join(" ")}`);
+  };
 }
 
 function snapshot(atMs: number, real: string, closeDate = "2026-10-07"): PriceSnapshotOk {
@@ -80,21 +152,34 @@ function snapshot(atMs: number, real: string, closeDate = "2026-10-07"): PriceSn
 interface Harness {
   store: SqliteAgentStore;
   chain: FakeChain;
+  baw: FakeBaw;
   service: PlanService;
   setNow(atMs: number): void;
   setPrice(price: PriceSnapshotOk | null): void;
   setOpen(open: OfficialOpen | null): void;
 }
 
-async function harness(options: { chain?: boolean } = {}): Promise<Harness> {
+async function harness(options: { chain?: boolean; baw?: boolean } = {}): Promise<Harness> {
   let now = BEFORE_CLOSE;
   let price: PriceSnapshotOk | null = null;
   let open: OfficialOpen | null = null;
   const store = new SqliteAgentStore(new FakeDatabase());
   const chain = new FakeChain(() => now);
+  const baw = new FakeBaw(chain.log);
+  const trader = options.baw
+    ? new AgenticWallet(
+        baw.run,
+        () => now,
+        // Waiting moves the test clock, so order timeouts behave as in real time.
+        async (ms) => {
+          now += ms;
+        }
+      )
+    : null;
   const service = new PlanService({
     store,
     chain: options.chain === false ? null : chain,
+    trader,
     now: () => now,
     latestPrice: async () => price,
     listedToken: async (ticker) =>
@@ -106,6 +191,7 @@ async function harness(options: { chain?: boolean } = {}): Promise<Harness> {
   return {
     store,
     chain,
+    baw,
     service,
     setNow: (atMs) => {
       now = atMs;
@@ -473,5 +559,154 @@ describe("standing plans", () => {
     ).rejects.toMatchObject({ code: "PLAN_INVALID" });
     expect(h.chain.freezes).toHaveLength(0);
     expect(await h.store.listStanding()).toHaveLength(0);
+  });
+});
+
+describe("trading through the Agentic Wallet", () => {
+  const tradingGuard = { ...guardInput, door: "agentic_wallet", auditNoDataAccepted: true };
+  const TRIGGERED = CLOSE + 2 * 60 * MINUTE;
+
+  async function triggered(h: Harness): Promise<StoredPlan> {
+    const draft = (await h.store.planDraft(tradingGuard)) as StoredPlan;
+    const locked = await h.service.lock(draft.id);
+    h.setNow(TRIGGERED);
+    h.setPrice(snapshot(TRIGGERED, "192"));
+    await h.service.tick();
+    return plan(h, locked.id);
+  }
+
+  it("needs a connected wallet and the owner's audit acceptance to lock", async () => {
+    const none = await harness();
+    const draft = (await none.store.planDraft(tradingGuard)) as StoredPlan;
+    await expect(none.service.lock(draft.id)).rejects.toMatchObject({
+      code: "WALLET_NOT_CONNECTED"
+    });
+
+    const h = await harness({ baw: true });
+    const unaccepted = (await h.store.planDraft({
+      ...tradingGuard,
+      auditNoDataAccepted: false
+    })) as StoredPlan;
+    await expect(h.service.lock(unaccepted.id)).rejects.toMatchObject({ code: "PLAN_INVALID" });
+    expect(h.chain.freezes).toHaveLength(0);
+  });
+
+  it("records the decision, then trades, then records the fill", async () => {
+    const h = await harness({ baw: true });
+    h.chain.receivedAmount = "191.351";
+    const traded = await triggered(h);
+
+    expect(h.chain.log).toEqual(["decision", "swap", "fill"]);
+    expect(traded.decision?.decision.action).toBe("sell");
+    expect(traded.trade).toMatchObject({
+      wallet: WALLET,
+      order: { status: "FINISHED" },
+      received: "191.351"
+    });
+    const sold = Number(traded.trade!.quote.inputAmount);
+    expect(sold * Number("1.000778223752807865")).toBeCloseTo(1, 12);
+
+    h.setOpen({ value: "193", source: "nasdaq:NVDA:daily-history", sourceRecordPath: "raw/x" });
+    h.setNow(OPEN + 30 * MINUTE);
+    await h.service.tick();
+    const done = await plan(h, traded.id);
+    expect(done.verdict).toMatchObject({ outcome: "kept", openPrice: "193" });
+    expect(Number(done.verdict?.actionPrice)).toBeCloseTo(191.351, 3);
+    const receipt = (await h.store.receipt(traded.id)) as Parameters<typeof verifyReceipt>[0];
+    expect(receipt.fills).toHaveLength(1);
+    expect(verifyReceipt(receipt)).toMatchObject({ valid: true });
+  });
+
+  it("refuses a quote that would sell far below the token price and never trades", async () => {
+    const h = await harness({ baw: true });
+    h.baw.pricePerToken = "170";
+    const refused = await triggered(h);
+    expect(refused.decision?.decision.refusal?.code).toBe("IMPACT_TOO_HIGH");
+    expect(h.baw.calls.some(([, command]) => command === "swap")).toBe(false);
+  });
+
+  it("refuses when the wallet session has ended", async () => {
+    const h = await harness({ baw: true });
+    h.baw.sessionEnd = "2026-10-07T21:00:00+00:00";
+    const refused = await triggered(h);
+    expect(refused.decision?.decision.refusal?.code).toBe("SESSION_LOST");
+    expect(h.chain.log).toEqual(["decision"]);
+  });
+
+  it("refuses when the trade is over the wallet's daily limit", async () => {
+    const h = await harness({ baw: true });
+    h.baw.quotaLeft = 50;
+    const refused = await triggered(h);
+    expect(refused.decision?.decision.refusal?.code).toBe("QUOTA_LOW");
+  });
+
+  it("publishes a failed order as refused, with no fill", async () => {
+    const h = await harness({ baw: true });
+    h.baw.statuses = ["FAILED"];
+    const failed = await triggered(h);
+    expect(failed.trade?.order?.status).toBe("FAILED");
+
+    h.setOpen({ value: "193", source: "nasdaq:NVDA:daily-history", sourceRecordPath: "raw/x" });
+    h.setNow(OPEN + 30 * MINUTE);
+    await h.service.tick();
+    expect((await plan(h, failed.id)).verdict).toMatchObject({
+      outcome: "refused",
+      reason: "ORDER_FAILED"
+    });
+    expect(h.chain.fills).toHaveLength(0);
+  });
+
+  it("keeps following a pending order until it finishes", async () => {
+    const h = await harness({ baw: true });
+    // Pending for longer than the two minutes one pass waits.
+    h.baw.statuses = [...Array<"PENDING">(45).fill("PENDING"), "FINISHED"];
+    const sent = await triggered(h);
+    expect(sent.trade?.order?.status).toBe("PENDING");
+    expect(h.chain.fills).toHaveLength(0);
+
+    h.setNow(TRIGGERED + MINUTE);
+    await h.service.tick();
+    expect((await plan(h, sent.id)).trade?.order?.status).toBe("FINISHED");
+    expect(h.chain.fills).toHaveLength(1);
+  });
+
+  it("finds an order whose reply was lost instead of trading twice", async () => {
+    const h = await harness({ baw: true });
+    h.baw.loseSwapReply = true;
+    const lost = await triggered(h);
+    expect(lost.lastError?.message).toBe("connection reset");
+    expect(lost.trade?.order).toBeNull();
+
+    h.baw.loseSwapReply = false;
+    h.setNow(TRIGGERED + MINUTE);
+    await h.service.tick();
+    const found = await plan(h, lost.id);
+    expect(found.trade?.order?.status).toBe("FINISHED");
+    expect(h.baw.calls.filter(([, command]) => command === "swap")).toHaveLength(1);
+  });
+
+  it("buys the dip with the plan's dollar amount", async () => {
+    const h = await harness({ baw: true });
+    const draft = (await h.store.planDraft({
+      ticker: "NVDA",
+      kind: "buy_dip",
+      heldShares: "2",
+      door: "agentic_wallet",
+      auditNoDataAccepted: true,
+      params: {
+        maxPriceImpactPct: "1",
+        minPoolDepthUsd: "100000",
+        triggerDropPct: "3",
+        maxGapToRealPricePct: "1",
+        maxUsd: "10"
+      }
+    })) as StoredPlan;
+    const locked = await h.service.lock(draft.id);
+    h.setNow(TRIGGERED);
+    h.setPrice(snapshot(TRIGGERED, "192"));
+    await h.service.tick();
+    const bought = await plan(h, locked.id);
+    expect(bought.decision?.decision.action).toBe("buy");
+    expect(bought.trade?.quote).toMatchObject({ side: "buy", inputAmount: "10" });
   });
 });

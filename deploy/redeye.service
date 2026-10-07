@@ -17,7 +17,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/home/ubuntu/redeye/.redeye /home/ubuntu/redeye/data
+# The Agentic Wallet tool rewrites its session in ~/.baw on every call.
+ReadWritePaths=/home/ubuntu/redeye/.redeye /home/ubuntu/redeye/data /home/ubuntu/.baw
 UMask=0077
 
 [Install]
