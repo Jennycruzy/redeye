@@ -21,6 +21,7 @@ const TICKER_PATTERN = /^[A-Z][A-Z0-9.-]{0,14}$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_MAX_PRICE_AGE_SECONDS = 120;
 const TOKEN_UNIT_DEVIATION_PCT = 25;
+const CLOSE_REFETCH_MS = 10 * 60 * 1000;
 
 export interface PoolMapEntry {
   address: string;
@@ -32,6 +33,8 @@ export type PoolMap = Record<string, PoolMapEntry>;
 
 export interface PricePoint {
   value: string;
+  /** New York trading date of the official value, present on the close only. */
+  date?: string;
   source: string;
   fetchedAt: string;
   ageSeconds: number;
@@ -170,6 +173,12 @@ function percentageDifference(value: string, reference: string): string {
   return decimalString(current.div(baseline).minus(1).mul(100));
 }
 
+function dailyRowIsoDate(row: NasdaqDailyPrice): string {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(row.date);
+  if (!match) throw new Error(`Nasdaq daily row date is invalid: ${row.date}`);
+  return `${match[3]}-${match[1]}-${match[2]}`;
+}
+
 function latestDailyRow(rows: NasdaqDailyPrice[]): NasdaqDailyPrice {
   if (rows.length === 0) throw new Error("Nasdaq daily history returned no rows.");
   return [...rows].sort((left, right) => {
@@ -251,7 +260,10 @@ export class PriceService {
   private readonly saveSnapshot: (snapshot: PriceSnapshot) => Promise<void>;
   private readonly saveHealth: (health: PriceServiceHealth) => Promise<void>;
   private readonly now: () => number;
-  private readonly closeCache = new Map<string, StoredRecord<NasdaqDailyPrice>>();
+  private readonly closeCache = new Map<
+    string,
+    { stored: StoredRecord<NasdaqDailyPrice>; fetchedAtMs: number }
+  >();
   private readonly tokensCache = new Map<string, RwaToken>();
   private health: PriceServiceHealth = {
     v: 1,
@@ -447,6 +459,7 @@ export class PriceService {
         at,
         close: {
           value: close.record.response.body.close,
+          date: dailyRowIsoDate(close.record.response.body),
           source: `nasdaq:${ticker}:daily-history`,
           fetchedAt: close.record.fetchedAt,
           ageSeconds: closeAge,
@@ -528,7 +541,15 @@ export class PriceService {
     const toDate = isoDateInNewYork(atMs);
     const cacheKey = `${ticker}:${toDate}`;
     const cached = this.closeCache.get(cacheKey);
-    if (cached) return cached;
+    // A row for today is final. An older row may only mean today's close is not
+    // published yet, so it is fetched again after a short wait.
+    if (
+      cached &&
+      (dailyRowIsoDate(cached.stored.record.response.body) === toDate ||
+        atMs - cached.fetchedAtMs < CLOSE_REFETCH_MS)
+    ) {
+      return cached.stored;
+    }
     const result = await this.fetchAndStore(
       `nasdaq-${ticker}`,
       this.sources.historical(ticker, dateDaysBefore(toDate, 7), toDate)
@@ -538,7 +559,7 @@ export class PriceService {
       record: { ...result.record, response: { ...result.record.response, body: row } },
       path: result.path
     };
-    this.closeCache.set(cacheKey, stored);
+    this.closeCache.set(cacheKey, { stored, fetchedAtMs: atMs });
     return stored;
   }
 

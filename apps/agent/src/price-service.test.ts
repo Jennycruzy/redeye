@@ -101,6 +101,7 @@ describe("source-backed price service", () => {
       expect(result[0]).toMatchObject({ state: "ok", ticker: "NVDA" });
       if (result[0]?.state !== "ok") return;
       expect(result[0].close.value).toBe("233.95");
+      expect(result[0].close.date).toBe("2026-10-02");
       expect(result[0].real.value).toBe("239.455");
       expect(Number(result[0].token.value)).toBeCloseTo(235 / Number("1.000778223752807865"), 10);
       expect(result[0].close.sourceRecordPath).toContain("raw/nasdaq-NVDA/");
@@ -145,6 +146,42 @@ describe("source-backed price service", () => {
 
       const result = await service.refresh(["NVDA"]);
       expect(result[0]).toMatchObject({ state: "ok", ticker: "NVDA" });
+    } finally {
+      await rm(rawRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fetches the close again until the current day's row is published", async () => {
+    const rawRoot = await mkdtemp(`${tmpdir()}/redeye-price-close-`);
+    try {
+      const serviceSources = await sources();
+      const historical = serviceSources.historical;
+      let historicalCalls = 0;
+      serviceSources.historical = async (...args) => {
+        historicalCalls += 1;
+        return historical(...args);
+      };
+      let nowMs = fixedNow;
+      const service = new PriceService({
+        rawRoot,
+        poolMap: {
+          NVDA: {
+            address: poolAddress,
+            observedLiquidityUsd: "4353526",
+            createdAtMs: 1785310965000
+          }
+        },
+        sources: serviceSources,
+        now: () => nowMs
+      });
+
+      await service.refresh(["NVDA"]);
+      nowMs = fixedNow + 5 * 60 * 1000;
+      await service.refresh(["NVDA"]);
+      expect(historicalCalls).toBe(1);
+      nowMs = fixedNow + 11 * 60 * 1000;
+      await service.refresh(["NVDA"]);
+      expect(historicalCalls).toBe(2);
     } finally {
       await rm(rawRoot, { recursive: true, force: true });
     }
