@@ -4,6 +4,7 @@ import {
   EmptyState,
   ErrorState,
   LiveCounter,
+  PriceTriple,
   RecordRow,
   ReplayStamp,
   SourceLink,
@@ -148,29 +149,37 @@ function LeadCard({ record }: { record: unknown }) {
 
 function Landing() {
   const health = useAgent(useCallback(() => agentClient.health(), []));
+  const prices = useAgent(useCallback(() => agentClient.prices(), []));
   const record = useAgent(useCallback(() => agentClient.record(), []));
   const feed = useAgent(useCallback(() => agentClient.feed(), []));
   const calendar = useAgent(useCallback(() => agentClient.calendar(), []));
   const healthValue = health.status === "ready" ? health.value : null;
+  const priceItems = prices.status === "ready" ? asItems(prices.value) : [];
   const recordValue = record.status === "ready" ? record.value : null;
   const feedItems = feed.status === "ready" ? asItems(feed.value) : [];
   const calendarItems = calendar.status === "ready" ? asItems(calendar.value) : [];
   return (
     <>
       <header className="hero">
-        <div className="eyebrow">Protection for tokenized-stock release nights</div>
+        <div className="eyebrow">The agent for when Wall Street is closed</div>
         <h1>
-          Your stock reports at 4:05 pm.
+          Wall Street is closed.
           <br />
-          <em>Your token trades all night.</em>
+          <em>Your stock isn&apos;t.</em>
         </h1>
-        <p>Decide now. Redeye follows your plan and shows its working.</p>
+        <p>
+          Redeye prices your stock from the market that never shuts, locks its plan on chain before
+          the close, and at the next open shows whether it kept its word.
+        </p>
         <div className="hero-actions">
-          <a className="button primary" href="/replay">
-            Try a past release
+          <a className="button primary" href="/data">
+            See current prices
           </a>
           <a className="button ghost" href="/holdings">
-            Connect your Agentic Wallet
+            Connect a wallet
+          </a>
+          <a className="button ghost" href="/record">
+            See the record
           </a>
         </div>
       </header>
@@ -197,6 +206,39 @@ function Landing() {
             value={`${displayValue(payloadValue(recordValue, "refused"))} / ${displayValue(payloadValue(recordValue, "broken"))}`}
             source="Agent /record"
           />
+        </section>
+        <section className="panel current-prices">
+          <div className="section-heading">
+            <div>
+              <div className="eyebrow">Right now</div>
+              <h2>Close · 24/7 · token</h2>
+            </div>
+            <SourceLink
+              source="Agent /prices"
+              fetchedAt={payloadValue(healthValue, "lastSuccessAt")}
+            />
+          </div>
+          {prices.status === "loading" ? (
+            <div className="skeleton" />
+          ) : prices.status === "error" ? (
+            <ErrorState message={prices.message} retry={prices.retry} />
+          ) : priceItems.length === 0 ? (
+            <EmptyState
+              title="No source-backed prices yet"
+              reason="The price service has not recorded a complete source snapshot."
+            />
+          ) : (
+            <div className="price-grid">
+              {[...priceItems]
+                .sort((left, right) =>
+                  displayValue(left.ticker).localeCompare(displayValue(right.ticker))
+                )
+                .slice(0, 6)
+                .map((item) => (
+                  <PriceTriple key={displayValue(item.ticker)} item={item} />
+                ))}
+            </div>
+          )}
         </section>
         <section className="two-column">
           <div className="panel">
@@ -310,14 +352,50 @@ function RecordPage() {
 
 function DataPage() {
   const feed = useAgent(useCallback(() => agentClient.feed(), []));
+  const health = useAgent(useCallback(() => agentClient.health(), []));
+  const prices = useAgent(useCallback(() => agentClient.prices(), []));
+  const healthValue = health.status === "ready" ? health.value : null;
+  const priceItems = prices.status === "ready" ? asItems(prices.value) : [];
   return (
     <main className="container page">
       <div className="eyebrow">Source-backed data</div>
-      <h1>Filing to token movement.</h1>
+      <h1>Close to 24/7 to token.</h1>
       <p className="lede">
-        Historical and forward records stay separated. Every displayed timestamp comes from a stored
-        source response.
+        Every displayed price has a source, fetch time and age. Historical study data stays separate
+        from current snapshots.
       </p>
+      <section className="panel current-prices">
+        <div className="section-heading">
+          <div>
+            <div className="eyebrow">Current snapshot</div>
+            <h2>Covered stocks</h2>
+          </div>
+          <SourceLink
+            source="Agent /health lastSuccessAt"
+            fetchedAt={payloadValue(healthValue, "lastSuccessAt")}
+          />
+        </div>
+        {prices.status === "loading" ? (
+          <div className="skeleton" />
+        ) : prices.status === "error" ? (
+          <ErrorState message={prices.message} retry={prices.retry} />
+        ) : priceItems.length === 0 ? (
+          <EmptyState
+            title="No current prices"
+            reason="The service has not recorded a snapshot yet."
+          />
+        ) : (
+          <div className="price-grid">
+            {[...priceItems]
+              .sort((left, right) =>
+                displayValue(left.ticker).localeCompare(displayValue(right.ticker))
+              )
+              .map((item) => (
+                <PriceTriple key={displayValue(item.ticker)} item={item} />
+              ))}
+          </div>
+        )}
+      </section>
       {feed.status === "loading" ? (
         <div className="skeleton tall" />
       ) : feed.status === "error" ? (

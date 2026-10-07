@@ -1,4 +1,4 @@
-Redeye is the agent for when Wall Street is closed. Before the market shuts it writes down what it will do with your stock token, locks that on chain, and at the next open shows whether it kept its word.
+Redeye is the agent for when Wall Street is closed. It prices your stock from the market that never shuts, locks its plan on chain before the close, and at the next open shows whether it kept its word.
 
 Redeye reads the last US close, a source-labelled 24/7 equity price, and the token's own BNB Smart Chain price. It turns a plain plan into deterministic checks, publishes the plan fingerprint before the window starts, and keeps the result visible.
 
@@ -31,12 +31,15 @@ The current implementation establishes the first proof slice:
 - canonical plan, decision and verdict hashes;
 - a no-custody PlanBook contract with uniqueness and lifecycle tests.
 - a typed agent HTTP boundary and Node 22 SQLite store with explicit empty and
-  unconfigured states.
+  unconfigured states;
+- a live source-backed price service for the US close, 24/7 price and token price,
+  with raw records and public health counters.
 
 The central story is deliberately narrow: a plan must be frozen before the
-market-close window, then end as a confirmed action or a visible refusal. Until
-a live plan resolves, replay output must be labeled `REPLAY` and simulations
-must be labeled `SIMULATED`.
+market-close window, then end as a confirmed action or a visible refusal. The
+current price view shows the US close, 24/7 price and token price with source
+timestamps. Until a live plan resolves, replay output must be labeled `REPLAY`
+and simulations must be labeled `SIMULATED`.
 
 ## Verification
 

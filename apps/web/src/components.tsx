@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { displayTime, displayValue } from "./api";
+import { displayTime, displayValue, isObject } from "./api";
 
 export function StatusBadge({
   children,
@@ -50,6 +50,68 @@ export function LiveCounter({
       <span className="counter-label">{label}</span>
       <span className="counter-source">{source}</span>
     </div>
+  );
+}
+
+function pricePoint(item: Record<string, unknown>, field: string): Record<string, unknown> {
+  const value = item[field];
+  return isObject(value) ? value : {};
+}
+
+function priceLabel(point: Record<string, unknown>): string {
+  const value = displayValue(point.value);
+  return value === "Unavailable" ? value : `$${value}`;
+}
+
+function PriceCell({ label, point }: { label: string; point: Record<string, unknown> }) {
+  return (
+    <div className="price-cell">
+      <span>{label}</span>
+      <strong>{priceLabel(point)}</strong>
+      <small>
+        {displayValue(point.source)} · age {displayValue(point.ageSeconds)}s
+      </small>
+    </div>
+  );
+}
+
+export function PriceTriple({ item }: { item: Record<string, unknown> }) {
+  const ticker = displayValue(item.ticker);
+  if (item.state !== "ok") {
+    const failure = isObject(item.error) ? item.error : {};
+    return (
+      <article className="price-card price-card-error">
+        <div className="price-card-heading">
+          <h3>{ticker}</h3>
+          <StatusBadge tone="bad">UNAVAILABLE</StatusBadge>
+        </div>
+        <p>
+          {displayValue(failure.code)}: {displayValue(failure.reason)}
+        </p>
+      </article>
+    );
+  }
+
+  return (
+    <article className="price-card">
+      <div className="price-card-heading">
+        <h3>{ticker}</h3>
+        <StatusBadge tone="good">SOURCE OK</StatusBadge>
+      </div>
+      <div className="price-cells">
+        <PriceCell label="US close" point={pricePoint(item, "close")} />
+        <PriceCell label="24/7 price" point={pricePoint(item, "real")} />
+        <PriceCell label="Token / share" point={pricePoint(item, "token")} />
+      </div>
+      <div className="price-gaps">
+        Token vs close {displayValue(isObject(item.gaps) ? item.gaps.tokenToClosePct : undefined)}%
+        <span>
+          {" "}
+          · token vs 24/7 {displayValue(isObject(item.gaps) ? item.gaps.tokenToRealPct : undefined)}
+          %
+        </span>
+      </div>
+    </article>
   );
 }
 
