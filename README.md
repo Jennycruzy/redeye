@@ -2,10 +2,19 @@ Redeye is the agent for when Wall Street is closed. It prices your stock from th
 
 Redeye reads the last US close, a source-labelled 24/7 equity price, and the token's own BNB Smart Chain price. It turns a plain plan into deterministic checks, publishes the plan fingerprint before the window starts, and keeps the result visible.
 
-Status: deterministic core and PlanBook proof layer in progress. Live execution is
-disabled and no mainnet deployment is claimed by this repository yet.
+Status: PlanBook and PlanAccount are live on BNB Smart Chain, and the agent locks
+off-hours plans and publishes their results at the open. Trading from a plan is not
+connected yet: a plan whose trigger is reached is published as refused
+(`EXECUTION_DISABLED`), never as a trade.
 
-The private build specification is intentionally not stored in this repository. This repository contains only implementation notes, source code, fixtures, and generated evidence that is safe to publish.
+## On chain
+
+| What                                          | Address or transaction                                                                                                         |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| PlanBook                                      | [`0xC7B860d561f2208c725ac9a873bf4eA5205e9057`](https://bscscan.com/address/0xC7B860d561f2208c725ac9a873bf4eA5205e9057)         |
+| PlanAccount (shared permission code)          | [`0x141B2a28895c12FD17209eC621496f0F9f1F1048`](https://bscscan.com/address/0x141B2a28895c12FD17209eC621496f0F9f1F1048)         |
+| Agent                                         | [`0xe201bbf3C736a5d188797974a7e4B9464f707eA8`](https://bscscan.com/address/0xe201bbf3C736a5d188797974a7e4B9464f707eA8)         |
+| Plan 1: Guard on NVDA, 7 Oct overnight window | [lock](https://bscscan.com/tx/0x759ead4af86268d4015ab4074a58f2dc866ff8ee96dd077f85a5cd6ad2902092), 5 h 27 min before the close |
 
 ## Start here
 
@@ -33,7 +42,10 @@ The current implementation establishes the first proof slice:
 - a typed agent HTTP boundary and Node 22 SQLite store with explicit empty and
   unconfigured states;
 - a live source-backed price service for the US close, 24/7 price and token price,
-  with raw records and public health counters.
+  with raw records and public health counters;
+- a plan service that locks a plan in PlanBook before the close, checks it every
+  minute against the 24/7 price and that night's official close, and records the
+  decision and the result (with the official open) on chain.
 
 The central story is deliberately narrow: a plan must be frozen before the
 market-close window, then end as a confirmed action or a visible refusal. The
@@ -52,9 +64,9 @@ pnpm contract:build
 pnpm contract:test
 ```
 
-The contract test suite is offline and does not deploy or move funds. Mainnet
-deployment, wallet execution, the filing feed, the web app and Agent Studio
-evidence are not represented as complete yet.
+The contract test suite is offline and does not deploy or move funds. Wallet
+execution, the filing feed, the web app and Agent Studio evidence are not
+represented as complete yet.
 
 The agent process requires Node 22, `OWNER_API_TOKEN` and `WEB_ORIGIN`. Build it
 with `pnpm agent:build`; it will refuse to start if those values are absent. The
