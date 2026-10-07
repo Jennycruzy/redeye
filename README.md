@@ -57,6 +57,12 @@ and simulations must be labeled `SIMULATED`.
 
 The agent serves its ERC-8004 registration file at `/.well-known/agent-registration.json` (also `/identity`) once `PUBLIC_AGENT_URL` is set. The file lists only services that are live today and the two contracts above. `pnpm identity:register` checks that the file is reachable and simulates the registration; with `--send` it registers the agent in the identity registry on BNB Chain ([`0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`](https://bscscan.com/address/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432)), or points an existing registration (`ERC8004_AGENT_ID`) at the current address.
 
+## Plan jobs (ERC-8183)
+
+When `JOB_BUYER_PRIVATE_KEY` is set (a team wallet, never the agent's own), every locked plan is also an ERC-8183 job on BNB Chain: before the lock the buyer opens the job with the agent as provider, registers the reference optimistic policy, and pays a 0.01 USDT budget; PlanBook records the job id with the plan. After the result is published the agent delivers keccak256 of the manifest `{v, planId, receipt, verdictHash}`, and once the policy's dispute window has passed (7 days on 7 Oct 2026) the agent settles the job through the router. A failed job step never blocks the lock; it is kept on the plan and retried every minute, and a lost reply is recovered from the sent transaction rather than opening a second job.
+
+Contracts: commerce [`0xEa4DAa3100A767e86FDed867729ae7446476EBA6`](https://bscscan.com/address/0xEa4DAa3100A767e86FDed867729ae7446476EBA6), router [`0x51895229E12F9876011789B04f8698af06cCD6DA`](https://bscscan.com/address/0x51895229E12F9876011789B04f8698af06cCD6DA), policy [`0x9C01845705b3078aA2E8CfF7520a6376fd766dE5`](https://bscscan.com/address/0x9C01845705b3078aA2E8CfF7520a6376fd766dE5).
+
 ## Verification
 
 ```sh

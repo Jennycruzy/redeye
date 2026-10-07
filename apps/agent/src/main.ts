@@ -4,6 +4,7 @@ import { loadEnvFile } from "node:process";
 import type { Address, Hex } from "viem";
 import { AgenticWallet, createBawRunner } from "./agentic-wallet.js";
 import { buildIdentityCard, identityConfigFromEnv } from "./identity.js";
+import { createJobBook } from "./job-chain.js";
 import { createPlanChain } from "./plan-chain.js";
 import { PlanService } from "./plan-service.js";
 import { listedBstock, nasdaqOfficialOpen } from "./plan-sources.js";
@@ -69,10 +70,22 @@ const planChain =
 // are then refused at lock time instead of failing later.
 const trader =
   process.env.EXECUTION_ENABLED === "true" ? new AgenticWallet(createBawRunner()) : null;
+// Each locked plan becomes an ERC-8183 job only when a separate team buyer wallet is set.
+const buyerKey = process.env.JOB_BUYER_PRIVATE_KEY?.trim();
+const asKey = (key: string) => (key.startsWith("0x") ? key : `0x${key}`) as Hex;
+const jobs =
+  buyerKey && agentKey && planChain
+    ? createJobBook({
+        rpcUrl: process.env.BSC_RPC_URL_LIVE ?? "https://bsc-dataseed.bnbchain.org",
+        buyerKey: asKey(buyerKey),
+        agentKey: asKey(agentKey)
+      })
+    : null;
 const planService = new PlanService({
   store,
   chain: planChain,
   trader,
+  jobs,
   latestPrice: (ticker) => store.latestPrice(ticker),
   listedToken: (ticker) => listedBstock(rawRoot, ticker),
   officialOpen: (ticker, date) => nasdaqOfficialOpen(rawRoot, ticker, date)

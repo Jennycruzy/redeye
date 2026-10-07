@@ -44,6 +44,8 @@ export interface FreezeInput {
   lockTs: number;
   /** Set for one night's copy of a standing plan; links the copy to its run on chain. */
   standingRunHash?: Hex;
+  /** The plan's ERC-8183 job, or 0 when it has none. */
+  jobId?: number;
 }
 
 /** Writes to PlanBook. Every method waits for the transaction to be mined. */
@@ -118,7 +120,7 @@ export function createPlanChain(options: PlanChainOptions): PlanChain {
               input.planHash,
               input.ticker,
               lockTs,
-              0n
+              BigInt(input.jobId ?? 0)
             ])
           : await send("freezeStandingPlan", [
               input.owner,
@@ -127,7 +129,7 @@ export function createPlanChain(options: PlanChainOptions): PlanChain {
               input.standingRunHash,
               input.ticker,
               lockTs,
-              0n
+              BigInt(input.jobId ?? 0)
             ]);
       const [frozen] = parseEventLogs({
         abi: PLAN_BOOK_ABI,

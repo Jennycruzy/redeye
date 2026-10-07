@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createWindowRecord, hashPlan, nextWindow, verifyReceipt } from "@redeye/core";
 import type { Hex } from "viem";
 import { AgenticWallet, type BawRunner } from "./agentic-wallet.js";
+import type { JobBook, JobOpenInput, JobState, JobView } from "./job-chain.js";
 import type { ChainWrite, FreezeInput, Outcome, PlanChain } from "./plan-chain.js";
 import { PlanError, PlanService, type OfficialOpen, type StoredPlan } from "./plan-service.js";
 import type { PriceSnapshotOk } from "./price-service.js";
@@ -68,6 +69,88 @@ class FakeChain implements PlanChain {
   async cancel(planId: number) {
     this.cancels.push(planId);
     return this.write();
+  }
+}
+
+const BUYER = "0x1111111111111111111111111111111111111111";
+const WEEK_S = 7 * 24 * 60 * 60;
+
+/** Stands in for the ERC-8183 contracts, following the states the live contracts use. */
+class FakeJobs implements JobBook {
+  readonly buyerAddress = BUYER;
+  readonly providerAddress = AGENT;
+  readonly opened: JobOpenInput[] = [];
+  readonly delivered: Array<{ jobId: number; deliverable: Hex }> = [];
+  readonly settled: number[] = [];
+  readonly states = new Map<number, JobState>();
+  /** Failures to throw from the next calls, by method name. */
+  readonly failNext = new Map<string, string>();
+  /** When true, the create transaction is sent but the reply is lost, like a crash. */
+  loseCreateReply = false;
+  /** Job id a sent create transaction made, once mined. */
+  readonly sent = new Map<Hex, number>();
+  private block = 1000;
+
+  constructor(private readonly clock: () => number) {}
+
+  private fail(method: string): void {
+    const message = this.failNext.get(method);
+    if (message === undefined) return;
+    this.failNext.delete(method);
+    throw new Error(message);
+  }
+
+  private write(): ChainWrite {
+    this.block += 1;
+    return {
+      txHash: `0x${this.block.toString(16).padStart(64, "0")}`,
+      blockNumber: String(this.block),
+      blockTs: Math.floor(this.clock() / 1000)
+    };
+  }
+
+  async disputeWindow() {
+    return WEEK_S;
+  }
+
+  async create(input: JobOpenInput, onSent: (txHash: Hex) => Promise<void>) {
+    this.fail("create");
+    this.opened.push(input);
+    const jobId = 56_910 + this.opened.length;
+    const { txHash } = this.write();
+    this.sent.set(txHash, jobId);
+    this.states.set(jobId, "open");
+    await onSent(txHash);
+    if (this.loseCreateReply) throw new Error("connection reset");
+    return jobId;
+  }
+
+  async createdJobId(txHash: Hex) {
+    return this.sent.get(txHash) ?? null;
+  }
+
+  async fund(jobId: number) {
+    this.fail("fund");
+    if (this.states.get(jobId) !== "open") return [];
+    this.states.set(jobId, "funded");
+    return [this.write().txHash, this.write().txHash];
+  }
+
+  async deliver(jobId: number, deliverable: Hex) {
+    this.fail("deliver");
+    this.delivered.push({ jobId, deliverable });
+    this.states.set(jobId, "submitted");
+    return this.write();
+  }
+
+  async settle(jobId: number) {
+    this.settled.push(jobId);
+    this.states.set(jobId, "completed");
+    return this.write();
+  }
+
+  async get(jobId: number): Promise<JobView> {
+    return { jobId, state: this.states.get(jobId)!, budget: 10n ** 16n, submittedAt: 0 };
   }
 }
 
@@ -153,19 +236,23 @@ interface Harness {
   store: SqliteAgentStore;
   chain: FakeChain;
   baw: FakeBaw;
+  jobs: FakeJobs;
   service: PlanService;
   setNow(atMs: number): void;
   setPrice(price: PriceSnapshotOk | null): void;
   setOpen(open: OfficialOpen | null): void;
 }
 
-async function harness(options: { chain?: boolean; baw?: boolean } = {}): Promise<Harness> {
+async function harness(
+  options: { chain?: boolean; baw?: boolean; jobs?: boolean } = {}
+): Promise<Harness> {
   let now = BEFORE_CLOSE;
   let price: PriceSnapshotOk | null = null;
   let open: OfficialOpen | null = null;
   const store = new SqliteAgentStore(new FakeDatabase());
   const chain = new FakeChain(() => now);
   const baw = new FakeBaw(chain.log);
+  const jobs = new FakeJobs(() => now);
   const trader = options.baw
     ? new AgenticWallet(
         baw.run,
@@ -180,6 +267,7 @@ async function harness(options: { chain?: boolean; baw?: boolean } = {}): Promis
     store,
     chain: options.chain === false ? null : chain,
     trader,
+    jobs: options.jobs ? jobs : null,
     now: () => now,
     latestPrice: async () => price,
     listedToken: async (ticker) =>
@@ -192,6 +280,7 @@ async function harness(options: { chain?: boolean; baw?: boolean } = {}): Promis
     store,
     chain,
     baw,
+    jobs,
     service,
     setNow: (atMs) => {
       now = atMs;
@@ -708,5 +797,135 @@ describe("trading through the Agentic Wallet", () => {
     const bought = await plan(h, locked.id);
     expect(bought.decision?.decision.action).toBe("buy");
     expect(bought.trade?.quote).toMatchObject({ side: "buy", inputAmount: "10" });
+  });
+});
+
+describe("ERC-8183 jobs", () => {
+  async function finished(h: Harness): Promise<StoredPlan> {
+    const locked = await lockedGuard(h);
+    h.setOpen({ value: "198.10", source: "nasdaq:NVDA:daily-history", sourceRecordPath: "raw/x" });
+    h.setNow(OPEN + MINUTE);
+    h.setPrice(snapshot(OPEN + MINUTE, "199"));
+    await h.service.tick();
+    return plan(h, locked.id);
+  }
+
+  it("opens and pays for a job before the lock, and links it in PlanBook", async () => {
+    const h = await harness({ jobs: true });
+    const locked = await lockedGuard(h);
+
+    expect(h.jobs.opened).toHaveLength(1);
+    expect(h.jobs.opened[0]!.expiresAt).toBe(OPEN / 1000 + WEEK_S + 3 * 24 * 60 * 60);
+    expect(JSON.parse(h.jobs.opened[0]!.description)).toMatchObject({
+      task: "Redeye plan: If the 24/7 price falls 3% below the close, sell 50% of 2 NVDA shares.",
+      planHash: locked.planHash,
+      ticker: "NVDA",
+      window: "overnight"
+    });
+    expect(h.chain.freezes[0]!.jobId).toBe(56_911);
+    expect(locked.job).toMatchObject({ jobId: 56_911, state: "funded" });
+    expect(locked.job!.fundTxs).toHaveLength(2);
+    expect(await h.store.record()).toMatchObject({
+      items: [{ id: locked.id, jobId: 56_911, jobState: "funded" }]
+    });
+  });
+
+  it("locks without a job when no buyer is configured", async () => {
+    const h = await harness();
+    const locked = await lockedGuard(h);
+    expect(locked.job).toBeUndefined();
+    expect(h.chain.freezes[0]!.jobId).toBeUndefined();
+  });
+
+  it("still locks the promise when the job cannot be opened", async () => {
+    const h = await harness({ jobs: true });
+    h.jobs.failNext.set("create", "buyer has no gas");
+    const locked = await lockedGuard(h);
+    expect(locked.status).toBe("locked");
+    expect(locked.job).toBeUndefined();
+    expect(h.chain.freezes[0]!.jobId).toBeUndefined();
+  });
+
+  it("links a job whose funding failed and pays it on the next pass", async () => {
+    const h = await harness({ jobs: true });
+    h.jobs.failNext.set("fund", "rpc timeout");
+    const locked = await lockedGuard(h);
+    expect(h.chain.freezes[0]!.jobId).toBe(56_911);
+    expect(locked.job).toMatchObject({ state: "open", lastError: { message: "rpc timeout" } });
+
+    h.setNow(CLOSE + MINUTE);
+    await h.service.tick();
+    const paid = await plan(h, locked.id);
+    expect(paid.job).toMatchObject({ state: "funded" });
+    expect(paid.job!.lastError).toBeUndefined();
+  });
+
+  it("finds a job whose create reply was lost instead of opening a second one", async () => {
+    const h = await harness({ jobs: true });
+    h.jobs.loseCreateReply = true;
+    const locked = await lockedGuard(h);
+    expect(locked.job).toMatchObject({ jobId: null, state: "creating" });
+    expect(h.chain.freezes[0]!.jobId).toBeUndefined();
+
+    h.jobs.loseCreateReply = false;
+    h.setNow(CLOSE + MINUTE);
+    await h.service.tick();
+    expect(h.jobs.opened).toHaveLength(1);
+    expect((await plan(h, locked.id)).job).toMatchObject({ jobId: 56_911, state: "funded" });
+  });
+
+  it("delivers the result fingerprint once the result is published", async () => {
+    const h = await harness({ jobs: true });
+    const done = await finished(h);
+    expect(done.status).toBe("done");
+    expect(h.jobs.delivered).toHaveLength(0);
+
+    await h.service.tick();
+    const delivered = await plan(h, done.id);
+    expect(delivered.job!.manifest).toEqual({
+      v: 1,
+      planId: 1,
+      receipt: `/plans/${done.id}/receipt`,
+      verdictHash: done.verdict!.verdictHash
+    });
+    expect(h.jobs.delivered).toEqual([{ jobId: 56_911, deliverable: delivered.job!.deliverable }]);
+    expect(delivered.job!.state).toBe("submitted");
+
+    await h.service.tick();
+    expect(h.jobs.delivered).toHaveLength(1);
+  });
+
+  it("settles only after the dispute window has passed", async () => {
+    const h = await harness({ jobs: true });
+    const done = await finished(h);
+    await h.service.tick();
+    const delivered = await plan(h, done.id);
+    const deliveredAt = delivered.job!.deliverChain!.blockTs * 1000;
+
+    h.setNow(deliveredAt + WEEK_S * 1000);
+    await h.service.tick();
+    expect(h.jobs.settled).toEqual([]);
+
+    h.setNow(deliveredAt + WEEK_S * 1000 + 3 * MINUTE);
+    await h.service.tick();
+    expect(h.jobs.settled).toEqual([56_911]);
+    const settled = await plan(h, done.id);
+    expect(settled.job).toMatchObject({ state: "completed" });
+    expect(settled.job!.settleChain).toBeDefined();
+    expect(await h.store.record()).toMatchObject({ items: [{ jobState: "completed" }] });
+  });
+
+  it("keeps a delivery error on the job and retries without touching the plan", async () => {
+    const h = await harness({ jobs: true });
+    const done = await finished(h);
+    h.jobs.failNext.set("deliver", "nonce too low");
+    await h.service.tick();
+    const failed = await plan(h, done.id);
+    expect(failed.status).toBe("done");
+    expect(failed.lastError).toBeUndefined();
+    expect(failed.job).toMatchObject({ state: "funded", lastError: { message: "nonce too low" } });
+
+    await h.service.tick();
+    expect((await plan(h, done.id)).job).toMatchObject({ state: "submitted" });
   });
 });
