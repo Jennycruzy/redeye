@@ -55,6 +55,16 @@ export interface AssetStatusContext {
   reasonMsg: string | null;
 }
 
+export type SecurityAuditStatus = "clear" | "flagged" | "unavailable" | "no_data";
+
+export interface SecurityAuditContext {
+  status: SecurityAuditStatus;
+  reason: string | null;
+  officialListAddress: boolean;
+  multiplierAgreement: boolean;
+  walletRefused: boolean;
+}
+
 export interface WalletContext {
   connected: boolean;
   tokenAllowed: boolean;
@@ -155,6 +165,7 @@ export interface DecisionInput {
   quotes: NormalizedQuote[];
   quoteChecks: QuoteCheckResult[];
   status: AssetStatusContext;
+  audit: SecurityAuditContext;
   wallet: WalletContext;
   poolDepthUsd: string;
   atMs: number;

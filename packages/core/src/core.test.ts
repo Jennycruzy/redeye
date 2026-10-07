@@ -100,6 +100,13 @@ function decisionInput(overrides: Partial<DecisionInput> = {}): DecisionInput {
     quotes: [candidate],
     quoteChecks: [check],
     status: { reasonCode: null, reasonMsg: null },
+    audit: {
+      status: "clear",
+      reason: null,
+      officialListAddress: true,
+      multiplierAgreement: true,
+      walletRefused: false
+    },
     wallet: wallet(),
     poolDepthUsd: "100000",
     atMs: 1000,
@@ -719,6 +726,95 @@ describe("deterministic decisions", () => {
     );
 
     expect(result.refusal?.code).toBe("PRICE_OFF_REAL");
+  });
+
+  it("allows an official token with no audit data when share counts agree", () => {
+    const candidate = quote({ outputAmount: "95" });
+    const check = checkQuote({
+      ticker: "NVDA",
+      quote: candidate,
+      expectedTokenAddress: tokenAddress,
+      expectedWrapper: "bStock",
+      usReferencePricePerShare: "100",
+      realPricePerShare: "95",
+      realPriceAgeSeconds: 10,
+      marketOpen: false,
+      maxPriceImpactPct: "1",
+      checkedAtMs: 1000
+    }).result;
+    const result = decide(
+      decisionInput({
+        audit: {
+          status: "no_data",
+          reason: null,
+          officialListAddress: true,
+          multiplierAgreement: true,
+          walletRefused: false
+        },
+        event: event({ kind: "overnight", releaseTs: null, lockTs: 1000 }),
+        plan: plan({
+          kind: "guard",
+          params: {
+            maxPriceImpactPct: "1",
+            minPoolDepthUsd: "50000",
+            triggerDropPct: "5",
+            sellPct: "50",
+            maxGapToRealPricePct: "0.5"
+          }
+        }),
+        quotes: [candidate],
+        quoteChecks: [check],
+        atMs: 2000,
+        prices: {
+          C: "100",
+          P: "95",
+          T: "95",
+          sources: { C: "nasdaq", P: "hyperliquid:xyz:NVDA", T: "pool" },
+          ages: { C: 3600, P: 10, T: 5 }
+        }
+      })
+    );
+
+    expect(result.action).toBe("sell");
+    expect(result.refusal).toBeNull();
+  });
+
+  it("refuses when the wallet rejects a token with no audit data", () => {
+    const result = decide(
+      decisionInput({
+        audit: {
+          status: "no_data",
+          reason: null,
+          officialListAddress: true,
+          multiplierAgreement: true,
+          walletRefused: true
+        },
+        plan: plan({ kind: "protect" })
+      })
+    );
+
+    expect(result.refusal?.code).toBe("AUDIT_NO_DATA");
+    expect(result.refusal?.sentence).toBe(
+      "The security check has no data on NVDA; its address is from Binance's official stock list."
+    );
+  });
+
+  it("keeps audit service failure separate from an audit with no data", () => {
+    const result = decide(
+      decisionInput({
+        audit: {
+          status: "unavailable",
+          reason: "network timeout",
+          officialListAddress: true,
+          multiplierAgreement: true,
+          walletRefused: false
+        },
+        plan: plan({ kind: "protect" })
+      })
+    );
+
+    expect(result.refusal?.code).toBe("AUDIT_UNAVAILABLE");
+    expect(result.refusal?.sentence).toBe("The security check is unavailable, so no trade.");
   });
 
   it("buys a dip when its price condition and quote pass", () => {

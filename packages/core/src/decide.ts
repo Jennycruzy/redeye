@@ -63,12 +63,34 @@ function refused(
   };
 }
 
+function auditGate(input: DecisionInput): Decision | null {
+  if (input.audit.status === "unavailable") {
+    return refused("AUDIT_UNAVAILABLE", input);
+  }
+  if (input.audit.status === "flagged") {
+    return refused("AUDIT_FLAGGED", input, {
+      reason: input.audit.reason ?? "the security check reported a risk"
+    });
+  }
+  if (
+    input.audit.status === "no_data" &&
+    (!input.audit.officialListAddress ||
+      !input.audit.multiplierAgreement ||
+      input.audit.walletRefused)
+  ) {
+    return refused("AUDIT_NO_DATA", input);
+  }
+  return null;
+}
+
 function commonTradeGate(input: DecisionInput): Decision | null {
   if (!input.executionEnabled) return refused("EXECUTION_DISABLED", input);
   if (input.status.reasonCode === "ASSET_PAUSED") {
     return refused("ASSET_PAUSED", input, { reason: input.status.reasonMsg ?? "issuer pause" });
   }
   if (!input.wallet.tokenAllowed) return refused("TOKEN_NOT_ALLOWED", input);
+  const audit = auditGate(input);
+  if (audit) return audit;
   if (!input.wallet.connected) return refused("SESSION_LOST", input);
   if (input.wallet.sessionExpiresAtMs <= input.wallet.requiredUntilMs) {
     return refused("SESSION_EXPIRING", input, {
