@@ -54,6 +54,14 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
     try {
       if (request.method === "GET" && root === "health" && parts.length === 1)
         return json(200, await store.health(), config);
+      if (
+        request.method === "GET" &&
+        ((root === ".well-known" && id === "agent-registration.json" && parts.length === 2) ||
+          (root === "identity" && parts.length === 1))
+      )
+        return config.identity === undefined
+          ? error(404, "IDENTITY_NOT_PUBLISHED", "This agent has no public identity yet.", config)
+          : json(200, config.identity, config);
       if (request.method === "GET" && root === "study" && parts.length === 1)
         return json(200, await store.study(), config);
       if (request.method === "GET" && root === "calendar" && parts.length === 1) {

@@ -26,6 +26,8 @@ export interface AgentStore {
 export interface AgentApiConfig {
   ownerToken: string;
   siteOrigin: string;
+  /** ERC-8004 registration file; absent until the agent has a public address. */
+  identity?: unknown;
 }
 
 export interface AgentRequest {

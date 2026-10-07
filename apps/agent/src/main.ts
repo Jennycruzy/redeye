@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { loadEnvFile } from "node:process";
 import type { Address, Hex } from "viem";
 import { AgenticWallet, createBawRunner } from "./agentic-wallet.js";
+import { buildIdentityCard, identityConfigFromEnv } from "./identity.js";
 import { createPlanChain } from "./plan-chain.js";
 import { PlanService } from "./plan-service.js";
 import { listedBstock, nasdaqOfficialOpen } from "./plan-sources.js";
@@ -83,7 +84,9 @@ store.setPlanActions({
   stopStanding: (id) => planService.stopStanding(id)
 });
 planService.start();
-const server = startAgentServer(store, { ownerToken, siteOrigin }, port);
+const identityConfig = identityConfigFromEnv(process.env, planChain?.agentAddress ?? null);
+const identity = identityConfig === null ? undefined : buildIdentityCard(identityConfig);
+const server = startAgentServer(store, { ownerToken, siteOrigin, identity }, port);
 void priceService.start(priceTickers).catch((error: unknown) => {
   console.error(
     JSON.stringify({

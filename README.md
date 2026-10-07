@@ -53,6 +53,10 @@ current price view shows the US close, 24/7 price and token price with source
 timestamps. Until a live plan resolves, replay output must be labeled `REPLAY`
 and simulations must be labeled `SIMULATED`.
 
+## Agent identity
+
+The agent serves its ERC-8004 registration file at `/.well-known/agent-registration.json` (also `/identity`) once `PUBLIC_AGENT_URL` is set. The file lists only services that are live today and the two contracts above. `pnpm identity:register` checks that the file is reachable and simulates the registration; with `--send` it registers the agent in the identity registry on BNB Chain ([`0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`](https://bscscan.com/address/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432)), or points an existing registration (`ERC8004_AGENT_ID`) at the current address.
+
 ## Verification
 
 ```sh

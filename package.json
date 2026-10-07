@@ -12,6 +12,7 @@
     "probe": "node scripts/probe.mjs",
     "probe:status": "node scripts/probe.mjs --status-only",
     "verify": "node scripts/verify-receipt.mjs",
+    "identity:register": "node scripts/register-identity.mjs",
     "study:offhours": "node scripts/study/offhours.mjs",
     "study:offhours:test": "node --test scripts/study/offhours.test.mjs",
     "packages:build": "pnpm --filter @redeye/shared build && pnpm --filter @redeye/clients build && pnpm --filter @redeye/core build",
