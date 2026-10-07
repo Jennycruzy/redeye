@@ -32,7 +32,10 @@ function store(): AgentStore {
     authSignin: async () => ({ pairing: "fixture" }),
     authVerify: async (id) => ({ id, connected: true }),
     planDraft: async (body) => ({ body }),
-    planAction: async (id, body) => ({ id, body })
+    planAction: async (id, body) => ({ id, body }),
+    standingCreate: async (body) => ({ body }),
+    standingStop: async (id) => ({ id, stopped: true }),
+    standingGet: async (id) => ({ id })
   };
 }
 
@@ -106,6 +109,20 @@ describe("agent HTTP boundary", () => {
     const response = await api(request("/windows/NVDA"));
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ ticker: "NVDA" });
+  });
+
+  it("routes standing plans and guards their writes with the owner token", async () => {
+    const headers = new Headers({ "x-owner-token": config.ownerToken });
+    const api = createAgentApi(store(), config);
+    const created = await api(
+      request("/standing", { method: "POST", headers, body: { ticker: "NVDA", days: 3 } })
+    );
+    expect(created.status).toBe(201);
+    const stopped = await api(request("/standing/run-1/stop", { method: "POST", headers }));
+    expect(stopped.body).toEqual({ id: "run-1", stopped: true });
+    expect((await api(request("/standing/run-1"))).body).toEqual({ id: "run-1" });
+    expect((await api(request("/standing", { method: "POST" }))).status).toBe(401);
+    expect((await api(request("/standing/run-1/stop", { method: "POST" }))).status).toBe(401);
   });
 
   it("routes lock and cancel and rejects other plan actions", async () => {

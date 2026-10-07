@@ -2,11 +2,23 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ReceiptBundle } from "@redeye/core";
-import { PlanError, type PlanRecordItem, type PlanStore, type StoredPlan } from "./plan-service.js";
+import {
+  PlanError,
+  type PlanRecordItem,
+  type PlanStore,
+  type StoredPlan,
+  type StoredStanding
+} from "./plan-service.js";
 import type { PriceSnapshotOk } from "./price-service.js";
 import type { AgentStore } from "./types.js";
 
-export type PlanActionHandler = (id: string, action: string) => Promise<unknown>;
+/** Plan writes, provided by the plan service once PlanBook is configured. */
+export interface PlanActions {
+  lock(id: string): Promise<unknown>;
+  cancel(id: string): Promise<unknown>;
+  startStanding(input: Record<string, unknown>): Promise<unknown>;
+  stopStanding(id: string): Promise<unknown>;
+}
 
 interface SqliteStatement {
   all(...parameters: unknown[]): Array<Record<string, unknown>>;
@@ -55,7 +67,7 @@ function sourceRows(rows: Array<Record<string, unknown>>): unknown[] {
 }
 
 export class SqliteAgentStore implements AgentStore, PlanStore {
-  private planActionHandler: PlanActionHandler | null = null;
+  private planActions: PlanActions | null = null;
 
   constructor(
     private readonly database: SqliteDatabase,
@@ -261,7 +273,7 @@ export class SqliteAgentStore implements AgentStore, PlanStore {
 
   async record(): Promise<unknown> {
     const items = (this.many("record") as PlanRecordItem[]).sort(
-      (left, right) => right.lockedAt - left.lockedAt
+      (left, right) => (right.lockedAt ?? right.closeTs) - (left.lockedAt ?? left.closeTs)
     );
     const count = (outcome: PlanRecordItem["outcome"]) =>
       items.filter((item) => item.outcome === outcome).length;
@@ -272,6 +284,7 @@ export class SqliteAgentStore implements AgentStore, PlanStore {
       broken: count("broken"),
       open: items.filter((item) => item.status === "locked" || item.status === "decided").length,
       cancelled: items.filter((item) => item.status === "cancelled").length,
+      missed: items.filter((item) => item.status === "missed").length,
       items
     };
   }
@@ -371,29 +384,71 @@ export class SqliteAgentStore implements AgentStore, PlanStore {
     return draft;
   }
 
-  setPlanActions(handler: PlanActionHandler): void {
-    this.planActionHandler = handler;
+  setPlanActions(actions: PlanActions): void {
+    this.planActions = actions;
   }
 
   async planAction(id: string, body: unknown): Promise<unknown> {
     const input = objectBody(body, "plan action");
-    if (this.planActionHandler === null) {
+    const action = input.action;
+    return this.withPlanActions((actions) => {
+      if (action === "lock" || action === "freeze") return actions.lock(id);
+      if (action === "cancel") return actions.cancel(id);
+      throw new StoreError(400, "PLAN_ACTION_REQUIRED", "A plan action is required.");
+    });
+  }
+
+  async standingCreate(body: unknown): Promise<unknown> {
+    const input = objectBody(body, "standing plan body");
+    return this.withPlanActions((actions) => actions.startStanding(input));
+  }
+
+  async standingStop(id: string): Promise<unknown> {
+    return this.withPlanActions((actions) => actions.stopStanding(id));
+  }
+
+  async standingGet(id: string): Promise<unknown> {
+    const standing = await this.getStanding(id);
+    if (standing === null) {
+      throw new StoreError(
+        404,
+        "STANDING_NOT_FOUND",
+        "The requested standing plan does not exist."
+      );
+    }
+    return standing;
+  }
+
+  private async withPlanActions(
+    call: (actions: PlanActions) => Promise<unknown>
+  ): Promise<unknown> {
+    if (this.planActions === null) {
       throw new StoreError(
         503,
         "PLANBOOK_NOT_CONFIGURED",
         "PlanBook and the execution service are not configured on this agent."
       );
     }
-    if (typeof input.action !== "string") {
-      throw new StoreError(400, "PLAN_ACTION_REQUIRED", "A plan action is required.");
-    }
     try {
-      return await this.planActionHandler(id, input.action);
+      return await call(this.planActions);
     } catch (caught) {
-      if (caught instanceof PlanError)
+      if (caught instanceof PlanError) {
         throw new StoreError(caught.status, caught.code, caught.message);
+      }
       throw caught;
     }
+  }
+
+  async getStanding(id: string): Promise<StoredStanding | null> {
+    return this.one("standing", id) as StoredStanding | null;
+  }
+
+  async saveStanding(standing: StoredStanding): Promise<void> {
+    this.put("standing", standing.id, standing);
+  }
+
+  async listStanding(): Promise<StoredStanding[]> {
+    return this.many("standing") as StoredStanding[];
   }
 
   async getPlan(id: string): Promise<StoredPlan | null> {

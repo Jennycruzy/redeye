@@ -1,6 +1,10 @@
+import { randomUUID } from "node:crypto";
 import {
+  createStandingRun,
   createWindowRecord,
   decide,
+  expandStandingPlan,
+  hashCanonical,
   hashDecision,
   hashPlan,
   hashVerdict,
@@ -15,7 +19,8 @@ import {
   type PlanKind,
   type ReceiptBundle,
   type ReceiptVerdict,
-  type RefusalCode
+  type RefusalCode,
+  type StandingPlanRun
 } from "@redeye/core";
 import type { Address, Hex } from "viem";
 import type { ChainWrite, Outcome, PlanChain } from "./plan-chain.js";
@@ -78,18 +83,20 @@ export interface StoredPlan {
 
 export interface PlanRecordItem {
   id: string;
-  planId: number;
+  /** Null for a standing-plan night that was never locked (LOCK_MISSED). */
+  planId: number | null;
   owner: Address;
-  status: PlanStatus;
+  status: PlanStatus | "missed";
+  standingRunId: string | null;
   ticker: string;
   kind: PlanKind;
   promise: string;
   window: EventRecord["kind"];
   /** Block time of the lock transaction, in milliseconds. */
-  lockedAt: number;
+  lockedAt: number | null;
   closeTs: number;
   openTs: number;
-  freezeTx: Hex;
+  freezeTx: Hex | null;
   outcome: Outcome | null;
   reason: string | null;
   openPrice: string | null;
@@ -112,7 +119,33 @@ export function describePlan(plan: PlanContext): string {
   return `Hold ${shares} through the window and report the result at the open.`;
 }
 
+export type StandingStatus = "active" | "stopped" | "ended";
+
+/** One night of a standing run: either locked as its own plan, or missed. */
+export interface StandingNight {
+  sequence: number;
+  status: "locked" | "missed";
+  planStoreId: string | null;
+  closeTs: number;
+}
+
+export interface StoredStanding {
+  v: 1;
+  id: string;
+  status: StandingStatus;
+  createdAt: string;
+  owner: Address;
+  run: StandingPlanRun;
+  runHash: Hex;
+  /** Keyed by the night's event key. */
+  nights: Record<string, StandingNight>;
+  lastError?: { at: string; message: string };
+}
+
 export interface PlanStore {
+  getStanding(id: string): Promise<StoredStanding | null>;
+  saveStanding(standing: StoredStanding): Promise<void>;
+  listStanding(): Promise<StoredStanding[]>;
   getPlan(id: string): Promise<StoredPlan | null>;
   savePlan(plan: StoredPlan): Promise<void>;
   listPlans(): Promise<StoredPlan[]>;
@@ -141,6 +174,7 @@ export interface PlanServiceOptions {
   listedToken(ticker: string): Promise<ListedToken | null>;
   officialOpen(ticker: string, nyDate: string): Promise<OfficialOpen | null>;
   now?: () => number;
+  newId?: () => string;
 }
 
 function nyDate(atMs: number): string {
@@ -171,6 +205,20 @@ function eventContext(event: EventRecord): EventContext {
     releaseTs: null,
     consensus: null
   };
+}
+
+function paramsFrom(input: Record<string, unknown>): PlanContext["params"] {
+  return typeof input.params === "object" && input.params !== null && !Array.isArray(input.params)
+    ? (input.params as PlanContext["params"])
+    : ({} as PlanContext["params"]);
+}
+
+function invalid(issues: Array<{ field: string; message: string }>): PlanError {
+  return new PlanError(
+    400,
+    "PLAN_INVALID",
+    issues.map((issue) => `${issue.field} ${issue.message}`).join(" ")
+  );
 }
 
 function ageSeconds(fetchedAt: string, atMs: number): number {
@@ -204,42 +252,23 @@ export class PlanService {
   private running = false;
   private timer: ReturnType<typeof setInterval> | null = null;
 
+  private readonly newId: () => string;
+
   constructor(private readonly options: PlanServiceOptions) {
     this.now = options.now ?? Date.now;
+    this.newId = options.newId ?? randomUUID;
   }
 
   async lock(id: string): Promise<StoredPlan> {
-    const chain = this.options.chain;
-    if (chain === null) {
-      throw new PlanError(
-        503,
-        "PLANBOOK_NOT_CONFIGURED",
-        "PlanBook and the agent key are not configured on this agent."
-      );
-    }
+    const chain = this.requireConfiguredChain();
     const stored = await this.requirePlan(id);
     if (stored.status !== "draft") {
       throw new PlanError(409, "PLAN_NOT_DRAFT", `Plan ${id} is already ${stored.status}.`);
     }
     const atMs = this.now();
-    const ticker = text(stored.input.ticker, "ticker").toUpperCase();
-    const kind = text(stored.input.kind, "kind") as PlanKind;
-    if (!WINDOW_PLAN_KINDS.includes(kind)) {
-      throw new PlanError(
-        400,
-        "PLAN_INVALID",
-        `Off-hours plans must be one of: ${WINDOW_PLAN_KINDS.join(", ")}.`
-      );
-    }
-    const token = await this.options.listedToken(ticker);
-    if (token === null) {
-      throw new PlanError(400, "TOKEN_NOT_LISTED", `${ticker} has no bStock on the official list.`);
-    }
-    if (!token.multiplierAgreement) {
-      throw new PlanError(409, "MULTIPLIER_MISMATCH", `${ticker} share counts disagree.`);
-    }
+    const plan = await this.planFromInput(stored.input, null);
     const window = nextWindow(atMs);
-    const event = createWindowRecord(window.kind, ticker, window.closeTs, window.openTs);
+    const event = createWindowRecord(window.kind, plan.ticker, window.closeTs, window.openTs);
     const context = eventContext(event);
     if (atMs >= planLockDeadlineMs(context)) {
       throw new PlanError(
@@ -248,55 +277,82 @@ export class PlanService {
         "Plans must be locked at least 5 minutes before the US close."
       );
     }
-    const params =
-      typeof stored.input.params === "object" && stored.input.params !== null
-        ? (stored.input.params as PlanContext["params"])
-        : ({} as PlanContext["params"]);
-    const plan: PlanContext = {
-      kind,
-      standingRunId: null,
-      ticker,
-      wrapper: "bStock",
-      tokenAddress: token.address,
-      heldShares: text(stored.input.heldShares, "heldShares"),
-      params
-    };
     const validation = validatePlan(plan, context);
-    if (!validation.valid) {
+    if (!validation.valid) throw invalid(validation.issues);
+    return this.freeze(chain, stored, plan, event);
+  }
+
+  /**
+   * Starts a standing plan: the same plan, locked again before every close until it
+   * ends or is stopped. Each night becomes its own plan in PlanBook, linked to the run.
+   */
+  async startStanding(input: Record<string, unknown>): Promise<StoredStanding> {
+    const chain = this.requireConfiguredChain();
+    const days = Number(input.days);
+    if (!Number.isInteger(days) || days < 1 || days > 30) {
+      throw new PlanError(400, "PLAN_INVALID", "days must be a whole number from 1 to 30.");
+    }
+    const atMs = this.now();
+    const id = this.newId();
+    const template = await this.planFromInput(input, id);
+    let run: StandingPlanRun;
+    try {
+      run = createStandingRun({
+        runId: id,
+        template,
+        startAtMs: atMs,
+        untilTs: atMs + days * 86_400_000
+      });
+    } catch (error) {
       throw new PlanError(
         400,
         "PLAN_INVALID",
-        validation.issues.map((issue) => `${issue.field} ${issue.message}`).join(" ")
+        error instanceof Error ? error.message : String(error)
       );
     }
-    const planHash = hashPlan(plan);
-    const owner = chain.agentAddress;
-    const freeze = await chain.freeze({
-      owner,
-      eventKey: event.eventKey,
-      planHash,
-      ticker,
-      lockTs: window.closeTs
-    });
-    const locked: StoredPlan = {
-      ...stored,
-      status: "locked",
-      plan,
-      event,
-      planHash,
-      owner,
-      planId: freeze.planId,
-      freeze
+    const [first] = expandStandingPlan(run).filter((copy) => copy.lockByMs > atMs);
+    if (first === undefined) {
+      throw new PlanError(400, "PLAN_INVALID", "The run covers no market close.");
+    }
+    const validation = validatePlan(template, eventContext(first.event));
+    if (!validation.valid) throw invalid(validation.issues);
+    const standing: StoredStanding = {
+      v: 1,
+      id,
+      status: "active",
+      createdAt: new Date(atMs).toISOString(),
+      owner: chain.agentAddress,
+      run,
+      runHash: hashCanonical({
+        runId: run.runId,
+        template: run.template,
+        startAtMs: run.startAtMs,
+        untilTs: run.untilTs
+      }),
+      nights: {}
     };
-    await this.options.store.savePlan(locked);
-    await this.options.store.saveRunEvent(id, "locked", {
-      planId: freeze.planId,
-      txHash: freeze.txHash,
-      lockTs: window.closeTs,
-      openTs: window.openTs
-    });
-    await this.saveRecord(locked);
-    return locked;
+    await this.options.store.saveStanding(standing);
+    await this.advanceStanding(standing);
+    return (await this.options.store.getStanding(id)) ?? standing;
+  }
+
+  /** Stops future nights. Nights already locked stay public promises. */
+  async stopStanding(id: string): Promise<StoredStanding> {
+    const standing = await this.options.store.getStanding(id);
+    if (standing === null) {
+      throw new PlanError(404, "STANDING_NOT_FOUND", "The requested standing plan does not exist.");
+    }
+    if (standing.status !== "active") {
+      throw new PlanError(409, "STANDING_NOT_ACTIVE", `Standing plan ${id} is ${standing.status}.`);
+    }
+    const atMs = this.now();
+    const stopped: StoredStanding = {
+      ...standing,
+      status: "stopped",
+      run: { ...standing.run, stoppedAtMs: atMs }
+    };
+    await this.options.store.saveStanding(stopped);
+    return stopped;
   }
 
   async cancel(id: string): Promise<StoredPlan> {
@@ -332,6 +388,20 @@ export class PlanService {
     if (this.running) return;
     this.running = true;
     try {
+      for (const standing of await this.options.store.listStanding()) {
+        if (standing.status !== "active") continue;
+        try {
+          await this.advanceStanding(standing);
+        } catch (error) {
+          await this.options.store.saveStanding({
+            ...standing,
+            lastError: {
+              at: new Date(this.now()).toISOString(),
+              message: error instanceof Error ? error.message : String(error)
+            }
+          });
+        }
+      }
       for (const stored of await this.options.store.listPlans()) {
         if (stored.status !== "locked" && stored.status !== "decided") continue;
         try {
@@ -366,6 +436,175 @@ export class PlanService {
   stop(): void {
     if (this.timer !== null) clearInterval(this.timer);
     this.timer = null;
+  }
+
+  /**
+   * Locks each night of a standing run once the night before it has closed, and
+   * publishes any night whose lock time passed without a lock as LOCK_MISSED.
+   */
+  private async advanceStanding(standing: StoredStanding): Promise<void> {
+    const atMs = this.now();
+    const nights = { ...standing.nights };
+    let changed = false;
+    // A night whose lock time had passed when the run started was never part of it.
+    const copies = expandStandingPlan(standing.run).filter(
+      (copy) => copy.lockByMs > standing.run.startAtMs
+    );
+    for (const copy of copies) {
+      const key = copy.event.eventKey;
+      if (nights[key] !== undefined) continue;
+      if (atMs > copy.lockByMs) {
+        nights[key] = {
+          sequence: copy.sequence,
+          status: "missed",
+          planStoreId: null,
+          closeTs: copy.window.closeTs
+        };
+        changed = true;
+        await this.saveMissedNight(standing, copy.plan, copy.event);
+        continue;
+      }
+      // One night is locked ahead at a time: each locks once the night before it has closed.
+      const previous = copies[copies.indexOf(copy) - 1];
+      if (previous !== undefined && atMs < previous.window.closeTs) break;
+      const draft: StoredPlan = {
+        v: 1,
+        id: `${standing.id}-${copy.sequence}`,
+        status: "draft",
+        createdAt: new Date(atMs).toISOString(),
+        input: { standingRunId: standing.id, sequence: copy.sequence }
+      };
+      const locked = await this.freeze(
+        this.requireConfiguredChain(),
+        draft,
+        copy.plan,
+        copy.event,
+        standing.runHash
+      );
+      nights[key] = {
+        sequence: copy.sequence,
+        status: "locked",
+        planStoreId: locked.id,
+        closeTs: copy.window.closeTs
+      };
+      changed = true;
+      break;
+    }
+    const endTs = standing.run.stoppedAtMs ?? standing.run.untilTs;
+    const finished =
+      atMs > endTs && copies.every((copy) => nights[copy.event.eventKey] !== undefined);
+    if (!changed && !finished) return;
+    const next: StoredStanding = { ...standing, nights };
+    delete next.lastError;
+    if (finished) next.status = "ended";
+    await this.options.store.saveStanding(next);
+  }
+
+  private async saveMissedNight(
+    standing: StoredStanding,
+    plan: PlanContext,
+    event: EventRecord
+  ): Promise<void> {
+    await this.options.store.saveRecordItem({
+      id: `${standing.id}:${event.eventKey}`,
+      planId: null,
+      owner: standing.owner,
+      status: "missed",
+      standingRunId: standing.id,
+      ticker: plan.ticker,
+      kind: plan.kind,
+      promise: describePlan(plan),
+      window: event.kind,
+      lockedAt: null,
+      closeTs: event.lockTs ?? 0,
+      openTs: event.openTs ?? 0,
+      freezeTx: null,
+      outcome: null,
+      reason: "LOCK_MISSED",
+      openPrice: null,
+      verdictTx: null
+    });
+  }
+
+  private async planFromInput(
+    input: Record<string, unknown>,
+    standingRunId: string | null
+  ): Promise<PlanContext> {
+    const ticker = text(input.ticker, "ticker").toUpperCase();
+    const kind = text(input.kind, "kind") as PlanKind;
+    if (!WINDOW_PLAN_KINDS.includes(kind)) {
+      throw new PlanError(
+        400,
+        "PLAN_INVALID",
+        `Off-hours plans must be one of: ${WINDOW_PLAN_KINDS.join(", ")}.`
+      );
+    }
+    const token = await this.options.listedToken(ticker);
+    if (token === null) {
+      throw new PlanError(400, "TOKEN_NOT_LISTED", `${ticker} has no bStock on the official list.`);
+    }
+    if (!token.multiplierAgreement) {
+      throw new PlanError(409, "MULTIPLIER_MISMATCH", `${ticker} share counts disagree.`);
+    }
+    return {
+      kind,
+      standingRunId,
+      ticker,
+      wrapper: "bStock",
+      tokenAddress: token.address,
+      heldShares: text(input.heldShares, "heldShares"),
+      params: paramsFrom(input)
+    };
+  }
+
+  private async freeze(
+    chain: PlanChain,
+    stored: StoredPlan,
+    plan: PlanContext,
+    event: EventRecord,
+    standingRunHash?: Hex
+  ): Promise<StoredPlan> {
+    const context = eventContext(event);
+    const planHash = hashPlan(plan);
+    const owner = chain.agentAddress;
+    const freeze = await chain.freeze({
+      owner,
+      eventKey: event.eventKey,
+      planHash,
+      ticker: plan.ticker,
+      lockTs: context.lockTs,
+      ...(standingRunHash === undefined ? {} : { standingRunHash })
+    });
+    const locked: StoredPlan = {
+      ...stored,
+      status: "locked",
+      plan,
+      event,
+      planHash,
+      owner,
+      planId: freeze.planId,
+      freeze
+    };
+    await this.options.store.savePlan(locked);
+    await this.options.store.saveRunEvent(stored.id, "locked", {
+      planId: freeze.planId,
+      txHash: freeze.txHash,
+      lockTs: context.lockTs,
+      openTs: context.openTs
+    });
+    await this.saveRecord(locked);
+    return locked;
+  }
+
+  private requireConfiguredChain(): PlanChain {
+    if (this.options.chain === null) {
+      throw new PlanError(
+        503,
+        "PLANBOOK_NOT_CONFIGURED",
+        "PlanBook and the agent key are not configured on this agent."
+      );
+    }
+    return this.options.chain;
   }
 
   private async advance(stored: StoredPlan): Promise<void> {
@@ -555,6 +794,7 @@ export class PlanService {
       planId: stored.planId,
       owner,
       status: stored.status,
+      standingRunId: plan.standingRunId ?? null,
       ticker: plan.ticker,
       kind: plan.kind,
       promise: describePlan(plan),

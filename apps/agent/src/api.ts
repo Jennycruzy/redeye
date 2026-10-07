@@ -154,6 +154,34 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
           );
         return json(200, await store.authVerify(tail), config);
       }
+      if (request.method === "GET" && root === "standing" && id !== undefined && parts.length === 2)
+        return json(200, await store.standingGet(id), config);
+      if (request.method === "POST" && root === "standing" && parts.length === 1) {
+        if (!ownerAuthorized(request, config))
+          return error(
+            401,
+            "OWNER_AUTH_REQUIRED",
+            "This action needs the agent owner token.",
+            config
+          );
+        return json(201, await store.standingCreate(request.body), config);
+      }
+      if (
+        request.method === "POST" &&
+        root === "standing" &&
+        id !== undefined &&
+        tail === "stop" &&
+        parts.length === 3
+      ) {
+        if (!ownerAuthorized(request, config))
+          return error(
+            401,
+            "OWNER_AUTH_REQUIRED",
+            "This action needs the agent owner token.",
+            config
+          );
+        return json(200, await store.standingStop(id), config);
+      }
       if (request.method === "POST" && root === "plans" && parts.length === 1) {
         if (!ownerAuthorized(request, config))
           return error(

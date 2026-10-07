@@ -346,3 +346,132 @@ describe("plan service", () => {
     expect(late.chain.cancels).toHaveLength(0);
   });
 });
+
+describe("standing plans", () => {
+  const standingInput = { ...guardInput, days: 3 };
+  const THU_CLOSE = Date.parse("2026-10-08T20:00:00.000Z");
+  const FRI_CLOSE = Date.parse("2026-10-09T20:00:00.000Z");
+
+  it("locks tonight's copy at once, linked to the run", async () => {
+    const h = await harness();
+    const standing = await h.service.startStanding(standingInput);
+
+    expect(standing.status).toBe("active");
+    expect(h.chain.freezes).toHaveLength(1);
+    expect(h.chain.freezes[0]).toMatchObject({
+      lockTs: CLOSE,
+      standingRunHash: standing.runHash
+    });
+    const [night] = Object.values(standing.nights);
+    expect(night).toMatchObject({ sequence: 0, status: "locked", closeTs: CLOSE });
+    const copy = await plan(h, night!.planStoreId!);
+    expect(copy.plan?.standingRunId).toBe(standing.id);
+    expect(await h.store.record()).toMatchObject({
+      items: [{ standingRunId: standing.id, status: "locked" }]
+    });
+  });
+
+  it("locks the next night only after the night before it has closed", async () => {
+    const h = await harness();
+    const standing = await h.service.startStanding(standingInput);
+
+    h.setNow(CLOSE - MINUTE);
+    await h.service.tick();
+    expect(h.chain.freezes).toHaveLength(1);
+
+    h.setNow(CLOSE + MINUTE);
+    await h.service.tick();
+    await h.service.tick();
+    expect(h.chain.freezes.map((freeze) => freeze.lockTs)).toEqual([CLOSE, THU_CLOSE]);
+    const stored = await h.store.getStanding(standing.id);
+    expect(Object.values(stored!.nights).map((night) => night.status)).toEqual([
+      "locked",
+      "locked"
+    ]);
+  });
+
+  it("publishes a night as missed when its lock time passes without a lock", async () => {
+    const h = await harness();
+    const standing = await h.service.startStanding(standingInput);
+
+    // The agent is down from Wednesday night until after Thursday's close.
+    h.setNow(THU_CLOSE + 30 * MINUTE);
+    await h.service.tick();
+
+    expect(h.chain.freezes.map((freeze) => freeze.lockTs)).toEqual([CLOSE, FRI_CLOSE]);
+    const stored = await h.store.getStanding(standing.id);
+    expect(Object.values(stored!.nights).map((night) => night.status)).toEqual([
+      "locked",
+      "missed",
+      "locked"
+    ]);
+    expect(await h.store.record()).toMatchObject({
+      missed: 1,
+      items: expect.arrayContaining([
+        expect.objectContaining({ status: "missed", reason: "LOCK_MISSED", planId: null })
+      ])
+    });
+  });
+
+  it("stops future nights but keeps the night already locked", async () => {
+    const h = await harness();
+    const standing = await h.service.startStanding(standingInput);
+    const stopped = await h.service.stopStanding(standing.id);
+    expect(stopped.status).toBe("stopped");
+
+    h.setNow(OPEN + MINUTE);
+    await h.service.tick();
+    expect(h.chain.freezes).toHaveLength(1);
+    expect((await h.store.record()) as { open: number }).toMatchObject({ open: 1 });
+    await expect(h.service.stopStanding(standing.id)).rejects.toMatchObject({
+      code: "STANDING_NOT_ACTIVE"
+    });
+  });
+
+  it("ends once every night in the run is resolved", async () => {
+    const h = await harness();
+    const standing = await h.service.startStanding({ ...guardInput, days: 1 });
+    expect(Object.keys(standing.nights)).toHaveLength(1);
+
+    h.setNow(BEFORE_CLOSE + 25 * 60 * MINUTE);
+    await h.service.tick();
+    expect((await h.store.getStanding(standing.id))?.status).toBe("ended");
+    expect(h.chain.freezes).toHaveLength(1);
+  });
+
+  it("follows the exchange calendar across Thanksgiving", async () => {
+    const h = await harness();
+    const wednesday = Date.parse("2026-11-25T15:00:00.000Z");
+    h.setNow(wednesday);
+    const standing = await h.service.startStanding({ ...guardInput, days: 3 });
+    const fridayOpen = Date.parse("2026-11-27T14:30:00.000Z");
+    h.setNow(fridayOpen + MINUTE);
+    await h.service.tick();
+
+    const nights = Object.values((await h.store.getStanding(standing.id))!.nights);
+    expect(nights.map((night) => new Date(night.closeTs).toISOString())).toEqual([
+      "2026-11-25T21:00:00.000Z",
+      "2026-11-27T18:00:00.000Z"
+    ]);
+    const kinds = await Promise.all(
+      nights.map(async (night) => (await plan(h, night.planStoreId!)).event?.kind)
+    );
+    expect(kinds).toEqual(["holiday", "weekend"]);
+  });
+
+  it("rejects bad lengths and out-of-bounds plans before any lock", async () => {
+    const h = await harness();
+    await expect(h.service.startStanding({ ...guardInput, days: 31 })).rejects.toMatchObject({
+      code: "PLAN_INVALID"
+    });
+    await expect(
+      h.service.startStanding({
+        ...guardInput,
+        days: 3,
+        params: { ...guardInput.params, sellPct: "5" }
+      })
+    ).rejects.toMatchObject({ code: "PLAN_INVALID" });
+    expect(h.chain.freezes).toHaveLength(0);
+    expect(await h.store.listStanding()).toHaveLength(0);
+  });
+});

@@ -12,6 +12,7 @@ import { bsc } from "viem/chains";
 
 export const PLAN_BOOK_ABI = parseAbi([
   "function freezePlan(address planOwner, bytes32 eventKey, bytes32 planHash, string ticker, uint64 releaseTs, uint256 jobId) returns (uint256)",
+  "function freezeStandingPlan(address planOwner, bytes32 eventKey, bytes32 planHash, bytes32 standingRunHash, string ticker, uint64 releaseTs, uint256 jobId) returns (uint256)",
   "function recordDecision(uint256 planId, bytes32 decisionHash)",
   "function recordVerdict(uint256 planId, uint8 outcome, bytes32 verdictHash)",
   "function cancelPlan(uint256 planId)",
@@ -34,6 +35,8 @@ export interface FreezeInput {
   planHash: Hex;
   ticker: string;
   lockTs: number;
+  /** Set for one night's copy of a standing plan; links the copy to its run on chain. */
+  standingRunHash?: Hex;
 }
 
 /** Writes to PlanBook. Every method waits for the transaction to be mined. */
@@ -58,7 +61,8 @@ export function createPlanChain(options: PlanChainOptions): PlanChain {
   const writer = createWalletClient({ account, chain: bsc, transport });
 
   async function send(
-    functionName: "freezePlan" | "recordDecision" | "recordVerdict" | "cancelPlan",
+    functionName:
+      "freezePlan" | "freezeStandingPlan" | "recordDecision" | "recordVerdict" | "cancelPlan",
     args: readonly unknown[]
   ) {
     // Simulating first turns a contract revert into a readable error before any fee is spent.
@@ -87,14 +91,26 @@ export function createPlanChain(options: PlanChainOptions): PlanChain {
   return {
     agentAddress: account.address,
     async freeze(input) {
-      const { receipt, write } = await send("freezePlan", [
-        input.owner,
-        input.eventKey,
-        input.planHash,
-        input.ticker,
-        BigInt(Math.floor(input.lockTs / 1000)),
-        0n
-      ]);
+      const lockTs = BigInt(Math.floor(input.lockTs / 1000));
+      const { receipt, write } =
+        input.standingRunHash === undefined
+          ? await send("freezePlan", [
+              input.owner,
+              input.eventKey,
+              input.planHash,
+              input.ticker,
+              lockTs,
+              0n
+            ])
+          : await send("freezeStandingPlan", [
+              input.owner,
+              input.eventKey,
+              input.planHash,
+              input.standingRunHash,
+              input.ticker,
+              lockTs,
+              0n
+            ]);
       const [frozen] = parseEventLogs({
         abi: PLAN_BOOK_ABI,
         eventName: "PlanFrozen",

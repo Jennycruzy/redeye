@@ -70,9 +70,12 @@ const planService = new PlanService({
   listedToken: (ticker) => listedBstock(rawRoot, ticker),
   officialOpen: (ticker, date) => nasdaqOfficialOpen(rawRoot, ticker, date)
 });
-store.setPlanActions((id, action) =>
-  action === "cancel" ? planService.cancel(id) : planService.lock(id)
-);
+store.setPlanActions({
+  lock: (id) => planService.lock(id),
+  cancel: (id) => planService.cancel(id),
+  startStanding: (input) => planService.startStanding(input),
+  stopStanding: (id) => planService.stopStanding(id)
+});
 planService.start();
 const server = startAgentServer(store, { ownerToken, siteOrigin }, port);
 void priceService.start(priceTickers).catch((error: unknown) => {

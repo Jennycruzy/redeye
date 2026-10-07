@@ -18,6 +18,9 @@ export interface AgentStore {
   authVerify(qrCodeId: string): Promise<unknown>;
   planDraft(body: unknown): Promise<unknown>;
   planAction(id: string, body: unknown): Promise<unknown>;
+  standingCreate(body: unknown): Promise<unknown>;
+  standingStop(id: string): Promise<unknown>;
+  standingGet(id: string): Promise<unknown>;
 }
 
 export interface AgentApiConfig {
