@@ -969,6 +969,47 @@ describe("v1.5 proof rules", () => {
     expect(new Date(planLockDeadlineMs(window)).toISOString()).toBe("2026-10-09T19:55:00.000Z");
   });
 
+  it("lets Buy the dip start from cash alone, but not other plans", () => {
+    const window = event({
+      kind: "weekend",
+      lockTs: Date.parse("2026-10-09T20:00:00.000Z"),
+      openTs: Date.parse("2026-10-12T13:30:00.000Z"),
+      releaseTs: null,
+      consensus: null
+    });
+    const dip = {
+      kind: "buy_dip" as const,
+      heldShares: "0",
+      params: {
+        maxPriceImpactPct: "1",
+        minPoolDepthUsd: "100000",
+        triggerDropPct: "1",
+        maxUsd: "5",
+        maxGapToRealPricePct: "1"
+      }
+    };
+    expect(validatePlan(plan(dip), window)).toMatchObject({ valid: true, issues: [] });
+    expect(validatePlan(plan({ ...dip, heldShares: "-1" }), window).issues).toEqual([
+      { field: "heldShares", message: "must not be negative." }
+    ]);
+    expect(
+      validatePlan(
+        plan({
+          kind: "guard",
+          heldShares: "0",
+          params: {
+            maxPriceImpactPct: "1",
+            minPoolDepthUsd: "100000",
+            triggerDropPct: "3",
+            sellPct: "50",
+            maxGapToRealPricePct: "1"
+          }
+        }),
+        window
+      ).issues
+    ).toEqual([{ field: "heldShares", message: "must be greater than zero." }]);
+  });
+
   it("validates Sell the rise bounds and a rebuy time after the open", () => {
     const window = event({
       kind: "overnight",

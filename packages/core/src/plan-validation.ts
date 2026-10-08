@@ -70,7 +70,15 @@ export function validatePlan(plan: PlanContext, event: EventContext): PlanValida
   if (!/^0x[a-fA-F0-9]{40}$/.test(plan.tokenAddress)) {
     issues.push({ field: "tokenAddress", message: "must be a checksum-valid EVM address format." });
   }
-  requiredPositive(plan.heldShares, "heldShares", issues);
+  if (plan.kind === "buy_dip") {
+    // Buying the dip spends cash, so a holder may start with no shares at all.
+    const held = numberValue(plan.heldShares, "heldShares", issues);
+    if (held !== null && held.lt(0)) {
+      issues.push({ field: "heldShares", message: "must not be negative." });
+    }
+  } else {
+    requiredPositive(plan.heldShares, "heldShares", issues);
+  }
   const maxImpact = numberValue(plan.params.maxPriceImpactPct, "params.maxPriceImpactPct", issues);
   between(maxImpact, "0.2", "3", "params.maxPriceImpactPct", issues);
   const minimumDepth = numberValue(plan.params.minPoolDepthUsd, "params.minPoolDepthUsd", issues);
