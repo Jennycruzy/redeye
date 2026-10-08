@@ -765,11 +765,42 @@ export class PlanService {
         "No Agentic Wallet is connected, so this plan could not trade."
       );
     }
+    await this.requireHoldings(plan, token.multiplier);
     return {
       ...plan,
       door: "agentic_wallet",
       auditNoDataAccepted: input.auditNoDataAccepted === true
     };
+  }
+
+  /**
+   * A plan that may trade must be backed by what the wallet holds now: the shares it
+   * names, or for Buy the dip the USDT it would spend. Read from the chain, not the wallet.
+   */
+  private async requireHoldings(plan: PlanContext, multiplier: string): Promise<void> {
+    const chain = this.requireConfiguredChain();
+    const wallet = await this.options.trader!.address();
+    if (plan.kind === "buy_dip") {
+      const usdt = new Decimal(await chain.balance(USDT_ADDRESS, wallet));
+      const needed = new Decimal(plan.params.maxUsd ?? "0");
+      if (usdt.lt(needed)) {
+        throw new PlanError(
+          409,
+          "HOLDINGS_SHORT",
+          `The wallet holds ${usdt.toString()} USDT, less than the ${needed.toString()} USD this plan would spend.`
+        );
+      }
+      return;
+    }
+    const tokens = new Decimal(await chain.balance(plan.tokenAddress as Address, wallet));
+    const shares = tokens.mul(multiplier);
+    if (shares.lt(plan.heldShares)) {
+      throw new PlanError(
+        409,
+        "HOLDINGS_SHORT",
+        `The wallet holds ${shares.toDecimalPlaces(6, Decimal.ROUND_DOWN).toString()} ${plan.ticker} shares, less than the ${plan.heldShares} this plan names.`
+      );
+    }
   }
 
   private async freeze(

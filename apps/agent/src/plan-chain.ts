@@ -23,7 +23,8 @@ export const PLAN_BOOK_ABI = parseAbi([
 
 const ERC20_ABI = parseAbi([
   "event Transfer(address indexed from, address indexed to, uint256 value)",
-  "function decimals() view returns (uint8)"
+  "function decimals() view returns (uint8)",
+  "function balanceOf(address) view returns (uint256)"
 ]);
 
 /** PlanBook outcome codes. */
@@ -59,6 +60,8 @@ export interface PlanChain {
    * Transfer logs, in whole-token units.
    */
   received(txHash: Hex, token: Address, account: Address): Promise<string>;
+  /** What `account` holds of `token` now, in whole-token units. */
+  balance(token: Address, account: Address): Promise<string>;
   recordVerdict(planId: number, outcome: Outcome, verdictHash: Hex): Promise<ChainWrite>;
   cancel(planId: number): Promise<ChainWrite>;
 }
@@ -165,6 +168,18 @@ export function createPlanChain(options: PlanChainOptions): PlanChain {
         abi: ERC20_ABI,
         functionName: "decimals"
       });
+      return formatUnits(raw, decimals);
+    },
+    async balance(token, account) {
+      const [raw, decimals] = await Promise.all([
+        reader.readContract({
+          address: token,
+          abi: ERC20_ABI,
+          functionName: "balanceOf",
+          args: [account]
+        }),
+        reader.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" })
+      ]);
       return formatUnits(raw, decimals);
     },
     async recordVerdict(planId, outcome, verdictHash) {

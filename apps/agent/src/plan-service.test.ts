@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createWindowRecord, hashPlan, nextWindow, verifyReceipt } from "@redeye/core";
-import { keccak256, toBytes, type Hex } from "viem";
+import { keccak256, toBytes, type Address, type Hex } from "viem";
 import { AgenticWallet, type BawRunner } from "./agentic-wallet.js";
 import type { JobBook, JobKind, JobOpenInput, JobState, JobView } from "./job-chain.js";
 import type { ChainWrite, FreezeInput, Outcome, PlanChain } from "./plan-chain.js";
@@ -17,6 +17,7 @@ import { SqliteAgentStore } from "./sqlite-store.js";
 
 const AGENT = "0xe201bbf3C736a5d188797974a7e4B9464f707eA8";
 const NVDA_TOKEN = "0x02fca66c1d1afb4e2a7884261eb00f63598a7436";
+const USDT = "0x55d398326f99059fF775485246999027B3197955";
 // Wednesday 7 Oct 2026, 2 pm in New York; the window runs 20:00 UTC to 13:30 UTC on 8 Oct.
 const BEFORE_CLOSE = Date.parse("2026-10-07T18:00:00.000Z");
 const CLOSE = Date.parse("2026-10-07T20:00:00.000Z");
@@ -65,6 +66,15 @@ class FakeChain implements PlanChain {
 
   async received() {
     return this.receivedAmount;
+  }
+
+  /** Whole-token balances by token address (lowercase) for every account; plenty by default. */
+  readonly balances = new Map<string, string>();
+  readonly balanceReads: Array<{ token: string; account: string }> = [];
+
+  async balance(token: Address, account: Address) {
+    this.balanceReads.push({ token: token.toLowerCase(), account });
+    return this.balances.get(token.toLowerCase()) ?? "1000000";
   }
 
   async recordVerdict(planId: number, outcome: Outcome, hash: Hex) {
@@ -824,6 +834,35 @@ describe("trading through the Agentic Wallet", () => {
     })) as StoredPlan;
     await expect(h.service.lock(unaccepted.id)).rejects.toMatchObject({ code: "PLAN_INVALID" });
     expect(h.chain.freezes).toHaveLength(0);
+  });
+
+  it("refuses to lock a plan for more shares than the wallet holds", async () => {
+    const h = await harness({ baw: true });
+    // 1.998 tokens at 1.000778 shares each is 1.9996 shares, short of the 2 named.
+    h.chain.balances.set(NVDA_TOKEN, "1.998");
+    const draft = (await h.store.planDraft(tradingGuard)) as StoredPlan;
+    await expect(h.service.lock(draft.id)).rejects.toMatchObject({
+      code: "HOLDINGS_SHORT",
+      message: expect.stringContaining("1.999554 NVDA shares, less than the 2")
+    });
+    expect(h.chain.balanceReads).toEqual([{ token: NVDA_TOKEN, account: WALLET }]);
+    expect(h.chain.freezes).toHaveLength(0);
+
+    h.chain.balances.set(NVDA_TOKEN, "1.9985");
+    expect((await h.service.lock(draft.id)).status).toBe("locked");
+  });
+
+  it("refuses to lock Buy the dip for more USDT than the wallet holds", async () => {
+    const h = await harness({ baw: true });
+    h.chain.balances.set(USDT.toLowerCase(), "4.99");
+    const draft = (await h.store.planDraft({
+      ...tradingGuard,
+      kind: "buy_dip",
+      params: { ...tradingGuard.params, maxUsd: "5" }
+    })) as StoredPlan;
+    await expect(h.service.lock(draft.id)).rejects.toMatchObject({ code: "HOLDINGS_SHORT" });
+    h.chain.balances.set(USDT.toLowerCase(), "5");
+    expect((await h.service.lock(draft.id)).status).toBe("locked");
   });
 
   it("records the decision, then trades, then records the fill", async () => {
