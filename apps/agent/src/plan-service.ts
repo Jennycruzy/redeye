@@ -345,6 +345,16 @@ function jobDescription(stored: StoredPlan, context: EventContext, kind: JobKind
   });
 }
 
+/**
+ * The window a plan locked now belongs to. Until a close, that is the night after it; once
+ * the close has passed, the night after the next close. Inside the last minutes before a
+ * close it stays tonight, so a late lock is refused rather than moved to another night.
+ */
+export function lockableWindow(atMs: number): ReturnType<typeof nextWindow> {
+  const window = nextWindow(atMs);
+  return atMs >= window.closeTs ? nextWindow(window.openTs) : window;
+}
+
 function withoutJobError(job: StoredJob): StoredJob {
   const { lastError, ...rest } = job;
   void lastError;
@@ -398,7 +408,7 @@ export class PlanService {
       if (!(error instanceof PlanError)) throw error;
       return { valid: false, issues: [{ field: error.code, message: error.message }] };
     }
-    const window = nextWindow(atMs);
+    const window = lockableWindow(atMs);
     const event = createWindowRecord(window.kind, plan.ticker, window.closeTs, window.openTs);
     const context = eventContext(event);
     const lockBy = planLockDeadlineMs(context);
@@ -423,7 +433,7 @@ export class PlanService {
     }
     const atMs = this.now();
     const plan = await this.planFromInput(stored.input, null);
-    const window = nextWindow(atMs);
+    const window = lockableWindow(atMs);
     const event = createWindowRecord(window.kind, plan.ticker, window.closeTs, window.openTs);
     const context = eventContext(event);
     if (atMs >= planLockDeadlineMs(context)) {

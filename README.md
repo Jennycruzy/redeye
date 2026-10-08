@@ -61,7 +61,7 @@ The agent serves its ERC-8004 registration file at `/.well-known/agent-registrat
 
 ## MCP server
 
-`POST /mcp` is an MCP server (streamable HTTP, stateless, JSON answers) built on the official `@modelcontextprotocol/sdk`. Its tools are all read-only: `redeye_price` (the latest checked close, 24/7 and token prices with gaps, ages and sources), `redeye_windows`, `redeye_record`, `redeye_run` (one plan and its receipt), and `redeye_plan_draft`, which checks a plan against tonight's window and returns its promise, fingerprint and lock deadline without saving or locking anything. Plans can be locked only between the US open and five minutes before the close, so outside those hours the draft tool reports that tonight's lock time has passed.
+`POST /mcp` is an MCP server (streamable HTTP, stateless, JSON answers) built on the official `@modelcontextprotocol/sdk`. Its tools are all read-only: `redeye_price` (the latest checked close, 24/7 and token prices with gaps, ages and sources), `redeye_windows`, `redeye_record`, `redeye_run` (one plan and its receipt), and `redeye_plan_draft`, which checks a plan against tonight's window and returns its promise, fingerprint and lock deadline without saving or locking anything. A plan locked after a close belongs to the next close; in the last five minutes before a close a lock is refused rather than moved to another night.
 
 ## x402 sales
 

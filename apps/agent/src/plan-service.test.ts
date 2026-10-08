@@ -4,7 +4,13 @@ import { keccak256, toBytes, type Hex } from "viem";
 import { AgenticWallet, type BawRunner } from "./agentic-wallet.js";
 import type { JobBook, JobKind, JobOpenInput, JobState, JobView } from "./job-chain.js";
 import type { ChainWrite, FreezeInput, Outcome, PlanChain } from "./plan-chain.js";
-import { PlanError, PlanService, type OfficialOpen, type StoredPlan } from "./plan-service.js";
+import {
+  lockableWindow,
+  PlanError,
+  PlanService,
+  type OfficialOpen,
+  type StoredPlan
+} from "./plan-service.js";
 import type { PriceSnapshotOk } from "./price-service.js";
 import { FakeDatabase } from "./fake-database.js";
 import { SqliteAgentStore } from "./sqlite-store.js";
@@ -540,6 +546,49 @@ describe("plan service", () => {
   });
 });
 
+describe("lockable window", () => {
+  const NEXT_CLOSE = Date.parse("2026-10-08T20:00:00.000Z");
+  const NEXT_OPEN = Date.parse("2026-10-09T13:30:00.000Z");
+
+  it("is tonight until the close, even in its last minutes", () => {
+    expect(lockableWindow(BEFORE_CLOSE)).toMatchObject({ closeTs: CLOSE, openTs: OPEN });
+    expect(lockableWindow(CLOSE - 3 * MINUTE)).toMatchObject({ closeTs: CLOSE });
+  });
+
+  it("moves to the next close once tonight's close has passed", () => {
+    expect(lockableWindow(CLOSE)).toMatchObject({ closeTs: NEXT_CLOSE, openTs: NEXT_OPEN });
+    expect(lockableWindow(Date.parse("2026-10-08T04:00:00.000Z"))).toMatchObject({
+      closeTs: NEXT_CLOSE
+    });
+  });
+
+  it("skips the weekend to Monday's close", () => {
+    const monday = Date.parse("2026-10-12T20:00:00.000Z");
+    expect(lockableWindow(Date.parse("2026-10-09T21:00:00.000Z"))).toMatchObject({
+      closeTs: monday
+    });
+    expect(lockableWindow(Date.parse("2026-10-10T12:00:00.000Z"))).toMatchObject({
+      closeTs: monday
+    });
+  });
+
+  it("locks a plan after the close for the next night and waits for that close", async () => {
+    const h = await harness();
+    h.setNow(Date.parse("2026-10-07T22:00:00.000Z"));
+    const locked = await lockedGuard(h);
+    expect(h.chain.freezes[0]!.lockTs).toBe(NEXT_CLOSE);
+    expect(locked.event).toMatchObject({ lockTs: NEXT_CLOSE, openTs: NEXT_OPEN });
+
+    h.setNow(Date.parse("2026-10-08T15:00:00.000Z"));
+    h.setPrice(snapshot(Date.parse("2026-10-08T15:00:00.000Z"), "150", "2026-10-07"));
+    await h.service.tick();
+    const waiting = await plan(h, locked.id);
+    expect(waiting.status).toBe("locked");
+    expect(waiting.lastEvaluation).toBeUndefined();
+    expect(h.chain.decisions).toHaveLength(0);
+  });
+});
+
 describe("plan preview", () => {
   it("checks a plan against tonight's window and saves nothing", async () => {
     const h = await harness();
@@ -563,6 +612,15 @@ describe("plan preview", () => {
     });
     expect(preview.valid).toBe(false);
     expect(preview.issues.map((issue) => issue.field)).toContain("params.triggerDropPct");
+  });
+
+  it("checks against the next close when tonight's has passed", async () => {
+    const h = await harness();
+    h.setNow(Date.parse("2026-10-08T04:00:00.000Z"));
+    expect(await h.service.preview(guardInput)).toMatchObject({
+      valid: true,
+      window: { closeTs: Date.parse("2026-10-08T20:00:00.000Z") }
+    });
   });
 
   it("reports an unlisted ticker and a passed lock time plainly", async () => {
