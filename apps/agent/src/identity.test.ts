@@ -41,6 +41,19 @@ describe("buildIdentityCard", () => {
     expect(card.supportedTrust).toEqual(["reputation"]);
   });
 
+  it("lists the A2A card and x402 support only when they are live", () => {
+    const card = buildIdentityCard(config({ a2a: true, x402Support: true }));
+    expect(card.services.at(-1)).toEqual({
+      name: "A2A",
+      endpoint: "https://agent.example.org/.well-known/agent-card.json",
+      version: "1.0"
+    });
+    expect(card.x402Support).toBe(true);
+    const off = buildIdentityCard(config({ a2a: false, x402Support: false }));
+    expect(off.services.map((service) => service.name)).not.toContain("A2A");
+    expect(off.x402Support).toBe(false);
+  });
+
   it("checksums contract addresses and lists both contracts", () => {
     const card = buildIdentityCard(config());
     expect(card.contracts).toEqual([

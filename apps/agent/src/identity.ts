@@ -18,6 +18,10 @@ export interface IdentityConfig {
   planAccount: string | null;
   /** Public source code, or null while the repository is private. */
   repoUrl: string | null;
+  /** True only while paid x402 routes are on. */
+  x402Support?: boolean;
+  /** True only while the A2A door is served. */
+  a2a?: boolean;
 }
 
 export interface IdentityService {
@@ -61,7 +65,7 @@ export function agentRegistry(): string {
 
 /**
  * Builds the ERC-8004 registration file. It lists only services that exist today, so the
- * card never claims x402 sales or an MCP server before they are live.
+ * card never claims x402 sales, an MCP server or an A2A door before they are live.
  */
 export function buildIdentityCard(config: IdentityConfig): IdentityCard {
   const agentUrl = publicUrl(config.agentUrl, "agentUrl");
@@ -74,6 +78,13 @@ export function buildIdentityCard(config: IdentityConfig): IdentityCard {
     { name: "health", endpoint: `${agentUrl}/health` },
     { name: "MCP", endpoint: `${agentUrl}/mcp` }
   );
+  if (config.a2a === true) {
+    services.push({
+      name: "A2A",
+      endpoint: `${agentUrl}/.well-known/agent-card.json`,
+      version: "1.0"
+    });
+  }
   if (config.repoUrl !== null) {
     services.push({ name: "source", endpoint: publicUrl(config.repoUrl, "repoUrl") });
   }
@@ -99,7 +110,7 @@ export function buildIdentityCard(config: IdentityConfig): IdentityCard {
     description:
       "Redeye watches tokenized US stocks on BNB Chain while Wall Street is closed. Each plan is locked on chain before the close, checked every minute against the 24/7 price, and graded against the official open.",
     services,
-    x402Support: false,
+    x402Support: config.x402Support === true,
     active: true,
     registrations,
     supportedTrust: ["reputation"],

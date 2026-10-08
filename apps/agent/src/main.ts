@@ -6,6 +6,7 @@ import { AgenticWallet, createBawRunner } from "./agentic-wallet.js";
 import { buildIdentityCard, identityConfigFromEnv } from "./identity.js";
 import { B402Client } from "@bnb-chain/b402/server";
 import { createJobBook } from "./job-chain.js";
+import { createA2aHandler } from "./a2a.js";
 import { createMcpHandler } from "./mcp.js";
 import { createPlanChain } from "./plan-chain.js";
 import { PlanService } from "./plan-service.js";
@@ -107,8 +108,6 @@ store.setPlanActions({
   stopStanding: (id) => planService.stopStanding(id)
 });
 planService.start();
-const identityConfig = identityConfigFromEnv(process.env, planChain?.agentAddress ?? null);
-const identity = identityConfig === null ? undefined : buildIdentityCard(identityConfig);
 // x402 sales. X402_SETTLEMENT picks the route: "self" settles through the official x402
 // EVM facilitator run by the agent wallet, "b402" through Binance B402 once its merchant
 // credentials are set, and anything else keeps paid routes off. Bad B402 settings only
@@ -163,6 +162,28 @@ if (x402) {
     )
   );
 }
+// The MCP tools and the A2A skills read the same sources; none of them writes anything.
+const readSources = {
+  prices: (tickers: string[]) => store.prices(tickers),
+  windows: (ticker: string) => store.windows(ticker),
+  record: () => store.record(),
+  planGet: (id: string) => store.planGet(id),
+  receipt: (id: string) => store.receipt(id),
+  preview: (input: Record<string, unknown>) => planService.preview(input)
+};
+const AGENT_VERSION = "0.1.0";
+// The A2A card names the public address when there is one; until then, this server.
+const a2a = createA2aHandler(
+  readSources,
+  process.env.PUBLIC_AGENT_URL?.trim() || `http://localhost:${port}`,
+  AGENT_VERSION
+);
+// Built after x402 starts, so the card states what is actually live.
+const identityConfig = identityConfigFromEnv(process.env, planChain?.agentAddress ?? null);
+const identity =
+  identityConfig === null
+    ? undefined
+    : buildIdentityCard({ ...identityConfig, x402Support: x402?.paid === true, a2a: true });
 const server = startAgentServer(
   store,
   {
@@ -170,17 +191,8 @@ const server = startAgentServer(
     siteOrigin,
     identity,
     ...(x402 ? { x402 } : {}),
-    mcp: createMcpHandler(
-      {
-        prices: (tickers) => store.prices(tickers),
-        windows: (ticker) => store.windows(ticker),
-        record: () => store.record(),
-        planGet: (id) => store.planGet(id),
-        receipt: (id) => store.receipt(id),
-        preview: (input) => planService.preview(input)
-      },
-      "0.1.0"
-    )
+    a2a,
+    mcp: createMcpHandler(readSources, AGENT_VERSION)
   },
   port
 );

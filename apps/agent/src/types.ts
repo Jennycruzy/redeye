@@ -1,3 +1,4 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
 export interface AgentStore {
   health(): Promise<unknown>;
   study(): Promise<unknown>;
@@ -28,6 +29,8 @@ export interface AgentApiConfig {
   siteOrigin: string;
   /** ERC-8004 registration file; absent until the agent has a public address. */
   identity?: unknown;
+  /** A2A: the agent card and JSON-RPC at /a2a, served by the official SDK; absent when off. */
+  a2a?: (request: IncomingMessage, response: ServerResponse) => void;
   /** MCP over streamable HTTP at /mcp; absent when not set up. */
   mcp?: (request: Request, parsedBody: unknown) => Promise<Response>;
   /** x402 sales under /x402/; absent when the seller is not set up. */

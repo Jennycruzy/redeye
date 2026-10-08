@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { isA2aPath } from "./a2a.js";
 import { createAgentApi } from "./api.js";
 import type { AgentApiConfig, AgentStore } from "./types.js";
 
@@ -63,6 +64,11 @@ export function createAgentServer(store: AgentStore, config: AgentApiConfig) {
   return createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+      // The SDK reads its own body, so A2A requests are handed over untouched.
+      if (config.a2a && isA2aPath(url.pathname)) {
+        config.a2a(request, response);
+        return;
+      }
       if (url.pathname === "/mcp" && config.mcp) {
         const headers = requestHeaders(request);
         const body = await requestBody(request);
