@@ -32,6 +32,8 @@ export const COMMERCE_ABI = parseAbi([
   "function setBudget(uint256 jobId, uint256 amount, bytes optParams)",
   "function fund(uint256 jobId, uint256 expectedBudget, bytes optParams)",
   "function submit(uint256 jobId, bytes32 deliverable, bytes optParams)",
+  "function complete(uint256 jobId, bytes32 reason, bytes optParams)",
+  "function reject(uint256 jobId, bytes32 reason, bytes optParams)",
   "function getJob(uint256 jobId) view returns (Job)",
   "event JobCreated(uint256 indexed jobId, address indexed client, address indexed provider, address evaluator, uint256 expiredAt, address hook)"
 ]);
@@ -56,10 +58,18 @@ export const JOB_STATES = [
 ] as const;
 export type JobState = (typeof JOB_STATES)[number];
 
+/**
+ * "official": the router is hook and evaluator, and the optimistic policy approves after its
+ * dispute window. "team": our PlanJobHook is the hook and the team buyer is the evaluator,
+ * approving or rejecting directly; these jobs are labelled as approved by our own wallet.
+ */
+export type JobKind = "official" | "team";
+
 export interface JobView {
   jobId: number;
   state: JobState;
   budget: bigint;
+  hook: Address;
   /** Unix seconds; 0 until delivered. */
   submittedAt: number;
 }
@@ -80,14 +90,22 @@ export interface JobBook {
    * Sends the create transaction. `onSent` runs before waiting for it to be mined, so a
    * crash after sending can be recovered with `createdJobId` instead of opening a second job.
    */
-  create(input: JobOpenInput, onSent: (txHash: Hex) => Promise<void>): Promise<number>;
+  create(
+    input: JobOpenInput,
+    kind: JobKind,
+    onSent: (txHash: Hex) => Promise<void>
+  ): Promise<number>;
+  /** False when no PlanJobHook address is configured. */
+  readonly teamJobs: boolean;
   /** The job id a sent create transaction made, or null while it is not mined. */
   createdJobId(txHash: Hex): Promise<number | null>;
   /** Registers the policy, sets the budget and pays it in; steps already done are skipped. */
   fund(jobId: number): Promise<Hex[]>;
   deliver(jobId: number, deliverable: Hex): Promise<ChainWrite>;
-  /** Settles a delivered job once its dispute window has passed. */
+  /** Settles a delivered official job once its dispute window has passed. */
   settle(jobId: number): Promise<ChainWrite>;
+  /** The buyer approves (complete) or rejects a delivered team job. */
+  review(jobId: number, approve: boolean, reason: Hex): Promise<ChainWrite>;
   get(jobId: number): Promise<JobView>;
 }
 
@@ -95,6 +113,8 @@ export interface JobBookOptions {
   rpcUrl: string;
   buyerKey: Hex;
   agentKey: Hex;
+  /** PlanJobHook on BNB Chain; team jobs are off without it. */
+  teamHook?: Address | null;
 }
 
 export function createJobBook(options: JobBookOptions): JobBook {
@@ -158,12 +178,19 @@ export function createJobBook(options: JobBookOptions): JobBook {
     });
     const state = JOB_STATES[job.status];
     if (state === undefined) throw new Error(`Job ${jobId} has unknown status ${job.status}.`);
-    return { jobId, state, budget: job.budget, submittedAt: Number(job.submittedAt) };
+    return {
+      jobId,
+      state,
+      budget: job.budget,
+      hook: job.hook,
+      submittedAt: Number(job.submittedAt)
+    };
   }
 
   return {
     buyerAddress: buyer.address,
     providerAddress: agent.address,
+    teamJobs: Boolean(options.teamHook),
     async disputeWindow() {
       return Number(
         await reader.readContract({
@@ -173,7 +200,10 @@ export function createJobBook(options: JobBookOptions): JobBook {
         })
       );
     },
-    async create(input, onSent) {
+    async create(input, kind, onSent) {
+      if (kind === "team" && !options.teamHook) throw new Error("No PlanJobHook is configured.");
+      const hook = kind === "team" ? options.teamHook! : JOB_ROUTER;
+      const evaluator = kind === "team" ? buyer.address : JOB_ROUTER;
       const { receipt } = await send(
         "buyer",
         {
@@ -182,10 +212,10 @@ export function createJobBook(options: JobBookOptions): JobBook {
           functionName: "createJobWithToken",
           args: [
             agent.address,
-            JOB_ROUTER,
+            evaluator,
             BigInt(input.expiresAt),
             input.description,
-            JOB_ROUTER,
+            hook,
             JOB_TOKEN
           ]
         },
@@ -204,12 +234,16 @@ export function createJobBook(options: JobBookOptions): JobBook {
       const sent: Hex[] = [];
       const job = await get(jobId);
       if (job.state !== "open") return sent;
-      const policy = await reader.readContract({
-        address: JOB_ROUTER,
-        abi: ROUTER_ABI,
-        functionName: "jobPolicy",
-        args: [id]
-      });
+      // Only router jobs need a policy; team jobs are approved by the buyer.
+      const policy =
+        job.hook === JOB_ROUTER
+          ? await reader.readContract({
+              address: JOB_ROUTER,
+              abi: ROUTER_ABI,
+              functionName: "jobPolicy",
+              args: [id]
+            })
+          : null;
       if (policy === zeroAddress) {
         const { write } = await send("buyer", {
           address: JOB_ROUTER,
@@ -268,6 +302,15 @@ export function createJobBook(options: JobBookOptions): JobBook {
         abi: ROUTER_ABI,
         functionName: "settle",
         args: [BigInt(jobId), "0x"]
+      });
+      return write;
+    },
+    async review(jobId, approve, reason) {
+      const { write } = await send("buyer", {
+        address: JOB_COMMERCE,
+        abi: COMMERCE_ABI,
+        functionName: approve ? "complete" : "reject",
+        args: [BigInt(jobId), reason, "0x"]
       });
       return write;
     },

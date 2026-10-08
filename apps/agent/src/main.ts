@@ -78,7 +78,8 @@ const jobs =
     ? createJobBook({
         rpcUrl: process.env.BSC_RPC_URL_LIVE ?? "https://bsc-dataseed.bnbchain.org",
         buyerKey: asKey(buyerKey),
-        agentKey: asKey(agentKey)
+        agentKey: asKey(agentKey),
+        teamHook: (process.env.PLAN_JOB_HOOK_ADDRESS?.trim() || null) as Address | null
       })
     : null;
 const planService = new PlanService({
@@ -86,6 +87,7 @@ const planService = new PlanService({
   chain: planChain,
   trader,
   jobs,
+  teamJobLimit: Number(process.env.TEAM_JOB_LIMIT ?? "0"),
   latestPrice: (ticker) => store.latestPrice(ticker),
   listedToken: (ticker) => listedBstock(rawRoot, ticker),
   officialOpen: (ticker, date) => nasdaqOfficialOpen(rawRoot, ticker, date)

@@ -12,6 +12,7 @@ import {
   nextWindow,
   planLockDeadlineMs,
   validatePlan,
+  verifyReceipt,
   type Decision,
   type DecisionInput,
   type EventContext,
@@ -28,8 +29,8 @@ import {
 } from "@redeye/core";
 import Decimal from "decimal.js";
 import type { OrderResult, QuoteRequest } from "./agentic-wallet.js";
-import type { Address, Hex } from "viem";
-import type { JobBook, JobState } from "./job-chain.js";
+import { keccak256, toBytes, type Address, type Hex } from "viem";
+import type { JobBook, JobKind, JobState } from "./job-chain.js";
 import type { ChainWrite, Outcome, PlanChain } from "./plan-chain.js";
 import type { PriceSnapshotOk } from "./price-service.js";
 
@@ -81,7 +82,10 @@ export interface Trader {
 }
 
 /** The plan's ERC-8183 job. Each step is saved before the next, so a retry never opens a second job. */
+export type JobSlot = "job" | "teamJob";
+
 export interface StoredJob {
+  kind: JobKind;
   /** Saved as soon as the create transaction is sent. */
   createTx: Hex;
   jobId: number | null;
@@ -92,6 +96,10 @@ export interface StoredJob {
   manifest?: JobManifest;
   deliverChain?: ChainWrite;
   settleChain?: ChainWrite;
+  /** Team jobs only: the buyer's approval or rejection, and the check behind it. */
+  reviewChain?: ChainWrite;
+  reviewReason?:
+    "RECEIPT_VERIFIED" | "RECEIPT_MISSING" | "RECEIPT_INVALID" | "DELIVERABLE_MISMATCH";
   lastError?: { at: string; message: string };
 }
 
@@ -131,8 +139,10 @@ export interface StoredPlan {
   trade?: StoredTrade;
   verdict?: ReceiptVerdict & { verdictHash: Hex };
   verdictChain?: ChainWrite | null;
-  /** Absent when no job buyer is configured; the plan then locks with job id 0. */
+  /** Official ERC-8183 job. Absent when no job buyer is configured; the plan then locks with job id 0. */
   job?: StoredJob;
+  /** Team job approved by our own buyer wallet, for the first few plans only. */
+  teamJob?: StoredJob;
   lastError?: { at: string; message: string };
 }
 
@@ -159,6 +169,9 @@ export interface PlanRecordItem {
   /** ERC-8183 job for this plan, null when it has none. */
   jobId: number | null;
   jobState: JobState | "creating" | null;
+  /** Team job approved by our own wallet, null when the plan has none. */
+  teamJobId: number | null;
+  teamJobState: JobState | "creating" | null;
 }
 
 /** The plan in one plain sentence, as shown in the public record. */
@@ -209,6 +222,8 @@ export interface PlanStore {
   listPlans(): Promise<StoredPlan[]>;
   saveRunEvent(runId: string, step: string, payload: Record<string, unknown>): Promise<void>;
   saveReceipt(runId: string, receipt: ReceiptBundle): Promise<void>;
+  /** The published receipt; throws when there is none. */
+  receipt(runId: string): Promise<unknown>;
   saveRecordItem(item: PlanRecordItem): Promise<void>;
 }
 
@@ -235,6 +250,8 @@ export interface PlanServiceOptions {
   trader?: Trader | null;
   /** Null or absent when no job buyer is configured; plans then lock without a job. */
   jobs?: JobBook | null;
+  /** How many plans in total get a team job as well; 0 or absent turns team jobs off. */
+  teamJobLimit?: number;
   now?: () => number;
   newId?: () => string;
 }
@@ -304,9 +321,13 @@ const JOB_SETTLE_DELAY_S = 120;
 /** Extra days after the dispute window before the buyer could take the budget back. */
 const JOB_SETTLE_MARGIN_S = 3 * 24 * 60 * 60;
 
-function jobDescription(stored: StoredPlan, context: EventContext): string {
+function jobDescription(stored: StoredPlan, context: EventContext, kind: JobKind): string {
   return JSON.stringify({
     task: `Redeye plan: ${describePlan(stored.plan!)}`,
+    review:
+      kind === "official"
+        ? "BNB Chain optimistic policy after its dispute window"
+        : "team job: approved by Redeye's own buyer wallet only if the receipt verifies",
     planHash: stored.planHash,
     ticker: context.ticker,
     window: context.kind,
@@ -500,7 +521,7 @@ export class PlanService {
         }
       }
       for (const stored of await this.options.store.listPlans()) {
-        if (stored.job !== undefined) await this.advanceJob(stored);
+        await this.advanceJobs(stored);
       }
       for (const stored of await this.options.store.listPlans()) {
         if (stored.status !== "locked" && stored.status !== "decided") continue;
@@ -627,7 +648,9 @@ export class PlanService {
       openPrice: null,
       verdictTx: null,
       jobId: null,
-      jobState: null
+      jobState: null,
+      teamJobId: null,
+      teamJobState: null
     });
   }
 
@@ -720,128 +743,207 @@ export class PlanService {
   }
 
   /**
-   * Opens and pays for the plan's job before the lock, so PlanBook can link it. A job
-   * failure never blocks the lock: the promise matters more than its job, and funding is
-   * retried every pass.
+   * Opens and pays for the plan's jobs before the lock, so PlanBook can link the official
+   * one. A job failure never blocks the lock: the promise matters more than its jobs, and
+   * every step is retried each pass.
    */
   private async openJob(stored: StoredPlan, context: EventContext): Promise<StoredPlan> {
     const jobs = this.options.jobs;
-    if (!jobs || stored.job !== undefined) return stored;
+    if (!jobs) return stored;
+    let current = await this.openJobOf(stored, context, "job");
+    if (jobs.teamJobs && (await this.teamJobsLeft()) > 0) {
+      current = await this.openJobOf(current, context, "teamJob");
+    }
+    return current;
+  }
+
+  private async teamJobsLeft(): Promise<number> {
+    const limit = this.options.teamJobLimit ?? 0;
+    const used = (await this.options.store.listPlans()).filter(
+      (plan) => plan.teamJob !== undefined
+    ).length;
+    return limit - used;
+  }
+
+  private async openJobOf(
+    stored: StoredPlan,
+    context: EventContext,
+    slot: JobSlot
+  ): Promise<StoredPlan> {
+    const jobs = this.options.jobs!;
+    if (stored[slot] !== undefined) return stored;
+    const kind: JobKind = slot === "job" ? "official" : "team";
     let current: StoredPlan = stored;
     try {
-      const window = await jobs.disputeWindow();
-      // Room for delivery at the open, the dispute window, and a few days to settle.
-      const expiresAt = Math.floor(context.openTs / 1000) + window + JOB_SETTLE_MARGIN_S;
+      // Official jobs need room for the dispute window; team jobs are reviewed at the open.
+      const wait = kind === "official" ? await jobs.disputeWindow() : 0;
+      const expiresAt = Math.floor(context.openTs / 1000) + wait + JOB_SETTLE_MARGIN_S;
       const jobId = await jobs.create(
-        { description: jobDescription(stored, context), expiresAt },
+        { description: jobDescription(stored, context, kind), expiresAt },
+        kind,
         async (createTx) => {
           current = {
             ...current,
-            job: { createTx, jobId: null, state: "creating", fundTxs: [] }
+            [slot]: { kind, createTx, jobId: null, state: "creating", fundTxs: [] }
           };
           await this.saveWithRecord(current);
         }
       );
-      const job = current.job!;
-      current = { ...current, job: { ...job, jobId, state: "open" } };
+      current = { ...current, [slot]: { ...current[slot]!, jobId, state: "open" } };
       await this.saveWithRecord(current);
-      return await this.fundJob(current);
+      return await this.fundJob(current, slot);
     } catch (error) {
-      return this.jobFailed(current, error);
+      return this.jobFailed(current, slot, error);
     }
   }
 
-  private async fundJob(stored: StoredPlan): Promise<StoredPlan> {
-    const job = stored.job!;
+  private async fundJob(stored: StoredPlan, slot: JobSlot): Promise<StoredPlan> {
+    const job = stored[slot]!;
     const fundTxs = await this.options.jobs!.fund(job.jobId!);
     const view = await this.options.jobs!.get(job.jobId!);
     const next: StoredPlan = {
       ...stored,
-      job: withoutJobError({ ...job, state: view.state, fundTxs: [...job.fundTxs, ...fundTxs] })
+      [slot]: withoutJobError({ ...job, state: view.state, fundTxs: [...job.fundTxs, ...fundTxs] })
     };
     await this.saveWithRecord(next);
     return next;
   }
 
-  private async jobFailed(stored: StoredPlan, error: unknown): Promise<StoredPlan> {
-    if (stored.job === undefined) {
-      // Nothing reached the chain; the plan simply has no job.
-      await this.options.store.saveRunEvent(stored.id, "job_failed", {
-        message: error instanceof Error ? error.message : String(error)
-      });
+  private async jobFailed(stored: StoredPlan, slot: JobSlot, error: unknown): Promise<StoredPlan> {
+    const message = error instanceof Error ? error.message : String(error);
+    const job = stored[slot];
+    if (job === undefined) {
+      // Nothing reached the chain; the plan simply has no job of this kind.
+      await this.options.store.saveRunEvent(stored.id, "job_failed", { slot, message });
       return stored;
     }
     const next: StoredPlan = {
       ...stored,
-      job: {
-        ...stored.job,
-        lastError: {
-          at: new Date(this.now()).toISOString(),
-          message: error instanceof Error ? error.message : String(error)
-        }
-      }
+      [slot]: { ...job, lastError: { at: new Date(this.now()).toISOString(), message } }
     };
     await this.saveWithRecord(next);
     return next;
   }
 
+  private async advanceJobs(stored: StoredPlan): Promise<void> {
+    if (!this.options.jobs || stored.status === "cancelled") return;
+    for (const slot of ["job", "teamJob"] as const) {
+      const latest = (await this.options.store.getPlan(stored.id)) ?? stored;
+      if (latest[slot] !== undefined) await this.advanceJob(latest, slot);
+    }
+  }
+
   /**
-   * Moves a plan's job one step: finds a job whose create reply was lost, pays an open
-   * job, delivers once the result is published, and settles after the dispute window.
+   * Moves one job a step: finds a job whose create reply was lost, pays an open job,
+   * delivers once the result is published, then settles an official job after the dispute
+   * window or has the buyer review a team job against the receipt.
    */
-  private async advanceJob(stored: StoredPlan): Promise<void> {
-    const jobs = this.options.jobs;
-    const job = stored.job;
-    if (!jobs || job === undefined || stored.status === "cancelled") return;
+  private async advanceJob(stored: StoredPlan, slot: JobSlot): Promise<void> {
+    const jobs = this.options.jobs!;
+    const job = stored[slot]!;
     try {
       if (job.jobId === null) {
         const jobId = await jobs.createdJobId(job.createTx);
         if (jobId === null) return;
-        const found: StoredPlan = { ...stored, job: { ...job, jobId, state: "open" } };
+        const found: StoredPlan = { ...stored, [slot]: { ...job, jobId, state: "open" } };
         await this.saveWithRecord(found);
-        return await this.advanceJob(found);
+        return await this.advanceJob(found, slot);
       }
       if (job.state === "open") {
-        await this.fundJob(stored);
+        await this.fundJob(stored, slot);
         return;
       }
       if (job.state === "funded" && stored.status === "done" && stored.verdict) {
-        const manifest: JobManifest = {
-          v: 1,
-          planId: this.requirePlanId(stored),
-          receipt: `/plans/${stored.id}/receipt`,
-          verdictHash: stored.verdict.verdictHash
-        };
+        const manifest = this.jobManifest(stored);
         const deliverable = hashCanonical(manifest);
         const deliverChain = await jobs.deliver(job.jobId, deliverable);
         await this.saveWithRecord({
           ...stored,
-          job: withoutJobError({ ...job, state: "submitted", manifest, deliverable, deliverChain })
+          [slot]: withoutJobError({
+            ...job,
+            state: "submitted",
+            manifest,
+            deliverable,
+            deliverChain
+          })
         });
         await this.options.store.saveRunEvent(stored.id, "job_delivered", {
+          slot,
           jobId: job.jobId,
           txHash: deliverChain.txHash
         });
         return;
       }
-      if (job.state === "submitted" && job.deliverChain) {
-        const window = await jobs.disputeWindow();
-        if (this.now() / 1000 < job.deliverChain.blockTs + window + JOB_SETTLE_DELAY_S) return;
-        const settleChain = await jobs.settle(job.jobId);
-        const view = await jobs.get(job.jobId);
-        await this.saveWithRecord({
-          ...stored,
-          job: withoutJobError({ ...job, state: view.state, settleChain })
-        });
-        await this.options.store.saveRunEvent(stored.id, "job_settled", {
-          jobId: job.jobId,
-          state: view.state,
-          txHash: settleChain.txHash
-        });
+      if (job.state !== "submitted" || !job.deliverChain) return;
+      if (job.kind === "team") {
+        await this.reviewTeamJob(stored, job);
+        return;
       }
+      const window = await jobs.disputeWindow();
+      if (this.now() / 1000 < job.deliverChain.blockTs + window + JOB_SETTLE_DELAY_S) return;
+      const settleChain = await jobs.settle(job.jobId);
+      const view = await jobs.get(job.jobId);
+      await this.saveWithRecord({
+        ...stored,
+        [slot]: withoutJobError({ ...job, state: view.state, settleChain })
+      });
+      await this.options.store.saveRunEvent(stored.id, "job_settled", {
+        slot,
+        jobId: job.jobId,
+        state: view.state,
+        txHash: settleChain.txHash
+      });
     } catch (error) {
-      await this.jobFailed(stored, error);
+      await this.jobFailed(stored, slot, error);
     }
+  }
+
+  /**
+   * The team buyer approves only when the published receipt verifies and the delivered
+   * fingerprint matches it; otherwise it rejects, with the failed check as the reason.
+   */
+  private async reviewTeamJob(stored: StoredPlan, job: StoredJob): Promise<void> {
+    const receipt = (await this.options.store
+      .receipt(stored.id)
+      .catch(() => null)) as ReceiptBundle | null;
+    const verified = receipt === null ? null : verifyReceipt(receipt);
+    const matches =
+      receipt !== null &&
+      job.deliverable === hashCanonical(this.jobManifest(stored)) &&
+      receipt.verdictHash === stored.verdict?.verdictHash;
+    const approve = verified?.valid === true && matches;
+    const reasonCode = approve
+      ? "RECEIPT_VERIFIED"
+      : receipt === null
+        ? "RECEIPT_MISSING"
+        : verified?.valid
+          ? "DELIVERABLE_MISMATCH"
+          : "RECEIPT_INVALID";
+    const reviewChain = await this.options.jobs!.review(
+      job.jobId!,
+      approve,
+      keccak256(toBytes(reasonCode))
+    );
+    const view = await this.options.jobs!.get(job.jobId!);
+    await this.saveWithRecord({
+      ...stored,
+      teamJob: withoutJobError({ ...job, state: view.state, reviewChain, reviewReason: reasonCode })
+    });
+    await this.options.store.saveRunEvent(stored.id, "job_reviewed", {
+      jobId: job.jobId,
+      approved: approve,
+      reason: reasonCode,
+      txHash: reviewChain.txHash
+    });
+  }
+
+  private jobManifest(stored: StoredPlan): JobManifest {
+    return {
+      v: 1,
+      planId: this.requirePlanId(stored),
+      receipt: `/plans/${stored.id}/receipt`,
+      verdictHash: stored.verdict!.verdictHash
+    };
   }
 
   private async saveWithRecord(stored: StoredPlan): Promise<void> {
@@ -1210,7 +1312,9 @@ export class PlanService {
       openPrice: stored.verdict?.openPrice ?? null,
       verdictTx: stored.verdictChain?.txHash ?? null,
       jobId: stored.job?.jobId ?? null,
-      jobState: stored.job?.state ?? null
+      jobState: stored.job?.state ?? null,
+      teamJobId: stored.teamJob?.jobId ?? null,
+      teamJobState: stored.teamJob?.state ?? null
     });
   }
 

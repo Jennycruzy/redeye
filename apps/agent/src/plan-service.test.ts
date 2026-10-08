@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createWindowRecord, hashPlan, nextWindow, verifyReceipt } from "@redeye/core";
-import type { Hex } from "viem";
+import { keccak256, toBytes, type Hex } from "viem";
 import { AgenticWallet, type BawRunner } from "./agentic-wallet.js";
-import type { JobBook, JobOpenInput, JobState, JobView } from "./job-chain.js";
+import type { JobBook, JobKind, JobOpenInput, JobState, JobView } from "./job-chain.js";
 import type { ChainWrite, FreezeInput, Outcome, PlanChain } from "./plan-chain.js";
 import { PlanError, PlanService, type OfficialOpen, type StoredPlan } from "./plan-service.js";
 import type { PriceSnapshotOk } from "./price-service.js";
@@ -80,6 +80,9 @@ class FakeJobs implements JobBook {
   readonly buyerAddress = BUYER;
   readonly providerAddress = AGENT;
   readonly opened: JobOpenInput[] = [];
+  readonly kinds: JobKind[] = [];
+  readonly reviews: Array<{ jobId: number; approve: boolean; reason: Hex }> = [];
+  teamJobs = false;
   readonly delivered: Array<{ jobId: number; deliverable: Hex }> = [];
   readonly settled: number[] = [];
   readonly states = new Map<number, JobState>();
@@ -113,9 +116,10 @@ class FakeJobs implements JobBook {
     return WEEK_S;
   }
 
-  async create(input: JobOpenInput, onSent: (txHash: Hex) => Promise<void>) {
+  async create(input: JobOpenInput, kind: JobKind, onSent: (txHash: Hex) => Promise<void>) {
     this.fail("create");
     this.opened.push(input);
+    this.kinds.push(kind);
     const jobId = 56_910 + this.opened.length;
     const { txHash } = this.write();
     this.sent.set(txHash, jobId);
@@ -150,7 +154,19 @@ class FakeJobs implements JobBook {
   }
 
   async get(jobId: number): Promise<JobView> {
-    return { jobId, state: this.states.get(jobId)!, budget: 10n ** 16n, submittedAt: 0 };
+    return {
+      jobId,
+      state: this.states.get(jobId)!,
+      budget: 10n ** 16n,
+      hook: BUYER,
+      submittedAt: 0
+    };
+  }
+
+  async review(jobId: number, approve: boolean, reason: Hex) {
+    this.reviews.push({ jobId, approve, reason });
+    this.states.set(jobId, approve ? "completed" : "rejected");
+    return this.write();
   }
 }
 
@@ -244,7 +260,7 @@ interface Harness {
 }
 
 async function harness(
-  options: { chain?: boolean; baw?: boolean; jobs?: boolean } = {}
+  options: { chain?: boolean; baw?: boolean; jobs?: boolean; teamJobLimit?: number } = {}
 ): Promise<Harness> {
   let now = BEFORE_CLOSE;
   let price: PriceSnapshotOk | null = null;
@@ -253,6 +269,7 @@ async function harness(
   const chain = new FakeChain(() => now);
   const baw = new FakeBaw(chain.log);
   const jobs = new FakeJobs(() => now);
+  jobs.teamJobs = (options.teamJobLimit ?? 0) > 0;
   const trader = options.baw
     ? new AgenticWallet(
         baw.run,
@@ -268,6 +285,7 @@ async function harness(
     chain: options.chain === false ? null : chain,
     trader,
     jobs: options.jobs ? jobs : null,
+    teamJobLimit: options.teamJobLimit ?? 0,
     now: () => now,
     latestPrice: async () => price,
     listedToken: async (ticker) =>
@@ -927,5 +945,65 @@ describe("ERC-8183 jobs", () => {
 
     await h.service.tick();
     expect((await plan(h, done.id)).job).toMatchObject({ state: "submitted" });
+  });
+
+  it("opens a team job as well for the first plans only", async () => {
+    const h = await harness({ jobs: true, teamJobLimit: 1 });
+    const first = await lockedGuard(h);
+    const second = await lockedGuard(h);
+
+    expect(h.jobs.kinds).toEqual(["official", "team", "official"]);
+    expect(first.job).toMatchObject({ kind: "official", jobId: 56_911, state: "funded" });
+    expect(first.teamJob).toMatchObject({ kind: "team", jobId: 56_912, state: "funded" });
+    expect(second.teamJob).toBeUndefined();
+    // PlanBook links the official job.
+    expect(h.chain.freezes.map((freeze) => freeze.jobId)).toEqual([56_911, 56_913]);
+    expect(JSON.parse(h.jobs.opened[1]!.description).review).toBe(
+      "team job: approved by Redeye's own buyer wallet only if the receipt verifies"
+    );
+    // A team job is reviewed at the open, so it needs no room for the dispute window.
+    expect(h.jobs.opened[1]!.expiresAt).toBe(OPEN / 1000 + 3 * 24 * 60 * 60);
+  });
+
+  it("has the buyer approve a team job once the receipt verifies", async () => {
+    const h = await harness({ jobs: true, teamJobLimit: 1 });
+    const done = await finished(h);
+    await h.service.tick();
+    expect(h.jobs.delivered.map((d) => d.jobId)).toEqual([56_911, 56_912]);
+
+    await h.service.tick();
+    expect(h.jobs.reviews).toEqual([
+      { jobId: 56_912, approve: true, reason: keccak256(toBytes("RECEIPT_VERIFIED")) }
+    ]);
+    const reviewed = await plan(h, done.id);
+    expect(reviewed.teamJob).toMatchObject({
+      state: "completed",
+      reviewReason: "RECEIPT_VERIFIED"
+    });
+    expect(reviewed.job).toMatchObject({ state: "submitted" });
+    expect(await h.store.record()).toMatchObject({
+      items: [{ jobState: "submitted", teamJobState: "completed" }]
+    });
+    expect(h.jobs.settled).toEqual([]);
+  });
+
+  it("has the buyer reject a team job when the receipt does not verify", async () => {
+    const h = await harness({ jobs: true, teamJobLimit: 1 });
+    const done = await finished(h);
+    await h.service.tick();
+    const receipt = (await h.store.receipt(done.id)) as Record<string, unknown>;
+    await h.store.saveReceipt(done.id, {
+      ...receipt,
+      verdictHash: `0x${"00".repeat(32)}`
+    } as never);
+
+    await h.service.tick();
+    expect(h.jobs.reviews).toEqual([
+      { jobId: 56_912, approve: false, reason: keccak256(toBytes("RECEIPT_INVALID")) }
+    ]);
+    expect((await plan(h, done.id)).teamJob).toMatchObject({
+      state: "rejected",
+      reviewReason: "RECEIPT_INVALID"
+    });
   });
 });

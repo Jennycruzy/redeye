@@ -61,6 +61,8 @@ The agent serves its ERC-8004 registration file at `/.well-known/agent-registrat
 
 When `JOB_BUYER_PRIVATE_KEY` is set (a team wallet, never the agent's own), every locked plan is also an ERC-8183 job on BNB Chain: before the lock the buyer opens the job with the agent as provider, registers the reference optimistic policy, and pays a 0.01 USDT budget; PlanBook records the job id with the plan. After the result is published the agent delivers keccak256 of the manifest `{v, planId, receipt, verdictHash}`, and once the policy's dispute window has passed (7 days on 7 Oct 2026) the agent settles the job through the router. A failed job step never blocks the lock; it is kept on the plan and retried every minute, and a lost reply is recovered from the sent transaction rather than opening a second job.
 
+Team jobs: when `PLAN_JOB_HOOK_ADDRESS` is set, the first `TEAM_JOB_LIMIT` plans also get a second job that names Redeye's own `PlanJobHook` instead of the router, with the team buyer as evaluator. The buyer approves it at the open only if the published receipt verifies and the delivered fingerprint matches it, and rejects it otherwise (the budget then returns to the buyer). These jobs are labelled as approved by our own wallet; they exist because the official route cannot complete a job in under seven days.
+
 Contracts: commerce [`0xEa4DAa3100A767e86FDed867729ae7446476EBA6`](https://bscscan.com/address/0xEa4DAa3100A767e86FDed867729ae7446476EBA6), router [`0x51895229E12F9876011789B04f8698af06cCD6DA`](https://bscscan.com/address/0x51895229E12F9876011789B04f8698af06cCD6DA), policy [`0x9C01845705b3078aA2E8CfF7520a6376fd766dE5`](https://bscscan.com/address/0x9C01845705b3078aA2E8CfF7520a6376fd766dE5).
 
 ## Verification
