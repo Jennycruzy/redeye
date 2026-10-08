@@ -60,7 +60,15 @@ The agent serves its ERC-8004 registration file at `/.well-known/agent-registrat
 
 ## x402 sales
 
-`GET /x402/price/{ticker}` (0.002 U) sells the live 24/7 price snapshot: the last close, the 24/7 price, the token price, gaps, ages and sources. `GET /x402/window/{ticker}` (0.01 U) sells the off-hours history against the next open, and `GET /x402/record/{id}` returns a plan's receipt for free. Payment is the x402 v2 `exact` scheme in U by EIP-3009 on BNB Chain, settled through Binance B402 with the official `@bnb-chain/b402` and `@x402/core` packages, paid to the agent wallet. The answer is prepared before settlement, so nobody pays for a ticker with nothing to sell, and is sent only after settlement succeeds; a SQLite replay guard stops one payment from being settled twice. A price is sold only if it is under two minutes old. Paid routes stay off, answering `X402_NOT_CONFIGURED`, until `B402_BASE_URL`, `B402_CLIENT_ID`, `B402_ACCESS_TOKEN` and `B402_PRIVATE_KEY_B64` from the B402 merchant onboarding are set.
+`GET /x402/price/{ticker}` (0.002 U) sells the live 24/7 price snapshot: the last close, the 24/7 price, the token price, gaps, ages and sources. `GET /x402/window/{ticker}` (0.01 U) sells the off-hours history against the next open, and `GET /x402/record/{id}` returns a plan's receipt for free. Payment is the x402 v2 `exact` scheme in U by EIP-3009 on BNB Chain (EIP-712 domain "United Stables", version "1"), paid to the agent wallet.
+
+`X402_SETTLEMENT` picks how payments settle:
+
+- `self`: the official x402 EVM facilitator (`@x402/evm`) runs inside the agent. It checks the buyer's signature, balance and nonce, simulates the transfer, and the agent wallet submits the buyer's signed `transferWithAuthorization` to U, paying the gas (about $0.003 at 0.05 gwei, more than a $0.002 sale earns). U's own nonce check stops a signed payment from being used twice.
+- `b402`: Binance B402 through `@bnb-chain/b402`, once `B402_BASE_URL`, `B402_CLIENT_ID`, `B402_ACCESS_TOKEN` and `B402_PRIVATE_KEY_B64` from the merchant onboarding are set, with a SQLite replay guard.
+- unset: paid routes answer `X402_NOT_CONFIGURED`.
+
+The answer is prepared before settlement, so nobody pays for a ticker with nothing to sell, and is sent only after settlement succeeds. A price is sold only if it is under two minutes old. `src/x402-fork.test.ts` settles real payments against a local fork of BNB Chain (`REDEYE_FORK_RPC`).
 
 ## Plan jobs (ERC-8183)
 

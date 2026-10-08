@@ -3,18 +3,38 @@ import type { B402ReplayStore, B402Transport } from "@bnb-chain/b402/server";
 import {
   x402HTTPResourceServer,
   x402ResourceServer,
+  type FacilitatorClient,
   type HTTPAdapter,
   type RoutesConfig
 } from "@x402/core/server";
+import { x402Facilitator } from "@x402/core/facilitator";
 import type { PaymentOption } from "@x402/core/http";
-import { getAddress, type Address } from "viem";
+import type { SchemeNetworkServer } from "@x402/core/types";
+import { toFacilitatorEvmSigner, type FacilitatorEvmSigner } from "@x402/evm";
+import { registerExactEvmScheme } from "@x402/evm/exact/facilitator";
+import { ExactEvmScheme } from "@x402/evm/exact/server";
+import {
+  createPublicClient,
+  createWalletClient,
+  getAddress,
+  http as httpTransport,
+  type Address,
+  type Hex
+} from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { bsc } from "viem/chains";
 import type { AgentRequest, AgentResponse } from "./types.js";
 
 /** BNB Chain mainnet in x402's network naming. */
 export const X402_NETWORK = "eip155:56" as const;
-/** U on BNB Chain: 18 decimals, EIP-712 name "United Stables" (read on chain 2026-10-08). */
+/**
+ * U on BNB Chain: 18 decimals, EIP-3009, EIP-712 domain name "United Stables" version "1".
+ * Read on chain 2026-10-08: the version is the one whose domain separator equals U's
+ * DOMAIN_SEPARATOR(), since U has no eip712Domain().
+ */
 export const X402_ASSET = getAddress("0xce24439f2d9c6a2289f741120fe202248b666666");
 export const X402_ASSET_NAME = "United Stables";
+export const X402_ASSET_VERSION = "1";
 const ASSET_DECIMALS = 18;
 
 /** Paid routes and their prices in US dollars, from the spec. */
@@ -58,20 +78,35 @@ export function storeContent(
   };
 }
 
+/**
+ * How payments are verified and settled.
+ * "self": the official x402 EVM facilitator runs inside the agent; the agent wallet submits
+ * the buyer's signed U transfer to the token itself and pays the gas.
+ * "b402": Binance B402, once merchant credentials exist.
+ */
+export type X402Settlement =
+  | { kind: "self"; signer: FacilitatorEvmSigner }
+  | {
+      kind: "b402";
+      transport: B402Transport;
+      /** Durable store that stops one payment from being settled twice. */
+      replayStore: B402ReplayStore;
+      /** Called when a settlement may already be on chain but its result was lost. */
+      onSettlementUnknown?: (event: unknown) => void;
+    };
+
 export interface X402SellerOptions {
-  /** Binance B402 transport; null while no merchant credentials are configured. */
-  transport: B402Transport | null;
+  /** Null keeps paid routes off. */
+  settlement: X402Settlement | null;
   payTo: Address;
   content: X402Content;
-  /** Durable store that stops one payment from being settled twice. */
-  replayStore: B402ReplayStore;
-  /** Called when a settlement may already be on chain but its result was lost. */
-  onSettlementUnknown?: (event: unknown) => void;
 }
 
 export interface X402Seller {
-  /** True once B402 is configured and its supported list has U by EIP-3009 on BNB Chain. */
+  /** True once a settlement route is ready for U by EIP-3009 on BNB Chain. */
   readonly paid: boolean;
+  /** Which route settles payments, or null when paid routes are off. */
+  readonly settledBy: X402Settlement["kind"] | null;
   /** Why paid routes are off, or null when they are on. */
   readonly reason: string | null;
   handle(request: AgentRequest): Promise<AgentResponse>;
@@ -112,34 +147,48 @@ function adapter(request: AgentRequest): HTTPAdapter {
 }
 
 /**
- * Sells the 24/7 price and off-hours history over x402, settled through Binance B402 in U.
+ * Sells the 24/7 price and off-hours history over x402 in U on BNB Chain.
  * Each answer is prepared before the payment is settled, so nobody pays for a missing
  * ticker; the payment is settled before the answer is sent.
  */
 export async function createX402Seller(options: X402SellerOptions): Promise<X402Seller> {
   let http: x402HTTPResourceServer | null = null;
   let reason: string | null = null;
-  if (options.transport === null) {
-    reason = "No B402 merchant credentials are configured.";
+  const settlement = options.settlement;
+  if (settlement === null) {
+    reason = "No x402 settlement route is configured.";
+  } else if (settlement.kind === "self") {
+    http = await paidServer(
+      selfFacilitator(settlement.signer),
+      new ExactEvmScheme(),
+      options.payTo
+    );
   } else {
     const facilitator = new B402FacilitatorClient({
-      client: options.transport,
-      store: options.replayStore,
-      ...(options.onSettlementUnknown ? { onSettlementUnknown: options.onSettlementUnknown } : {})
+      client: settlement.transport,
+      store: settlement.replayStore,
+      ...(settlement.onSettlementUnknown
+        ? { onSettlementUnknown: settlement.onSettlementUnknown }
+        : {})
     });
     try {
       const supported = await facilitator.getSupported();
-      const kind = supported.kinds.find(
+      const listed = supported.kinds.some(
         (candidate) =>
           candidate.network === X402_NETWORK &&
           candidate.scheme === "exact" &&
           candidate.extra?.["assetTransferMethod"] === "eip3009" &&
-          candidate.extra?.["name"] === X402_ASSET_NAME
+          candidate.extra?.["name"] === X402_ASSET_NAME &&
+          candidate.extra?.["version"] === X402_ASSET_VERSION
       );
-      if (kind === undefined) {
+      if (!listed) {
         reason = `B402 does not list U by EIP-3009 on ${X402_NETWORK}.`;
       } else {
-        http = await paidServer(facilitator, options.payTo, String(kind.extra!["version"]));
+        http = await paidServer(
+          facilitator,
+          new B402ExactServerScheme({ facilitator }),
+          options.payTo
+        );
       }
     } catch (error) {
       reason = `B402 is unreachable: ${error instanceof Error ? error.message : String(error)}`;
@@ -154,6 +203,7 @@ export async function createX402Seller(options: X402SellerOptions): Promise<X402
 
   return {
     paid: http !== null,
+    settledBy: http === null ? null : settlement!.kind,
     reason,
     async handle(request) {
       const [, kind, id, ...rest] = request.pathname.split("/").filter(Boolean);
@@ -201,12 +251,53 @@ export async function createX402Seller(options: X402SellerOptions): Promise<X402
   };
 }
 
+/**
+ * The agent wallet as an x402 facilitator signer on BNB Chain: it checks buyer signatures
+ * and submits their signed U transfers, paying the gas.
+ */
+export function agentFacilitatorSigner(rpcUrl: string, privateKey: Hex): FacilitatorEvmSigner {
+  const account = privateKeyToAccount(privateKey);
+  const transport = httpTransport(rpcUrl, { timeout: 30_000, retryCount: 2 });
+  const reader = createPublicClient({ chain: bsc, transport });
+  const writer = createWalletClient({ account, chain: bsc, transport });
+  return toFacilitatorEvmSigner({
+    address: account.address,
+    readContract: (args) => reader.readContract(args as Parameters<typeof reader.readContract>[0]),
+    verifyTypedData: (args) =>
+      reader.verifyTypedData(args as Parameters<typeof reader.verifyTypedData>[0]),
+    writeContract: (args) =>
+      writer.writeContract({
+        ...(args as Parameters<typeof writer.writeContract>[0]),
+        account,
+        chain: bsc
+      }),
+    sendTransaction: (args) => writer.sendTransaction({ ...args, account, chain: bsc }),
+    waitForTransactionReceipt: (args) =>
+      reader.waitForTransactionReceipt({ ...args, timeout: 120_000 }),
+    getCode: (args) => reader.getCode(args)
+  });
+}
+
+/** The official x402 EVM facilitator for BNB Chain, run in process with the agent's signer. */
+function selfFacilitator(signer: FacilitatorEvmSigner): FacilitatorClient {
+  const facilitator = registerExactEvmScheme(new x402Facilitator(), {
+    signer,
+    networks: X402_NETWORK
+  });
+  return {
+    verify: (payload, requirements) => facilitator.verify(payload, requirements),
+    settle: (payload, requirements) => facilitator.settle(payload, requirements),
+    // Same data; core types the facilitator's network field as a plain string.
+    getSupported: async () =>
+      facilitator.getSupported() as Awaited<ReturnType<FacilitatorClient["getSupported"]>>
+  };
+}
+
 async function paidServer(
-  facilitator: B402FacilitatorClient,
-  payTo: Address,
-  version: string
+  facilitator: FacilitatorClient,
+  scheme: SchemeNetworkServer,
+  payTo: Address
 ): Promise<x402HTTPResourceServer> {
-  const scheme = new B402ExactServerScheme({ facilitator });
   const server = new x402ResourceServer(facilitator).register("eip155:*", scheme);
   const accepts = (usd: string): PaymentOption => ({
     scheme: "exact",
@@ -214,7 +305,11 @@ async function paidServer(
     payTo,
     price: { amount: usdToAtomic(usd), asset: X402_ASSET },
     maxTimeoutSeconds: 300,
-    extra: { assetTransferMethod: "eip3009", name: X402_ASSET_NAME, version }
+    extra: {
+      assetTransferMethod: "eip3009",
+      name: X402_ASSET_NAME,
+      version: X402_ASSET_VERSION
+    }
   });
   const routes: RoutesConfig = {
     "GET /x402/price/[ticker]": {

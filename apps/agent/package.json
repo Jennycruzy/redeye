@@ -15,6 +15,7 @@
     "@redeye/core": "workspace:*",
     "@redeye/shared": "workspace:*",
     "@x402/core": "2.19.0",
+    "@x402/evm": "2.19.0",
     "decimal.js": "^10.4.3",
     "viem": "^2.21.54"
   },

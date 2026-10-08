@@ -6,6 +6,9 @@ import {
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader
 } from "@x402/core/http";
+import { toClientEvmSigner, type FacilitatorEvmSigner } from "@x402/evm";
+import { ExactEvmScheme as ExactEvmClient } from "@x402/evm/exact/client";
+import { verifyTypedData, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { describe, expect, it } from "vitest";
 import { FakeDatabase } from "./fake-database.js";
@@ -16,6 +19,7 @@ import {
   storeContent,
   usdToAtomic,
   X402_ASSET,
+  X402_ASSET_VERSION,
   X402_NETWORK,
   type X402Content
 } from "./x402-sales.js";
@@ -99,8 +103,12 @@ function get(pathname: string, headers: Record<string, string> = {}): AgentReque
   return { method: "GET", pathname, query: new URLSearchParams(), headers: new Headers(headers) };
 }
 
-function replay() {
-  return new SqliteAgentStore(new FakeDatabase()).replayStore();
+function b402(transport: FakeB402) {
+  return {
+    kind: "b402" as const,
+    transport,
+    replayStore: new SqliteAgentStore(new FakeDatabase()).replayStore()
+  };
 }
 
 const buyer = privateKeyToAccount(generatePrivateKey());
@@ -126,10 +134,9 @@ describe("usdToAtomic", () => {
 describe("x402 seller", () => {
   it("asks for 0.002 U on BNB Chain, paid to the agent, before selling a price", async () => {
     const seller = await createX402Seller({
-      transport: new FakeB402(),
+      settlement: b402(new FakeB402()),
       payTo: AGENT,
-      content,
-      replayStore: replay()
+      content
     });
     expect(seller.paid).toBe(true);
     const response = await seller.handle(get("/x402/price/nvda"));
@@ -149,12 +156,11 @@ describe("x402 seller", () => {
   });
 
   it("verifies, settles, then answers with the settlement in PAYMENT-RESPONSE", async () => {
-    const b402 = new FakeB402();
+    const fake = new FakeB402();
     const seller = await createX402Seller({
-      transport: b402,
+      settlement: b402(fake),
       payTo: AGENT,
-      content,
-      replayStore: replay()
+      content
     });
     const challenge = await seller.handle(get("/x402/price/NVDA"));
     const paid = await seller.handle(
@@ -163,9 +169,9 @@ describe("x402 seller", () => {
 
     expect(paid.status).toBe(200);
     expect(paid.body).toEqual({ ticker: "NVDA", real: "237.5" });
-    expect(b402.verified).toBe(1);
-    expect(b402.settled).toHaveLength(1);
-    expect(b402.settled[0]!.paymentRequirements).toMatchObject({
+    expect(fake.verified).toBe(1);
+    expect(fake.settled).toHaveLength(1);
+    expect(fake.settled[0]!.paymentRequirements).toMatchObject({
       amount: "2000000000000000",
       payTo: AGENT
     });
@@ -177,10 +183,9 @@ describe("x402 seller", () => {
 
   it("prices the off-hours history at 0.01 U", async () => {
     const seller = await createX402Seller({
-      transport: new FakeB402(),
+      settlement: b402(new FakeB402()),
       payTo: AGENT,
-      content,
-      replayStore: replay()
+      content
     });
     const response = await seller.handle(get("/x402/window/NVDA"));
     const required = decodePaymentRequiredHeader(response.headers["PAYMENT-REQUIRED"]!);
@@ -188,46 +193,43 @@ describe("x402 seller", () => {
   });
 
   it("never charges for a ticker it has nothing on", async () => {
-    const b402 = new FakeB402();
+    const fake = new FakeB402();
     const seller = await createX402Seller({
-      transport: b402,
+      settlement: b402(fake),
       payTo: AGENT,
-      content,
-      replayStore: replay()
+      content
     });
     const response = await seller.handle(get("/x402/price/ZZZZ"));
     expect(response.status).toBe(404);
     expect(response.body).toMatchObject({ error: { code: "NOTHING_TO_SELL" } });
-    expect(b402.settled).toHaveLength(0);
+    expect(fake.settled).toHaveLength(0);
   });
 
   it("refuses a payment that does not verify and settles nothing", async () => {
-    const b402 = new FakeB402();
+    const fake = new FakeB402();
     const seller = await createX402Seller({
-      transport: b402,
+      settlement: b402(fake),
       payTo: AGENT,
-      content,
-      replayStore: replay()
+      content
     });
     const challenge = await seller.handle(get("/x402/price/NVDA"));
-    b402.valid = false;
+    fake.valid = false;
     const response = await seller.handle(
       get("/x402/price/NVDA", { "PAYMENT-SIGNATURE": await paymentFor(challenge.headers) })
     );
     expect(response.status).toBe(402);
-    expect(b402.settled).toHaveLength(0);
+    expect(fake.settled).toHaveLength(0);
   });
 
   it("does not hand over the answer when settlement fails", async () => {
-    const b402 = new FakeB402();
+    const fake = new FakeB402();
     const seller = await createX402Seller({
-      transport: b402,
+      settlement: b402(fake),
       payTo: AGENT,
-      content,
-      replayStore: replay()
+      content
     });
     const challenge = await seller.handle(get("/x402/price/NVDA"));
-    b402.settles = false;
+    fake.settles = false;
     const response = await seller.handle(
       get("/x402/price/NVDA", { "PAYMENT-SIGNATURE": await paymentFor(challenge.headers) })
     );
@@ -236,12 +238,7 @@ describe("x402 seller", () => {
   });
 
   it("serves the record for free", async () => {
-    const seller = await createX402Seller({
-      transport: null,
-      payTo: AGENT,
-      content,
-      replayStore: replay()
-    });
+    const seller = await createX402Seller({ settlement: null, payTo: AGENT, content });
     expect(await seller.handle(get("/x402/record/plan-1"))).toMatchObject({
       status: 200,
       body: { id: "plan-1", outcome: "kept" }
@@ -250,44 +247,37 @@ describe("x402 seller", () => {
   });
 
   it("keeps paid routes off, with the reason, until B402 is configured", async () => {
-    const seller = await createX402Seller({
-      transport: null,
-      payTo: AGENT,
-      content,
-      replayStore: replay()
-    });
+    const seller = await createX402Seller({ settlement: null, payTo: AGENT, content });
     expect(seller.paid).toBe(false);
     expect(await seller.handle(get("/x402/price/NVDA"))).toMatchObject({
       status: 503,
       body: {
         error: {
           code: "X402_NOT_CONFIGURED",
-          reason: "No B402 merchant credentials are configured."
+          reason: "No x402 settlement route is configured."
         }
       }
     });
   });
 
   it("keeps paid routes off when B402 does not list U on BNB Chain", async () => {
-    const b402 = new FakeB402();
-    b402.listsU = false;
+    const fake = new FakeB402();
+    fake.listsU = false;
     const seller = await createX402Seller({
-      transport: b402,
+      settlement: b402(fake),
       payTo: AGENT,
-      content,
-      replayStore: replay()
+      content
     });
     expect(seller.paid).toBe(false);
     expect(seller.reason).toBe("B402 does not list U by EIP-3009 on eip155:56.");
   });
 
   it("settles a payment once even when the same signature is sent again", async () => {
-    const b402 = new FakeB402();
+    const fake = new FakeB402();
     const seller = await createX402Seller({
-      transport: b402,
+      settlement: b402(fake),
       payTo: AGENT,
-      content,
-      replayStore: replay()
+      content
     });
     const challenge = await seller.handle(get("/x402/price/NVDA"));
     const signature = await paymentFor(challenge.headers);
@@ -296,7 +286,7 @@ describe("x402 seller", () => {
 
     expect(first.status).toBe(200);
     expect(again.status).not.toBe(200);
-    expect(b402.settled).toHaveLength(1);
+    expect(fake.settled).toHaveLength(1);
   });
 });
 
@@ -331,5 +321,95 @@ describe("storeContent", () => {
     expect(await content.window("TSLA")).toBeNull();
     expect(await content.record("plan-1")).toEqual({ id: "plan-1" });
     expect(await content.record("nope")).toBeNull();
+  });
+});
+
+/**
+ * Stands in for BNB Chain under the official x402 EVM facilitator, for the checks that run
+ * before any chain call. Settling for real is covered by x402-fork.test.ts.
+ */
+class FakeChainSigner {
+  readonly writes: Array<{ address: string; functionName: string; args: readonly unknown[] }> = [];
+  readonly reads: string[] = [];
+  balance = 10n ** 18n;
+  nonceUsed = false;
+  receiptStatus = "success";
+
+  signer(): FacilitatorEvmSigner {
+    return {
+      getAddresses: () => [AGENT],
+      readContract: async (args) => {
+        this.reads.push(args.functionName);
+        if (args.functionName === "balanceOf") return this.balance;
+        if (args.functionName === "authorizationState") return this.nonceUsed;
+        throw new Error(`unexpected read ${args.functionName}`);
+      },
+      verifyTypedData: async (args) =>
+        verifyTypedData(args as unknown as Parameters<typeof verifyTypedData>[0]),
+      writeContract: async (args) => {
+        this.writes.push(args);
+        return `0x${"cd".repeat(32)}` as Hex;
+      },
+      sendTransaction: async () => {
+        throw new Error("unexpected sendTransaction");
+      },
+      waitForTransactionReceipt: async () => ({ status: this.receiptStatus }),
+      // U is a deployed contract; the buyer is a plain wallet with no code.
+      getCode: async ({ address }) => (address === X402_ASSET ? "0x6080" : undefined)
+    };
+  }
+}
+
+describe("x402 seller settling with the agent's own facilitator", () => {
+  const selfBuyer = new x402Client().register(
+    "eip155:*",
+    new ExactEvmClient(toClientEvmSigner(buyer))
+  );
+  async function pay(challenge: Record<string, string>): Promise<string> {
+    const required = decodePaymentRequiredHeader(challenge["PAYMENT-REQUIRED"]!);
+    return encodePaymentSignatureHeader(await selfBuyer.createPaymentPayload(required));
+  }
+  function refusal(response: { headers: Record<string, string> }): string | undefined {
+    const header = response.headers["PAYMENT-REQUIRED"];
+    return header ? decodePaymentRequiredHeader(header).error : undefined;
+  }
+  async function sellerWith(chain: FakeChainSigner) {
+    return createX402Seller({
+      settlement: { kind: "self", signer: chain.signer() },
+      payTo: AGENT,
+      content
+    });
+  }
+
+  it("asks for U by EIP-3009 with U's own domain name and version", async () => {
+    const seller = await sellerWith(new FakeChainSigner());
+    expect(seller).toMatchObject({ paid: true, settledBy: "self", reason: null });
+    const response = await seller.handle(get("/x402/price/NVDA"));
+    expect(response.status).toBe(402);
+    const required = decodePaymentRequiredHeader(response.headers["PAYMENT-REQUIRED"]!);
+    expect(required.accepts[0]).toMatchObject({
+      scheme: "exact",
+      network: X402_NETWORK,
+      asset: X402_ASSET,
+      amount: "2000000000000000",
+      payTo: AGENT,
+      extra: { assetTransferMethod: "eip3009", name: "United Stables", version: X402_ASSET_VERSION }
+    });
+  });
+
+  it("refuses a signature that was not made by the payer", async () => {
+    const chain = new FakeChainSigner();
+    const seller = await sellerWith(chain);
+    const challenge = await seller.handle(get("/x402/price/NVDA"));
+    const header = await pay(challenge.headers);
+    const payload = JSON.parse(Buffer.from(header, "base64").toString("utf8")) as {
+      payload: { authorization: { from: string } };
+    };
+    payload.payload.authorization.from = "0x000000000000000000000000000000000000dEaD";
+    const forged = Buffer.from(JSON.stringify(payload)).toString("base64");
+    const response = await seller.handle(get("/x402/price/NVDA", { "PAYMENT-SIGNATURE": forged }));
+    expect(response.status).toBe(402);
+    expect(refusal(response)).toBe("invalid_exact_evm_signature");
+    expect(chain.writes).toHaveLength(0);
   });
 });

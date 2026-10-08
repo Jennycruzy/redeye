@@ -13,7 +13,12 @@ import { loadPoolMap, PriceService } from "./price-service.js";
 import { createSqliteAgentStore } from "./sqlite-store.js";
 import { startAgentServer } from "./server.js";
 import { WindowService } from "./window-service.js";
-import { createX402Seller, storeContent } from "./x402-sales.js";
+import {
+  agentFacilitatorSigner,
+  createX402Seller,
+  storeContent,
+  type X402Settlement
+} from "./x402-sales.js";
 
 if (existsSync(".env")) loadEnvFile(".env");
 
@@ -103,11 +108,34 @@ store.setPlanActions({
 planService.start();
 const identityConfig = identityConfigFromEnv(process.env, planChain?.agentAddress ?? null);
 const identity = identityConfig === null ? undefined : buildIdentityCard(identityConfig);
-// x402 sales: paid routes stay off until the B402 merchant credentials are set. A partly
-// filled set must not stop the agent, so it only turns paid sales off.
-function b402Transport(): B402Client | null {
+// x402 sales. X402_SETTLEMENT picks the route: "self" settles through the official x402
+// EVM facilitator run by the agent wallet, "b402" through Binance B402 once its merchant
+// credentials are set, and anything else keeps paid routes off. Bad B402 settings only
+// turn paid sales off; they never stop the agent.
+function x402Settlement(): X402Settlement | null {
+  const route = process.env.X402_SETTLEMENT?.trim();
+  if (route === "self" && agentKey) {
+    return {
+      kind: "self",
+      signer: agentFacilitatorSigner(
+        process.env.BSC_RPC_URL_LIVE ?? "https://bsc-dataseed.bnbchain.org",
+        (agentKey.startsWith("0x") ? agentKey : `0x${agentKey}`) as Hex
+      )
+    };
+  }
+  if (route !== "b402") return null;
   try {
-    return B402Client.fromEnv(process.env) ?? null;
+    const transport = B402Client.fromEnv(process.env);
+    if (!transport) return null;
+    return {
+      kind: "b402",
+      transport,
+      replayStore: store.replayStore(),
+      onSettlementUnknown: (event: unknown) => {
+        console.error(JSON.stringify({ code: "X402_SETTLEMENT_UNKNOWN", event }));
+        void store.saveRunEvent("x402", "settlement_unknown", { event });
+      }
+    };
   } catch (error) {
     console.error(
       JSON.stringify({
@@ -120,18 +148,19 @@ function b402Transport(): B402Client | null {
 }
 const x402 = planChain
   ? await createX402Seller({
-      transport: b402Transport(),
+      settlement: x402Settlement(),
       payTo: planChain.agentAddress,
-      replayStore: store.replayStore(),
-      content: storeContent(store, Number(process.env.PRICE_MAX_AGE_S ?? "120") * 1000),
-      onSettlementUnknown: (event) => {
-        console.error(JSON.stringify({ code: "X402_SETTLEMENT_UNKNOWN", event }));
-        void store.saveRunEvent("x402", "settlement_unknown", { event });
-      }
+      content: storeContent(store, Number(process.env.PRICE_MAX_AGE_S ?? "120") * 1000)
     })
   : null;
-if (x402 && !x402.paid) {
-  console.log(JSON.stringify({ status: "x402_paid_routes_off", reason: x402.reason }));
+if (x402) {
+  console.log(
+    JSON.stringify(
+      x402.paid
+        ? { status: "x402_paid_routes_on", settledBy: x402.settledBy }
+        : { status: "x402_paid_routes_off", reason: x402.reason }
+    )
+  );
 }
 const server = startAgentServer(
   store,

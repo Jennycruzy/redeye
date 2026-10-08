@@ -50,6 +50,9 @@ importers:
       '@x402/core':
         specifier: 2.19.0
         version: 2.19.0
+      '@x402/evm':
+        specifier: 2.19.0
+        version: 2.19.0(typescript@5.9.3)
       decimal.js:
         specifier: ^10.4.3
         version: 10.6.0
@@ -706,6 +709,9 @@ packages:
 
   '@x402/core@2.19.0':
     resolution: {integrity: sha512-IPQIHzIrwvbri1339QWHvwtiTTDbGsrF5Yff0LZfufmVXNdOSYbjY8oz6vZg7+4W13f7/k81NUMAFoDOU4gswQ==}
+
+  '@x402/evm@2.19.0':
+    resolution: {integrity: sha512-ycbYCjJmLC1I7tRQslAwB73FhJAVMPzsojYunWuR5hk+jKUwgC6djch1ZrKFC1f9lJi7IOiezZtRHj6TWyCCrg==}
 
   abitype@1.2.3:
     resolution: {integrity: sha512-Ofer5QUnuUdTFsBRwARMoWKOH1ND5ehwYhJ3OJ/BQO+StkwQjHw0XyVh4vDttzHB7QOFhPHa/o413PJ82gU/Tg==}
@@ -1911,6 +1917,16 @@ snapshots:
   '@x402/core@2.19.0':
     dependencies:
       zod: 3.25.76
+
+  '@x402/evm@2.19.0(typescript@5.9.3)':
+    dependencies:
+      '@x402/core': 2.19.0
+      viem: 2.57.3(typescript@5.9.3)(zod@3.25.76)
+      zod: 3.25.76
+    transitivePeerDependencies:
+      - bufferutil
+      - typescript
+      - utf-8-validate
 
   abitype@1.2.3(typescript@5.9.3)(zod@3.25.76):
     optionalDependencies:
