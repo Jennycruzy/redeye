@@ -540,6 +540,45 @@ describe("plan service", () => {
   });
 });
 
+describe("plan preview", () => {
+  it("checks a plan against tonight's window and saves nothing", async () => {
+    const h = await harness();
+    const preview = await h.service.preview(guardInput);
+    expect(preview).toMatchObject({
+      valid: true,
+      issues: [],
+      promise: "If the 24/7 price falls 3% below the close, sell 50% of 2 NVDA shares.",
+      window: { kind: "overnight", closeTs: CLOSE, openTs: OPEN, lockBy: CLOSE - 5 * MINUTE }
+    });
+    expect(preview.planHash).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(await h.store.listPlans()).toEqual([]);
+    expect(h.chain.freezes).toEqual([]);
+  });
+
+  it("lists the problems with an out-of-bounds plan", async () => {
+    const h = await harness();
+    const preview = await h.service.preview({
+      ...guardInput,
+      params: { ...guardInput.params, triggerDropPct: "40" }
+    });
+    expect(preview.valid).toBe(false);
+    expect(preview.issues.map((issue) => issue.field)).toContain("params.triggerDropPct");
+  });
+
+  it("reports an unlisted ticker and a passed lock time plainly", async () => {
+    const h = await harness();
+    expect(await h.service.preview({ ...guardInput, ticker: "ZZZZ" })).toMatchObject({
+      valid: false,
+      issues: [{ field: "TOKEN_NOT_LISTED" }]
+    });
+    h.setNow(CLOSE - MINUTE);
+    expect((await h.service.preview(guardInput)).issues).toContainEqual({
+      field: "lockTs",
+      message: "Tonight's lock time has passed."
+    });
+  });
+});
+
 describe("standing plans", () => {
   const standingInput = { ...guardInput, days: 3 };
   const THU_CLOSE = Date.parse("2026-10-08T20:00:00.000Z");

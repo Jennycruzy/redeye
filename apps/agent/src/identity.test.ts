@@ -33,7 +33,8 @@ describe("buildIdentityCard", () => {
     expect(card.name).toBe("Redeye");
     expect(card.services).toEqual([
       { name: "record", endpoint: "https://agent.example.org/record" },
-      { name: "health", endpoint: "https://agent.example.org/health" }
+      { name: "health", endpoint: "https://agent.example.org/health" },
+      { name: "MCP", endpoint: "https://agent.example.org/mcp" }
     ]);
     expect(card.x402Support).toBe(false);
     expect(card.registrations).toEqual([]);

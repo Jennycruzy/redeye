@@ -63,6 +63,18 @@ export function createAgentServer(store: AgentStore, config: AgentApiConfig) {
   return createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+      if (url.pathname === "/mcp" && config.mcp) {
+        const headers = requestHeaders(request);
+        const body = await requestBody(request);
+        const answer = await config.mcp(
+          new Request(url, { method: request.method ?? "GET", headers }),
+          body
+        );
+        response.statusCode = answer.status;
+        answer.headers.forEach((value, name) => response.setHeader(name, value));
+        response.end(await answer.text());
+        return;
+      }
       const result = await handle({
         method: request.method ?? "GET",
         pathname: url.pathname,

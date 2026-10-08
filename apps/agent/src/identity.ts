@@ -71,7 +71,8 @@ export function buildIdentityCard(config: IdentityConfig): IdentityCard {
   }
   services.push(
     { name: "record", endpoint: `${agentUrl}/record` },
-    { name: "health", endpoint: `${agentUrl}/health` }
+    { name: "health", endpoint: `${agentUrl}/health` },
+    { name: "MCP", endpoint: `${agentUrl}/mcp` }
   );
   if (config.repoUrl !== null) {
     services.push({ name: "source", endpoint: publicUrl(config.repoUrl, "repoUrl") });

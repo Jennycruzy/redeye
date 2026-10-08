@@ -59,6 +59,10 @@ and simulations must be labeled `SIMULATED`.
 
 The agent serves its ERC-8004 registration file at `/.well-known/agent-registration.json` (also `/identity`) once `PUBLIC_AGENT_URL` is set. The file lists only services that are live today and the two contracts above. `pnpm identity:register` checks that the file is reachable and simulates the registration; with `--send` it registers the agent in the identity registry on BNB Chain ([`0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`](https://bscscan.com/address/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432)), or points an existing registration (`ERC8004_AGENT_ID`) at the current address.
 
+## MCP server
+
+`POST /mcp` is an MCP server (streamable HTTP, stateless, JSON answers) built on the official `@modelcontextprotocol/sdk`. Its tools are all read-only: `redeye_price` (the latest checked close, 24/7 and token prices with gaps, ages and sources), `redeye_windows`, `redeye_record`, `redeye_run` (one plan and its receipt), and `redeye_plan_draft`, which checks a plan against tonight's window and returns its promise, fingerprint and lock deadline without saving or locking anything. Plans can be locked only between the US open and five minutes before the close, so outside those hours the draft tool reports that tonight's lock time has passed.
+
 ## x402 sales
 
 `GET /x402/price/{ticker}` (0.002 U) sells the live 24/7 price snapshot: the last close, the 24/7 price, the token price, gaps, ages and sources. `GET /x402/window/{ticker}` (0.01 U) sells the off-hours history against the next open, and `GET /x402/record/{id}` returns a plan's receipt for free. Payment is the x402 v2 `exact` scheme in U by EIP-3009 on BNB Chain (EIP-712 domain "United Stables", version "1"), paid to the agent wallet.

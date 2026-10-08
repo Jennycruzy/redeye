@@ -6,6 +6,7 @@ import { AgenticWallet, createBawRunner } from "./agentic-wallet.js";
 import { buildIdentityCard, identityConfigFromEnv } from "./identity.js";
 import { B402Client } from "@bnb-chain/b402/server";
 import { createJobBook } from "./job-chain.js";
+import { createMcpHandler } from "./mcp.js";
 import { createPlanChain } from "./plan-chain.js";
 import { PlanService } from "./plan-service.js";
 import { listedBstock, nasdaqOfficialOpen } from "./plan-sources.js";
@@ -164,7 +165,23 @@ if (x402) {
 }
 const server = startAgentServer(
   store,
-  { ownerToken, siteOrigin, identity, ...(x402 ? { x402 } : {}) },
+  {
+    ownerToken,
+    siteOrigin,
+    identity,
+    ...(x402 ? { x402 } : {}),
+    mcp: createMcpHandler(
+      {
+        prices: (tickers) => store.prices(tickers),
+        windows: (ticker) => store.windows(ticker),
+        record: () => store.record(),
+        planGet: (id) => store.planGet(id),
+        receipt: (id) => store.receipt(id),
+        preview: (input) => planService.preview(input)
+      },
+      "0.1.0"
+    )
+  },
   port
 );
 void priceService.start(priceTickers).catch((error: unknown) => {

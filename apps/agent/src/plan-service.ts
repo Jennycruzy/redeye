@@ -50,6 +50,14 @@ const PLAN_LIMIT_CODES: ReadonlySet<RefusalCode> = new Set([
 /** Refusals that may clear on the next check, so they never end a plan during the window. */
 const TRANSIENT_CODES: ReadonlySet<RefusalCode> = new Set(["REAL_PRICE_UNAVAILABLE"]);
 
+export interface PlanPreview {
+  valid: boolean;
+  issues: Array<{ field: string; message: string }>;
+  promise?: string;
+  planHash?: Hex;
+  window?: { kind: string; closeTs: number; openTs: number; lockBy: number };
+}
+
 export class PlanError extends Error {
   constructor(
     readonly status: number,
@@ -375,6 +383,36 @@ export class PlanService {
   constructor(private readonly options: PlanServiceOptions) {
     this.now = options.now ?? Date.now;
     this.newId = options.newId ?? randomUUID;
+  }
+
+  /**
+   * Checks a plan against tonight's window without saving or locking anything, and says
+   * what it would promise. Used by the MCP draft tool.
+   */
+  async preview(input: Record<string, unknown>): Promise<PlanPreview> {
+    const atMs = this.now();
+    let plan: PlanContext;
+    try {
+      plan = await this.planFromInput(input, null);
+    } catch (error) {
+      if (!(error instanceof PlanError)) throw error;
+      return { valid: false, issues: [{ field: error.code, message: error.message }] };
+    }
+    const window = nextWindow(atMs);
+    const event = createWindowRecord(window.kind, plan.ticker, window.closeTs, window.openTs);
+    const context = eventContext(event);
+    const lockBy = planLockDeadlineMs(context);
+    const issues = validatePlan(plan, context).issues;
+    if (atMs >= lockBy) {
+      issues.push({ field: "lockTs", message: "Tonight's lock time has passed." });
+    }
+    return {
+      valid: issues.length === 0,
+      issues,
+      promise: describePlan(plan),
+      planHash: hashPlan(plan),
+      window: { kind: window.kind, closeTs: window.closeTs, openTs: window.openTs, lockBy }
+    };
   }
 
   async lock(id: string): Promise<StoredPlan> {
