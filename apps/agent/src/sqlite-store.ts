@@ -1,3 +1,4 @@
+import type { B402ReplayStore } from "@bnb-chain/b402/server";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -114,6 +115,28 @@ export class SqliteAgentStore implements AgentStore, PlanStore {
         .prepare("SELECT payload FROM documents WHERE kind = ? ORDER BY created_at ASC")
         .all(kind)
     );
+  }
+
+  /**
+   * Durable replay guard for x402 settlements. Each update reads and writes in one
+   * synchronous step, with nothing awaited in between, so no other request in this
+   * process can interleave: the atomic read-modify-write B402 requires.
+   */
+  replayStore(): B402ReplayStore {
+    const kind = "x402_replay";
+    return {
+      get: async (key) => this.one(kind, key) ?? undefined,
+      update: async (key, change) => {
+        const next = change(this.one(kind, key) ?? undefined);
+        if (next.op === "set") this.put(kind, key, next.value);
+        if (next.op === "delete") {
+          this.database
+            .prepare("DELETE FROM documents WHERE kind = ? AND document_key = ?")
+            .run(kind, key);
+        }
+        return next.result;
+      }
+    };
   }
 
   async health(): Promise<unknown> {

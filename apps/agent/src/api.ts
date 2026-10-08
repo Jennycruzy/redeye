@@ -8,7 +8,8 @@ function json(status: number, body: unknown, config: AgentApiConfig): AgentRespo
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
       "access-control-allow-origin": config.siteOrigin,
-      "access-control-allow-headers": "content-type, authorization, x-owner-token",
+      "access-control-allow-headers":
+        "content-type, authorization, x-owner-token, payment-signature",
       "access-control-allow-methods": "GET, POST, OPTIONS"
     },
     body
@@ -62,6 +63,19 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
         return config.identity === undefined
           ? error(404, "IDENTITY_NOT_PUBLISHED", "This agent has no public identity yet.", config)
           : json(200, config.identity, config);
+      if (root === "x402" && config.x402 !== undefined) {
+        const sale = await config.x402.handle(request);
+        return {
+          ...sale,
+          headers: {
+            ...sale.headers,
+            "access-control-allow-origin": config.siteOrigin,
+            "access-control-allow-headers":
+              "content-type, authorization, x-owner-token, payment-signature",
+            "access-control-allow-methods": "GET, POST, OPTIONS"
+          }
+        };
+      }
       if (request.method === "GET" && root === "study" && parts.length === 1)
         return json(200, await store.study(), config);
       if (request.method === "GET" && root === "calendar" && parts.length === 1) {

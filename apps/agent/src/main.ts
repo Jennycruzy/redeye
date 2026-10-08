@@ -4,6 +4,7 @@ import { loadEnvFile } from "node:process";
 import type { Address, Hex } from "viem";
 import { AgenticWallet, createBawRunner } from "./agentic-wallet.js";
 import { buildIdentityCard, identityConfigFromEnv } from "./identity.js";
+import { B402Client } from "@bnb-chain/b402/server";
 import { createJobBook } from "./job-chain.js";
 import { createPlanChain } from "./plan-chain.js";
 import { PlanService } from "./plan-service.js";
@@ -12,6 +13,7 @@ import { loadPoolMap, PriceService } from "./price-service.js";
 import { createSqliteAgentStore } from "./sqlite-store.js";
 import { startAgentServer } from "./server.js";
 import { WindowService } from "./window-service.js";
+import { createX402Seller, storeContent } from "./x402-sales.js";
 
 if (existsSync(".env")) loadEnvFile(".env");
 
@@ -101,7 +103,41 @@ store.setPlanActions({
 planService.start();
 const identityConfig = identityConfigFromEnv(process.env, planChain?.agentAddress ?? null);
 const identity = identityConfig === null ? undefined : buildIdentityCard(identityConfig);
-const server = startAgentServer(store, { ownerToken, siteOrigin, identity }, port);
+// x402 sales: paid routes stay off until the B402 merchant credentials are set. A partly
+// filled set must not stop the agent, so it only turns paid sales off.
+function b402Transport(): B402Client | null {
+  try {
+    return B402Client.fromEnv(process.env) ?? null;
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        code: "B402_CONFIG_INVALID",
+        reason: error instanceof Error ? error.message : String(error)
+      })
+    );
+    return null;
+  }
+}
+const x402 = planChain
+  ? await createX402Seller({
+      transport: b402Transport(),
+      payTo: planChain.agentAddress,
+      replayStore: store.replayStore(),
+      content: storeContent(store, Number(process.env.PRICE_MAX_AGE_S ?? "120") * 1000),
+      onSettlementUnknown: (event) => {
+        console.error(JSON.stringify({ code: "X402_SETTLEMENT_UNKNOWN", event }));
+        void store.saveRunEvent("x402", "settlement_unknown", { event });
+      }
+    })
+  : null;
+if (x402 && !x402.paid) {
+  console.log(JSON.stringify({ status: "x402_paid_routes_off", reason: x402.reason }));
+}
+const server = startAgentServer(
+  store,
+  { ownerToken, siteOrigin, identity, ...(x402 ? { x402 } : {}) },
+  port
+);
 void priceService.start(priceTickers).catch((error: unknown) => {
   console.error(
     JSON.stringify({

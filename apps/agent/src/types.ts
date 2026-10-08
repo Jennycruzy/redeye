@@ -28,6 +28,8 @@ export interface AgentApiConfig {
   siteOrigin: string;
   /** ERC-8004 registration file; absent until the agent has a public address. */
   identity?: unknown;
+  /** x402 sales under /x402/; absent when the seller is not set up. */
+  x402?: { handle(request: AgentRequest): Promise<AgentResponse> };
 }
 
 export interface AgentRequest {

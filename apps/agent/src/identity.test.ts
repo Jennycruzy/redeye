@@ -119,7 +119,7 @@ describe("identityConfigFromEnv", () => {
   });
 });
 
-describe("identity route", () => {
+describe("identity and x402 routes", () => {
   const store = {} as AgentStore;
   const get = (pathname: string) => ({
     method: "GET",
@@ -145,5 +145,32 @@ describe("identity route", () => {
     expect(response.body).toEqual({
       error: { code: "IDENTITY_NOT_PUBLISHED", reason: "This agent has no public identity yet." }
     });
+  });
+
+  it("hands /x402/ requests to the seller and adds the site's CORS headers", async () => {
+    const seen: string[] = [];
+    const api = createAgentApi(store, {
+      ownerToken: "t",
+      siteOrigin: "https://site.example",
+      x402: {
+        handle: async (request) => {
+          seen.push(request.pathname);
+          return { status: 402, headers: { "PAYMENT-REQUIRED": "abc" }, body: {} };
+        }
+      }
+    });
+    const response = await api(get("/x402/price/NVDA"));
+    expect(seen).toEqual(["/x402/price/NVDA"]);
+    expect(response.status).toBe(402);
+    expect(response.headers).toMatchObject({
+      "PAYMENT-REQUIRED": "abc",
+      "access-control-allow-origin": "https://site.example"
+    });
+    expect(response.headers["access-control-allow-headers"]).toContain("payment-signature");
+  });
+
+  it("answers not found for /x402/ when no seller is set up", async () => {
+    const api = createAgentApi(store, { ownerToken: "t", siteOrigin: "*" });
+    expect((await api(get("/x402/price/NVDA"))).status).toBe(404);
   });
 });
