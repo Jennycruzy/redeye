@@ -156,9 +156,10 @@ describe("recorded source clients", () => {
 
   it("gives no close from a quote while the market is not closed or the stamp has a time", async () => {
     const record = await fixture("nasdaq/nvda-quote-closed-2026-10-08.json");
-    const variant = (edit: (data: Record<string, any>) => void) => {
-      const copy = structuredClone(record) as { response: { body: { data: Record<string, any> } } };
-      edit(copy.response.body.data);
+    type QuoteData = { marketStatus?: string; primaryData?: Record<string, string> };
+    const variant = (edit: (data: QuoteData & { primaryData: Record<string, string> }) => void) => {
+      const copy = structuredClone(record) as { response: { body: { data: QuoteData } } };
+      edit(copy.response.body.data as QuoteData & { primaryData: Record<string, string> });
       return parseClosedQuote(copy as never);
     };
     expect(variant((data) => (data.marketStatus = "Open"))).toBeNull();
@@ -170,7 +171,9 @@ describe("recorded source clients", () => {
     expect(() => variant((data) => (data.primaryData.lastSalePrice = "N/A"))).toThrow(
       "not a positive price"
     );
-    expect(() => variant((data) => delete data.primaryData)).toThrow("missing data.primaryData");
+    expect(() => variant((data) => delete (data as QuoteData).primaryData)).toThrow(
+      "missing data.primaryData"
+    );
   });
 
   it("uses the published 5 October daily row for the official open", async () => {
