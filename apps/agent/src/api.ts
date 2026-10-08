@@ -76,6 +76,26 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
           }
         };
       }
+      if (request.method === "GET" && root === "night" && id !== undefined && parts.length === 2) {
+        if (!config.night)
+          return error(404, "NOT_FOUND", "Night traces are not served here.", config);
+        const close = request.query.get("close");
+        const closeTs = close === null ? undefined : Number(close);
+        if (closeTs !== undefined && !Number.isInteger(closeTs))
+          return error(400, "CLOSE_INVALID", "close must be a time in milliseconds.", config);
+        return json(200, await config.night(id, closeTs), config);
+      }
+      if (request.method === "POST" && root === "preview" && parts.length === 1) {
+        if (!config.preview)
+          return error(404, "NOT_FOUND", "Plan checks are not served here.", config);
+        if (
+          typeof request.body !== "object" ||
+          request.body === null ||
+          Array.isArray(request.body)
+        )
+          return error(400, "PLAN_INVALID", "Send the plan as a JSON object.", config);
+        return json(200, await config.preview(request.body as Record<string, unknown>), config);
+      }
       if (request.method === "GET" && root === "study" && parts.length === 1)
         return json(200, await store.study(), config);
       if (request.method === "GET" && root === "calendar" && parts.length === 1) {
@@ -248,6 +268,15 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
     } catch (caught) {
       if (caught instanceof StoreError)
         return error(caught.status, caught.code, caught.message, config);
+      // Plan and night errors carry their own status and code.
+      if (
+        caught instanceof Error &&
+        typeof (caught as { status?: unknown }).status === "number" &&
+        typeof (caught as { code?: unknown }).code === "string"
+      ) {
+        const { status, code } = caught as Error & { status: number; code: string };
+        return error(status, code, caught.message, config);
+      }
       const reason =
         caught instanceof Error ? caught.message : "The agent store failed without a reason.";
       return error(500, "STORE_ERROR", reason, config);

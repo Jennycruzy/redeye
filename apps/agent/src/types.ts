@@ -31,6 +31,10 @@ export interface AgentApiConfig {
   identity?: unknown;
   /** A2A: the agent card and JSON-RPC at /a2a, served by the official SDK; absent when off. */
   a2a?: (request: IncomingMessage, response: ServerResponse) => void;
+  /** The 24/7 price through one off-hours window, for the site's night strip. */
+  night?: (ticker: string, closeTs?: number) => Promise<unknown>;
+  /** Checks a plan against the next lockable window; saves nothing. */
+  preview?: (input: Record<string, unknown>) => Promise<unknown>;
   /** MCP over streamable HTTP at /mcp; absent when not set up. */
   mcp?: (request: Request, parsedBody: unknown) => Promise<Response>;
   /** x402 sales under /x402/; absent when the seller is not set up. */

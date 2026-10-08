@@ -57,6 +57,45 @@ describe("agent HTTP boundary", () => {
     expect(response.body).toEqual({ state: "ok", source: "fixture" });
   });
 
+  it("serves night traces and plan checks to anyone, with their own errors", async () => {
+    const calls: Array<[string, number | undefined]> = [];
+    const api = createAgentApi(store(), {
+      ...config,
+      night: async (ticker, closeTs) => {
+        calls.push([ticker, closeTs]);
+        if (ticker === "LATE") {
+          throw Object.assign(new Error("That window has not started yet."), {
+            status: 400,
+            code: "WINDOW_NOT_STARTED"
+          });
+        }
+        return { ticker };
+      },
+      preview: async (input) => ({ valid: true, input })
+    });
+    expect((await api(request("/night/NVDA"))).body).toEqual({ ticker: "NVDA" });
+    const query = new URLSearchParams({ close: "1791576000000" });
+    await api(request("/night/TSLA", { query }));
+    expect(calls).toEqual([
+      ["NVDA", undefined],
+      ["TSLA", 1791576000000]
+    ]);
+    const bad = await api(request("/night/NVDA", { query: new URLSearchParams({ close: "x" }) }));
+    expect(bad.status).toBe(400);
+    const late = await api(request("/night/LATE"));
+    expect(late).toMatchObject({
+      status: 400,
+      body: { error: { code: "WINDOW_NOT_STARTED", reason: "That window has not started yet." } }
+    });
+    const checked = await api(request("/preview", { method: "POST", body: { ticker: "NVDA" } }));
+    expect(checked).toMatchObject({
+      status: 200,
+      body: { valid: true, input: { ticker: "NVDA" } }
+    });
+    const notObject = await api(request("/preview", { method: "POST", body: [1] }));
+    expect(notObject.status).toBe(400);
+  });
+
   it("rejects writes without the owner token", async () => {
     const api = createAgentApi(store(), config);
     const response = await api(request("/replay", { method: "POST", body: { event: "NVDA" } }));

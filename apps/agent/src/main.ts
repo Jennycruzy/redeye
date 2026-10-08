@@ -10,7 +10,8 @@ import { createA2aHandler } from "./a2a.js";
 import { createMcpHandler } from "./mcp.js";
 import { createPlanChain } from "./plan-chain.js";
 import { PlanService } from "./plan-service.js";
-import { listedBstock, nasdaqOfficialOpen } from "./plan-sources.js";
+import { createNightService } from "./night.js";
+import { listedBstock, nasdaqCloseOn, nasdaqOfficialOpen, xyzCandles } from "./plan-sources.js";
 import { loadPoolMap, PriceService } from "./price-service.js";
 import { createSqliteAgentStore } from "./sqlite-store.js";
 import { startAgentServer } from "./server.js";
@@ -184,6 +185,19 @@ const a2a = createA2aHandler(
   process.env.PUBLIC_AGENT_URL?.trim() || `http://localhost:${port}`,
   AGENT_VERSION
 );
+// The site's night strip: the 24/7 price through one window, with that session's close.
+const night = createNightService({
+  candles: (ticker, interval, startMs, endMs) =>
+    xyzCandles(rawRoot, ticker, interval, startMs, endMs),
+  close: async (ticker, nyDate) => {
+    // The price service already holds tonight's close, often before the daily history has it.
+    const latest = await store.latestPrice(ticker);
+    if (latest?.close.date === nyDate) {
+      return { value: latest.close.value, date: nyDate, source: latest.close.source };
+    }
+    return nasdaqCloseOn(rawRoot, ticker, nyDate);
+  }
+});
 // Built after x402 starts, so the card states what is actually live.
 const identityConfig = identityConfigFromEnv(process.env, planChain?.agentAddress ?? null);
 const identity =
@@ -198,6 +212,8 @@ const server = startAgentServer(
     identity,
     ...(x402 ? { x402 } : {}),
     a2a,
+    night,
+    preview: (input) => planService.preview(input),
     mcp: createMcpHandler(readSources, AGENT_VERSION)
   },
   port

@@ -180,6 +180,17 @@ export interface PlanRecordItem {
   /** Team job approved by our own wallet, null when the plan has none. */
   teamJobId: number | null;
   teamJobState: JobState | "creating" | null;
+  /** The plan's own numbers (trigger, share of holding, limits), for drawing it. */
+  params: PlanContext["params"];
+  heldShares: string;
+  /** "agentic_wallet" when the plan may trade through the Agentic Wallet. */
+  door: "agentic_wallet" | null;
+  /** The decision written on chain once the trigger was hit or the window ended. */
+  decisionTx: Hex | null;
+  decidedAt: number | null;
+  action: string | null;
+  /** The swap's transaction once the order finished. */
+  fillTx: Hex | null;
 }
 
 /** The plan in one plain sentence, as shown in the public record. */
@@ -721,7 +732,14 @@ export class PlanService {
       jobId: null,
       jobState: null,
       teamJobId: null,
-      teamJobState: null
+      teamJobState: null,
+      params: plan.params,
+      heldShares: plan.heldShares,
+      door: plan.door ?? null,
+      decisionTx: null,
+      decidedAt: null,
+      action: null,
+      fillTx: null
     });
   }
 
@@ -1428,7 +1446,14 @@ export class PlanService {
       jobId: stored.job?.jobId ?? null,
       jobState: stored.job?.state ?? null,
       teamJobId: stored.teamJob?.jobId ?? null,
-      teamJobState: stored.teamJob?.state ?? null
+      teamJobState: stored.teamJob?.state ?? null,
+      params: plan.params,
+      heldShares: plan.heldShares,
+      door: plan.door ?? null,
+      decisionTx: stored.decision?.chain?.txHash ?? null,
+      decidedAt: stored.decision?.at ?? null,
+      action: stored.decision?.decision.action ?? null,
+      fillTx: stored.trade?.order?.status === "FINISHED" ? stored.trade.order.txHash : null
     });
   }
 

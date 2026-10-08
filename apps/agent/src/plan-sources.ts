@@ -1,10 +1,14 @@
 import {
   fetchBstockList,
   fetchHistoricalPrices,
+  fetchXyzCandles,
   parseBstockList,
   parseHistoricalPrices,
+  parseXyzCandles,
   storeRawRecord
 } from "@redeye/clients";
+import type { XyzCandle } from "@redeye/shared";
+import type { NightClose } from "./night.js";
 import type { ListedToken, OfficialOpen } from "./plan-service.js";
 
 const BSC_CHAIN_ID = "56";
@@ -52,4 +56,31 @@ export async function nasdaqOfficialOpen(
   const row = parseHistoricalPrices(record).find((candidate) => candidate.date === usDate(isoDate));
   if (row === undefined) return null;
   return { value: row.open, source: `nasdaq:${ticker}:daily-history`, sourceRecordPath: path };
+}
+
+/** The official close of one session from Nasdaq's daily history, or null until it is posted. */
+export async function nasdaqCloseOn(
+  rawRoot: string,
+  ticker: string,
+  isoDate: string
+): Promise<NightClose | null> {
+  const record = await fetchHistoricalPrices(ticker, isoDate, nextIsoDate(isoDate));
+  await storeRawRecord(rawRoot, `nasdaq-${ticker}`, record);
+  const row = parseHistoricalPrices(record).find((candidate) => candidate.date === usDate(isoDate));
+  return row === undefined
+    ? null
+    : { value: row.close, date: isoDate, source: `nasdaq:${ticker}:daily-history` };
+}
+
+/** 24/7 price candles from Hyperliquid's xyz market, stored as raw records. */
+export async function xyzCandles(
+  rawRoot: string,
+  ticker: string,
+  interval: string,
+  startMs: number,
+  endMs: number
+): Promise<XyzCandle[]> {
+  const record = await fetchXyzCandles(ticker, interval, startMs, endMs);
+  await storeRawRecord(rawRoot, `hyperliquid-candles-${ticker}`, record);
+  return parseXyzCandles(record);
 }
