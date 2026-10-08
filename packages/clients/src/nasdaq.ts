@@ -181,6 +181,47 @@ export function parseHistoricalPrices(record: SourceRecord<unknown>): NasdaqDail
   });
 }
 
+export interface NasdaqClosedQuote {
+  /** MM/DD/YYYY, the same form as the daily history rows. */
+  date: string;
+  close: string;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * The last session's close from the quote endpoint, which Nasdaq updates within minutes of
+ * the close while the daily history can lag into the next morning. Returns null unless the
+ * market is reported closed and the last trade is stamped with a date only ("Oct 7, 2026");
+ * while trading, pre-market or after hours the price is not a close.
+ */
+export function parseClosedQuote(record: SourceRecord<unknown>): NasdaqClosedQuote | null {
+  const body = record.response.body;
+  if (!isObject(body) || !isObject(body.data) || !isObject(body.data.primaryData)) {
+    throw new ClientError("shape", "Nasdaq quote response is missing data.primaryData.");
+  }
+  if (body.data.marketStatus !== "Closed") return null;
+  const stamp = body.data.primaryData.lastTradeTimestamp;
+  const match =
+    typeof stamp === "string" ? /^([A-Z][a-z]{2}) (\d{1,2}), (\d{4})$/.exec(stamp) : null;
+  const month = match ? MONTHS.indexOf(match[1]!) + 1 : 0;
+  if (!match || month === 0) return null;
+  return {
+    date: `${String(month).padStart(2, "0")}/${match[2]!.padStart(2, "0")}/${match[3]}`,
+    close: requiredPositivePrice(body.data.primaryData.lastSalePrice, "quote.lastSalePrice")
+  };
+}
+
+export function fetchQuoteInfo(ticker: string): Promise<SourceRecord<unknown>> {
+  if (!/^[A-Z][A-Z0-9.-]{0,14}$/.test(ticker)) {
+    throw new ClientError("shape", "Nasdaq ticker must be uppercase.", { ticker });
+  }
+  return requestJson<unknown>(
+    `${NASDAQ_HISTORICAL_URL}/${encodeURIComponent(ticker)}/info?assetclass=stocks`,
+    { headers: { "user-agent": "Mozilla/5.0 Redeye/0.1" } }
+  );
+}
+
 export function parseChartPoints(record: SourceRecord<unknown>): NasdaqChartPoint[] {
   const body = record.response.body;
   if (!isObject(body) || !isObject(body.data) || !Array.isArray(body.data.chart)) {

@@ -1,0 +1,73 @@
+{
+  "v": 1,
+  "fetchedAt": "2026-10-08T02:07:18.006Z",
+  "completedAt": "2026-10-08T02:07:18.181Z",
+  "request": {
+    "method": "GET",
+    "url": "https://api.nasdaq.com/api/quote/NVDA/info?assetclass=stocks"
+  },
+  "response": {
+    "status": 200,
+    "ok": true,
+    "body": {
+      "data": {
+        "symbol": "NVDA",
+        "companyName": "NVIDIA Corporation Common Stock",
+        "stockType": "Common Stock",
+        "exchange": "NASDAQ-GS",
+        "isNasdaqListed": true,
+        "isNasdaq100": true,
+        "isHeld": false,
+        "primaryData": {
+          "lastSalePrice": "$237.47",
+          "netChange": "-1.77",
+          "percentageChange": "-0.74%",
+          "deltaIndicator": "down",
+          "lastTradeTimestamp": "Oct 7, 2026",
+          "isRealTime": false,
+          "bidPrice": "N/A",
+          "askPrice": "N/A",
+          "bidSize": "N/A",
+          "askSize": "N/A",
+          "volume": "81,775,227",
+          "currency": null
+        },
+        "secondaryData": null,
+        "marketStatus": "Closed",
+        "assetClass": "STOCKS",
+        "keyStats": {
+          "fiftyTwoWeekHighLow": {
+            "label": "52 Week Range:",
+            "value": "164.27 - 243.37"
+          },
+          "dayrange": {
+            "label": "High/Low:",
+            "value": "NA"
+          }
+        },
+        "notifications": [
+          {
+            "headline": "HIGH TECHNICAL ATTRIBUTE",
+            "eventTypes": [
+              {
+                "message": "NVDA has a High Technical Rating by Nasdaq Dorsey Wright. Discover why technical analysis matters",
+                "eventName": "High Technical Attribute",
+                "url": {
+                  "label": "Discover why technical analysis matters",
+                  "value": "https://www.nasdaq.com/solutions/nasdaq-dorsey-wright/technical-analysis"
+                },
+                "id": "tech_attribute"
+              }
+            ]
+          }
+        ]
+      },
+      "message": null,
+      "status": {
+        "rCode": 200,
+        "bCodeMessage": null,
+        "developerMessage": null
+      }
+    }
+  }
+}

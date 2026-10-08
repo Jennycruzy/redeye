@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import {
   parseBstockList,
+  parseClosedQuote,
   parseHistoricalPrices,
   parseXyzEquityPrices,
   type NasdaqDailyPrice
@@ -268,5 +269,86 @@ describe("source-backed price service", () => {
     } finally {
       await rm(rawRoot, { recursive: true, force: true });
     }
+  });
+
+  describe("when the daily history lags behind the close", () => {
+    // fixedNow is 6:40 pm in New York on 5 Oct; the history fixture's latest row is 2 Oct.
+    async function closeWith(edit: (data: Record<string, unknown>) => void) {
+      const rawRoot = await mkdtemp(`${tmpdir()}/redeye-price-quote-`);
+      try {
+        const recorded = await fixture<{ data: Record<string, unknown> }>(
+          "nasdaq/nvda-quote-closed-2026-10-08.json"
+        );
+        const body = structuredClone(recorded.response.body);
+        edit(body.data);
+        const quote = {
+          ...recorded,
+          fetchedAt: "2026-10-05T22:40:10.000Z",
+          completedAt: "2026-10-05T22:40:11.000Z",
+          response: { ...recorded.response, body }
+        };
+        const serviceSources = await sources();
+        let quoteCalls = 0;
+        serviceSources.quote = async () => {
+          quoteCalls += 1;
+          return quote;
+        };
+        serviceSources.parseQuote = parseClosedQuote;
+        const service = new PriceService({
+          rawRoot,
+          poolMap: {
+            NVDA: {
+              address: poolAddress,
+              observedLiquidityUsd: "4353526",
+              createdAtMs: 1785310965000
+            }
+          },
+          sources: serviceSources,
+          now: () => fixedNow
+        });
+        const [snapshot] = await service.refresh(["NVDA"]);
+        if (snapshot?.state !== "ok")
+          throw new Error(`expected a price: ${JSON.stringify(snapshot)}`);
+        return { close: snapshot.close, quoteCalls };
+      } finally {
+        await rm(rawRoot, { recursive: true, force: true });
+      }
+    }
+    const primary = (data: Record<string, unknown>) => data.primaryData as Record<string, unknown>;
+
+    it("uses the quote's close once Nasdaq reports the market closed for that day", async () => {
+      const { close, quoteCalls } = await closeWith((data) => {
+        primary(data).lastTradeTimestamp = "Oct 5, 2026";
+        primary(data).lastSalePrice = "$238.90";
+      });
+      expect(quoteCalls).toBe(1);
+      expect(close).toMatchObject({
+        value: "238.90",
+        date: "2026-10-05",
+        source: "nasdaq:NVDA:quote-close"
+      });
+      expect(close.sourceRecordPath).toContain("raw/nasdaq-quote-NVDA/");
+    });
+
+    it("keeps the history row while the market is not reported closed", async () => {
+      const { close } = await closeWith((data) => {
+        data.marketStatus = "After-Hours";
+        primary(data).lastTradeTimestamp = "Oct 5, 2026";
+      });
+      expect(close).toMatchObject({ date: "2026-10-02", source: "nasdaq:NVDA:daily-history" });
+    });
+
+    it("keeps the history row when the quote carries a time, not a session date", async () => {
+      const { close } = await closeWith((data) => {
+        primary(data).lastTradeTimestamp = "Oct 5, 2026 4:00 PM ET";
+      });
+      expect(close).toMatchObject({ date: "2026-10-02", source: "nasdaq:NVDA:daily-history" });
+    });
+
+    it("never takes a quote dated after today in New York", async () => {
+      // The recorded quote is stamped 7 Oct, two days after fixedNow.
+      const { close } = await closeWith(() => {});
+      expect(close).toMatchObject({ date: "2026-10-02", source: "nasdaq:NVDA:daily-history" });
+    });
   });
 });

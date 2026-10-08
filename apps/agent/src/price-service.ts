@@ -4,14 +4,17 @@ import {
   fetchBstockList,
   fetchGeckoPool,
   fetchHistoricalPrices,
+  fetchQuoteInfo,
   fetchGeckoPools,
   fetchXyzEquityPrices,
   parseBstockList,
   parseGeckoPool,
+  parseClosedQuote,
   parseHistoricalPrices,
   parseGeckoPools,
   parseXyzEquityPrices,
   storeRawRecord,
+  type NasdaqClosedQuote,
   type NasdaqDailyPrice
 } from "@redeye/clients";
 import type { GeckoPoolSnapshot, RwaToken, SourceRecord, XyzEquityPrice } from "@redeye/shared";
@@ -93,6 +96,9 @@ export interface PriceServiceSources {
   parseTokens: (record: SourceRecord<unknown>) => RwaToken[];
   historical: (ticker: string, fromDate: string, toDate: string) => Promise<SourceRecord<unknown>>;
   parseHistorical: (record: SourceRecord<unknown>) => NasdaqDailyPrice[];
+  /** Quote endpoint; used for the close only until the daily history has that day. */
+  quote?: (ticker: string) => Promise<SourceRecord<unknown>>;
+  parseQuote?: (record: SourceRecord<unknown>) => NasdaqClosedQuote | null;
   pool: (address: string) => Promise<SourceRecord<unknown>>;
   parsePool: (record: SourceRecord<unknown>) => GeckoPoolSnapshot;
   pools?: (addresses: string[]) => Promise<SourceRecord<unknown>>;
@@ -173,7 +179,14 @@ function percentageDifference(value: string, reference: string): string {
   return decimalString(current.div(baseline).minus(1).mul(100));
 }
 
-function dailyRowIsoDate(row: NasdaqDailyPrice): string {
+/** A session close and the Nasdaq endpoint it came from. */
+interface CloseRow {
+  date: string;
+  close: string;
+  source: "daily-history" | "quote-close";
+}
+
+function dailyRowIsoDate(row: Pick<NasdaqDailyPrice, "date">): string {
   const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(row.date);
   if (!match) throw new Error(`Nasdaq daily row date is invalid: ${row.date}`);
   return `${match[3]}-${match[1]}-${match[2]}`;
@@ -242,6 +255,8 @@ const defaultSources: PriceServiceSources = {
   parseTokens: parseBstockList,
   historical: fetchHistoricalPrices,
   parseHistorical: parseHistoricalPrices,
+  quote: fetchQuoteInfo,
+  parseQuote: parseClosedQuote,
   pool: fetchGeckoPool,
   parsePool: parseGeckoPool,
   pools: fetchGeckoPools,
@@ -262,7 +277,7 @@ export class PriceService {
   private readonly now: () => number;
   private readonly closeCache = new Map<
     string,
-    { stored: StoredRecord<NasdaqDailyPrice>; fetchedAtMs: number }
+    { stored: StoredRecord<CloseRow>; fetchedAtMs: number }
   >();
   private readonly tokensCache = new Map<string, RwaToken>();
   private health: PriceServiceHealth = {
@@ -460,7 +475,7 @@ export class PriceService {
         close: {
           value: close.record.response.body.close,
           date: dailyRowIsoDate(close.record.response.body),
-          source: `nasdaq:${ticker}:daily-history`,
+          source: `nasdaq:${ticker}:${close.record.response.body.source}`,
           fetchedAt: close.record.fetchedAt,
           ageSeconds: closeAge,
           sourceRecordPath: close.path
@@ -537,7 +552,7 @@ export class PriceService {
     return map;
   }
 
-  private async fetchClose(ticker: string, atMs: number): Promise<StoredRecord<NasdaqDailyPrice>> {
+  private async fetchClose(ticker: string, atMs: number): Promise<StoredRecord<CloseRow>> {
     const toDate = isoDateInNewYork(atMs);
     const cacheKey = `${ticker}:${toDate}`;
     const cached = this.closeCache.get(cacheKey);
@@ -554,11 +569,33 @@ export class PriceService {
       `nasdaq-${ticker}`,
       this.sources.historical(ticker, dateDaysBefore(toDate, 7), toDate)
     );
-    const row = latestDailyRow(this.sources.parseHistorical(result.record));
-    const stored = {
+    const latest = latestDailyRow(this.sources.parseHistorical(result.record));
+    const row: CloseRow = { date: latest.date, close: latest.close, source: "daily-history" };
+    let stored: StoredRecord<CloseRow> = {
       record: { ...result.record, response: { ...result.record.response, body: row } },
       path: result.path
     };
+    // The daily history can lag into the next morning; the quote endpoint has the close
+    // within minutes. It is used only for a later session than history has, up to today.
+    if (dailyRowIsoDate(row) < toDate && this.sources.quote && this.sources.parseQuote) {
+      const quote = await this.fetchAndStore(`nasdaq-quote-${ticker}`, this.sources.quote(ticker));
+      const closed = this.sources.parseQuote(quote.record);
+      if (
+        closed &&
+        dailyRowIsoDate(closed) > dailyRowIsoDate(row) &&
+        dailyRowIsoDate(closed) <= toDate
+      ) {
+        const quoteRow: CloseRow = {
+          date: closed.date,
+          close: closed.close,
+          source: "quote-close"
+        };
+        stored = {
+          record: { ...quote.record, response: { ...quote.record.response, body: quoteRow } },
+          path: quote.path
+        };
+      }
+    }
     this.closeCache.set(cacheKey, { stored, fetchedAtMs: atMs });
     return stored;
   }

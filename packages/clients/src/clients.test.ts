@@ -12,6 +12,7 @@ import {
   parseGeckoPool,
   parseGeckoPools,
   parseChartPoints,
+  parseClosedQuote,
   parseHistoricalPrices,
   parseMarketStatus,
   parseXyzCandles,
@@ -146,6 +147,30 @@ describe("recorded source clients", () => {
       open: "236.055",
       close: "233.95"
     });
+  });
+
+  it("reads the last session's close from a closed-market Nasdaq quote", async () => {
+    const record = await fixture("nasdaq/nvda-quote-closed-2026-10-08.json");
+    expect(parseClosedQuote(record)).toEqual({ date: "10/07/2026", close: "237.47" });
+  });
+
+  it("gives no close from a quote while the market is not closed or the stamp has a time", async () => {
+    const record = await fixture("nasdaq/nvda-quote-closed-2026-10-08.json");
+    const variant = (edit: (data: Record<string, any>) => void) => {
+      const copy = structuredClone(record) as { response: { body: { data: Record<string, any> } } };
+      edit(copy.response.body.data);
+      return parseClosedQuote(copy as never);
+    };
+    expect(variant((data) => (data.marketStatus = "Open"))).toBeNull();
+    expect(variant((data) => (data.marketStatus = "Pre-Market"))).toBeNull();
+    expect(
+      variant((data) => (data.primaryData.lastTradeTimestamp = "Oct 8, 2026 9:41 AM ET"))
+    ).toBeNull();
+    expect(variant((data) => (data.primaryData.lastTradeTimestamp = "Okt 7, 2026"))).toBeNull();
+    expect(() => variant((data) => (data.primaryData.lastSalePrice = "N/A"))).toThrow(
+      "not a positive price"
+    );
+    expect(() => variant((data) => delete data.primaryData)).toThrow("missing data.primaryData");
   });
 
   it("uses the published 5 October daily row for the official open", async () => {
