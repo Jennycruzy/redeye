@@ -237,6 +237,11 @@ export class SqliteAgentStore implements AgentStore, PlanStore {
     this.put("price", input.ticker.toUpperCase(), input);
   }
 
+  /** The Agentic Wallet's latest checked state, served at /wallet. */
+  async recordWallet(status: unknown): Promise<void> {
+    this.put("wallet", "current", status);
+  }
+
   async recordHealthSnapshot(snapshot: unknown): Promise<void> {
     this.put("health", "current", snapshot);
   }

@@ -8,6 +8,7 @@ export const USDT_BSC = "0x55d398326f99059fF775485246999027B3197955";
 const COMMAND_TIMEOUT_MS = 60_000;
 const ORDER_POLL_MS = 3_000;
 const ORDER_WAIT_MS = 120_000;
+const ORDER_CLOCK_SLACK_MS = 60_000;
 
 /** An error the wallet tool reported, kept word for word. */
 export class WalletError extends Error {
@@ -59,6 +60,24 @@ function record(value: unknown, field: string): Record<string, unknown> {
     throw new WalletError(field, `${field} reply is not an object.`);
   }
   return value as Record<string, unknown>;
+}
+
+/**
+ * The wallet tool counts bStocks in real shares (tokens × multiplier), on quotes, swaps,
+ * order lists and balances alike, while the chain and Redeye count tokens. Measured on
+ * 8 Oct 2026: a swap of "0.001" NVDAB moved 0.000999222 tokens on chain.
+ */
+function toShares(tokens: string, multiplier: string): string {
+  return new Decimal(tokens).mul(multiplier).toDecimalPlaces(18, Decimal.ROUND_DOWN).toFixed();
+}
+
+function toTokens(shares: string, multiplier: string): string {
+  return new Decimal(shares).div(multiplier).toDecimalPlaces(18, Decimal.ROUND_DOWN).toFixed();
+}
+
+/** The amount the wallet tool expects for this quote's input: shares to sell, or USDT to spend. */
+function walletInput(side: "buy" | "sell", amount: string, multiplier: string): string {
+  return side === "sell" ? toShares(amount, multiplier) : amount;
 }
 
 function decimalText(value: unknown, field: string): string {
@@ -157,7 +176,7 @@ export class AgenticWallet {
         "--binanceChainId",
         BSC_CHAIN_ID,
         "--fromTokenQty",
-        request.amount,
+        walletInput(request.side, request.amount, request.multiplier),
         "--fromToken",
         fromToken,
         "--toToken",
@@ -165,7 +184,9 @@ export class AgenticWallet {
       ]),
       "market-order quote"
     );
-    const outputAmount = decimalText(data.toCoinAmount, "toCoinAmount");
+    const quoted = decimalText(data.toCoinAmount, "toCoinAmount");
+    // A buy's output comes back in shares; Redeye keeps token amounts.
+    const outputAmount = request.side === "sell" ? quoted : toTokens(quoted, request.multiplier);
     const tokens = new Decimal(request.side === "sell" ? request.amount : outputAmount);
     const cash = new Decimal(request.side === "sell" ? outputAmount : request.amount);
     const implied = cash.div(tokens.mul(request.multiplier));
@@ -201,6 +222,7 @@ export class AgenticWallet {
   async swap(quote: NormalizedQuote, slippagePct: string): Promise<OrderResult> {
     const [fromToken, toToken] =
       quote.side === "sell" ? [quote.tokenAddress, USDT_BSC] : [USDT_BSC, quote.tokenAddress];
+    const sentAtMs = this.now();
     const data = record(
       await this.run([
         "market-order",
@@ -208,7 +230,7 @@ export class AgenticWallet {
         "--binanceChainId",
         BSC_CHAIN_ID,
         "--fromTokenQty",
-        quote.inputAmount,
+        walletInput(quote.side, quote.inputAmount, quote.multiplier),
         "--fromToken",
         fromToken,
         "--toToken",
@@ -218,18 +240,32 @@ export class AgenticWallet {
       ]),
       "market-order swap"
     );
-    const orderId = data.orderId;
-    if (typeof orderId !== "string" && typeof orderId !== "number") {
+    const replyId = data.orderId;
+    if (typeof replyId !== "string" && typeof replyId !== "number") {
       throw new WalletError("market-order swap", "The swap reply has no order id.");
     }
-    return this.waitForOrder(String(orderId));
+    // The id in the swap reply is not the id the order is listed under (seen twice on
+    // 8 Oct 2026), so the order is found by its tokens, time and amount instead.
+    const deadline = this.now() + ORDER_WAIT_MS;
+    for (;;) {
+      const found = await this.findOrder(quote, sentAtMs, String(replyId));
+      if (found !== null) return found;
+      if (this.now() >= deadline) {
+        return { orderId: String(replyId), status: "PENDING", txHash: null };
+      }
+      await this.sleep(ORDER_POLL_MS);
+    }
   }
 
   /**
    * Finds an order placed since `sinceMs` between two tokens, for when the agent
    * restarted after submitting a swap but before saving its order id.
    */
-  async findOrder(quote: NormalizedQuote, sinceMs: number): Promise<OrderResult | null> {
+  async findOrder(
+    quote: NormalizedQuote,
+    sinceMs: number,
+    replyId?: string
+  ): Promise<OrderResult | null> {
     const [fromToken, toToken] =
       quote.side === "sell" ? [quote.tokenAddress, USDT_BSC] : [USDT_BSC, quote.tokenAddress];
     const data = record(
@@ -243,12 +279,25 @@ export class AgenticWallet {
         "--toToken",
         toToken,
         "--startTime",
-        String(sinceMs)
+        // The wallet stamps the order with its own clock; allow a minute of drift.
+        String(sinceMs - ORDER_CLOCK_SLACK_MS)
       ]),
       "market-order list"
     );
-    const rows = Array.isArray(data.list) ? data.list : [];
-    const order = rows.map((row) => record(row, "market order"))[0];
+    const rows = (Array.isArray(data.list) ? data.list : []).map((row) =>
+      record(row, "market order")
+    );
+    const amount = new Decimal(walletInput(quote.side, quote.inputAmount, quote.multiplier));
+    const sameAmount = (row: Record<string, unknown>) => {
+      try {
+        return new Decimal(String(row.fromTokenQty)).eq(amount);
+      } catch {
+        return false;
+      }
+    };
+    const order =
+      rows.find((row) => replyId !== undefined && String(row.orderId) === replyId) ??
+      rows.find(sameAmount);
     if (order === undefined || order.orderId === undefined) return null;
     return this.waitForOrder(String(order.orderId));
   }
@@ -275,5 +324,51 @@ export class AgenticWallet {
       if (this.now() >= deadline) return { orderId, status: "PENDING", txHash: null };
       await this.sleep(ORDER_POLL_MS);
     }
+  }
+}
+
+export type WalletStatus =
+  | {
+      state: "connected";
+      connected: true;
+      address: `0x${string}`;
+      sessionEndsAt: string;
+      dailyLimitUsd: string;
+      quotaLeftUsd: string;
+      tradeAllTokens: boolean;
+      checkedAt: string;
+    }
+  | { state: "disconnected"; connected: false; reason: string; checkedAt: string };
+
+/** The wallet's state for the public /wallet route, read from the wallet tool itself. */
+export async function walletStatus(wallet: AgenticWallet, now = Date.now()): Promise<WalletStatus> {
+  const checkedAt = new Date(now).toISOString();
+  try {
+    const [settings, address] = await Promise.all([wallet.settings(), wallet.address()]);
+    if (settings.sessionEndsAtMs <= now) {
+      return {
+        state: "disconnected",
+        connected: false,
+        reason: "The Agentic Wallet session has ended.",
+        checkedAt
+      };
+    }
+    return {
+      state: "connected",
+      connected: true,
+      address,
+      sessionEndsAt: new Date(settings.sessionEndsAtMs).toISOString(),
+      dailyLimitUsd: settings.dailyLimitUsd,
+      quotaLeftUsd: settings.quotaLeftUsd,
+      tradeAllTokens: settings.tradeAllTokens,
+      checkedAt
+    };
+  } catch (error) {
+    return {
+      state: "disconnected",
+      connected: false,
+      reason: error instanceof Error ? error.message : String(error),
+      checkedAt
+    };
   }
 }

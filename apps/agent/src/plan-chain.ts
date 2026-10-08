@@ -18,6 +18,7 @@ export const PLAN_BOOK_ABI = parseAbi([
   "function recordFill(uint256 planId, bytes32 txHash, uint8 step)",
   "function recordVerdict(uint256 planId, uint8 outcome, bytes32 verdictHash)",
   "function cancelPlan(uint256 planId)",
+  "function planIdFor(address planOwner, bytes32 eventKey) view returns (uint256)",
   "event PlanFrozen(uint256 indexed planId, address indexed owner, bytes32 indexed eventKey, bytes32 planHash, string ticker, uint64 releaseTs, uint256 jobId)"
 ]);
 
@@ -60,6 +61,8 @@ export interface PlanChain {
    * Transfer logs, in whole-token units.
    */
   received(txHash: Hex, token: Address, account: Address): Promise<string>;
+  /** The plan already locked for this owner and window, or 0 when there is none. */
+  planIdFor(owner: Address, eventKey: Hex): Promise<number>;
   /** What `account` holds of `token` now, in whole-token units. */
   balance(token: Address, account: Address): Promise<string>;
   recordVerdict(planId: number, outcome: Outcome, verdictHash: Hex): Promise<ChainWrite>;
@@ -169,6 +172,15 @@ export function createPlanChain(options: PlanChainOptions): PlanChain {
         functionName: "decimals"
       });
       return formatUnits(raw, decimals);
+    },
+    async planIdFor(owner, eventKey) {
+      const id = await reader.readContract({
+        address: options.planBook,
+        abi: PLAN_BOOK_ABI,
+        functionName: "planIdFor",
+        args: [owner, eventKey]
+      });
+      return Number(id);
     },
     async balance(token, account) {
       const [raw, decimals] = await Promise.all([

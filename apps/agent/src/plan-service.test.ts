@@ -18,6 +18,8 @@ import { SqliteAgentStore } from "./sqlite-store.js";
 const AGENT = "0xe201bbf3C736a5d188797974a7e4B9464f707eA8";
 const NVDA_TOKEN = "0x02fca66c1d1afb4e2a7884261eb00f63598a7436";
 const USDT = "0x55d398326f99059fF775485246999027B3197955";
+const TSLA_TOKEN = "0x00000000000000000000000000000000000075a1";
+const MULTIPLIER = Number("1.000778223752807865");
 // Wednesday 7 Oct 2026, 2 pm in New York; the window runs 20:00 UTC to 13:30 UTC on 8 Oct.
 const BEFORE_CLOSE = Date.parse("2026-10-07T18:00:00.000Z");
 const CLOSE = Date.parse("2026-10-07T20:00:00.000Z");
@@ -48,8 +50,18 @@ class FakeChain implements PlanChain {
   }
 
   async freeze(input: FreezeInput) {
+    // Like PlanBook: one plan per owner and window.
+    if ((await this.planIdFor(input.owner, input.eventKey)) !== 0)
+      throw new Error("DuplicatePlan()");
     this.freezes.push(input);
     return { ...this.write(), planId: this.freezes.length };
+  }
+
+  async planIdFor(owner: Address, eventKey: Hex) {
+    const index = this.freezes.findIndex(
+      (freeze) => freeze.owner === owner && freeze.eventKey === eventKey
+    );
+    return index + 1;
   }
 
   async recordDecision(planId: number, hash: Hex) {
@@ -199,7 +211,7 @@ class FakeBaw {
   statuses: Array<"PENDING" | "FINISHED" | "FAILED"> = ["FINISHED"];
   /** When set, the swap reaches the wallet but the reply is lost, like a crash. */
   loseSwapReply = false;
-  private orders: string[] = [];
+  readonly orders: Array<{ orderId: string; fromTokenQty: string }> = [];
 
   constructor(private readonly log: string[]) {}
 
@@ -220,23 +232,31 @@ class FakeBaw {
       return { addresses: [{ binanceChainId: "56", chainName: "BSC", address: WALLET }] };
     }
     if (group === "market-order" && command === "quote") {
+      // Like the real tool, NVDAB amounts are real shares (tokens × multiplier).
       const qty = Number(flag("--fromTokenQty"));
       const selling = flag("--fromToken").toLowerCase() === NVDA_TOKEN;
-      const price = Number(this.pricePerToken);
-      return { toCoinAmount: String(selling ? qty * price : qty / price), slippage: 0.01 };
+      const pricePerShare = Number(this.pricePerToken) / MULTIPLIER;
+      return {
+        toCoinAmount: String(selling ? qty * pricePerShare : qty / pricePerShare),
+        slippage: 0.01
+      };
     }
     if (group === "market-order" && command === "swap") {
       this.log.push("swap");
-      this.orders.push(`order-${this.orders.length + 1}`);
+      const n = this.orders.length + 1;
+      this.orders.push({ orderId: `order-${n}`, fromTokenQty: flag("--fromTokenQty") });
       if (this.loseSwapReply) throw new Error("connection reset");
-      return { orderId: this.orders.at(-1) };
+      // Like the real tool, the reply's id is not the id the order is listed under.
+      return { orderId: `reply-${n}` };
     }
     if (group === "market-order" && command === "list") {
-      const orderId = args.includes("--orderId") ? flag("--orderId") : this.orders.at(-1);
-      if (orderId === undefined) return { list: [] };
+      const wanted = args.includes("--orderId") ? flag("--orderId") : null;
+      const order =
+        wanted === null ? this.orders.at(-1) : this.orders.find((o) => o.orderId === wanted);
+      if (order === undefined) return { list: [] };
       const status = this.statuses.length > 1 ? this.statuses.shift()! : this.statuses[0]!;
       const txHash = status === "FINISHED" ? `0x${"ab".repeat(32)}` : null;
-      return { list: [{ orderId, status, txHash }] };
+      return { list: [{ ...order, status, txHash }] };
     }
     throw new Error(`unexpected baw call: ${args.join(" ")}`);
   };
@@ -309,7 +329,9 @@ async function harness(
     listedToken: async (ticker) =>
       ticker === "NVDA"
         ? { address: NVDA_TOKEN, multiplier: "1.000778223752807865", multiplierAgreement: true }
-        : null,
+        : ticker === "TSLA"
+          ? { address: TSLA_TOKEN, multiplier: "1", multiplierAgreement: true }
+          : null,
     officialOpen: async () => open,
     log: (line) => logs.push(line)
   });
@@ -879,6 +901,8 @@ describe("trading through the Agentic Wallet", () => {
     });
     const sold = Number(traded.trade!.quote.inputAmount);
     expect(sold * Number("1.000778223752807865")).toBeCloseTo(1, 12);
+    // The wallet tool is asked for the plan's 1 share, not for the token amount.
+    expect(Number(h.baw.orders[0]!.fromTokenQty)).toBeCloseTo(1, 12);
 
     h.setOpen({ value: "193", source: "nasdaq:NVDA:daily-history", sourceRecordPath: "raw/x" });
     h.setNow(OPEN + 30 * MINUTE);
@@ -1117,7 +1141,8 @@ describe("ERC-8183 jobs", () => {
   it("opens a team job as well for the first plans only", async () => {
     const h = await harness({ jobs: true, teamJobLimit: 1 });
     const first = await lockedGuard(h);
-    const second = await lockedGuard(h);
+    const draft = (await h.store.planDraft({ ...guardInput, ticker: "TSLA" })) as StoredPlan;
+    const second = await h.service.lock(draft.id);
 
     expect(h.jobs.kinds).toEqual(["official", "team", "official"]);
     expect(first.job).toMatchObject({ kind: "official", jobId: 56_911, state: "funded" });
@@ -1130,6 +1155,19 @@ describe("ERC-8183 jobs", () => {
     );
     // A team job is reviewed at the open, so it needs no room for the dispute window.
     expect(h.jobs.opened[1]!.expiresAt).toBe(OPEN / 1000 + 3 * 24 * 60 * 60);
+  });
+
+  it("refuses a second plan for the same stock and window before opening any job", async () => {
+    const h = await harness({ jobs: true, teamJobLimit: 4 });
+    await lockedGuard(h);
+    const draft = (await h.store.planDraft({ ...guardInput, kind: "hold" })) as StoredPlan;
+    await expect(h.service.lock(draft.id)).rejects.toMatchObject({
+      code: "DUPLICATE_PLAN",
+      message: expect.stringContaining("Plan #1 is already locked for NVDA")
+    });
+    expect(h.jobs.kinds).toEqual(["official", "team"]);
+    expect(h.chain.freezes).toHaveLength(1);
+    expect((await plan(h, draft.id)).job).toBeUndefined();
   });
 
   it("has the buyer approve a team job once the receipt verifies", async () => {

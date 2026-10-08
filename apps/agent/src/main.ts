@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { loadEnvFile } from "node:process";
 import type { Address, Hex } from "viem";
-import { AgenticWallet, createBawRunner } from "./agentic-wallet.js";
+import { AgenticWallet, createBawRunner, walletStatus } from "./agentic-wallet.js";
 import { buildIdentityCard, identityConfigFromEnv } from "./identity.js";
 import { B402Client } from "@bnb-chain/b402/server";
 import { createJobBook } from "./job-chain.js";
@@ -108,6 +108,12 @@ store.setPlanActions({
   stopStanding: (id) => planService.stopStanding(id)
 });
 planService.start();
+// /wallet shows the Agentic Wallet as the wallet tool reports it, checked every 5 minutes.
+if (trader) {
+  const refreshWallet = async () => store.recordWallet(await walletStatus(trader));
+  void refreshWallet();
+  setInterval(() => void refreshWallet(), 5 * 60 * 1000).unref();
+}
 // x402 sales. X402_SETTLEMENT picks the route: "self" settles through the official x402
 // EVM facilitator run by the agent wallet, "b402" through Binance B402 once its merchant
 // credentials are set, and anything else keeps paid routes off. Bad B402 settings only

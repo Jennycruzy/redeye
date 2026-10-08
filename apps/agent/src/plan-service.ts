@@ -86,7 +86,7 @@ export interface Trader {
   quote(request: QuoteRequest): Promise<NormalizedQuote>;
   swap(quote: NormalizedQuote, slippagePct: string): Promise<OrderResult>;
   waitForOrder(orderId: string): Promise<OrderResult>;
-  findOrder(quote: NormalizedQuote, sinceMs: number): Promise<OrderResult | null>;
+  findOrder(quote: NormalizedQuote, sinceMs: number, replyId?: string): Promise<OrderResult | null>;
 }
 
 /** The plan's ERC-8183 job. Each step is saved before the next, so a retry never opens a second job. */
@@ -813,6 +813,16 @@ export class PlanService {
     const context = eventContext(event);
     const planHash = hashPlan(plan);
     const owner = chain.agentAddress;
+    // PlanBook keeps one plan per owner, stock and window. Checked before a job is opened,
+    // so a refused lock never leaves a paid job behind.
+    const existing = await chain.planIdFor(owner, event.eventKey as Hex);
+    if (existing !== 0) {
+      throw new PlanError(
+        409,
+        "DUPLICATE_PLAN",
+        `Plan #${existing} is already locked for ${plan.ticker} in this window; PlanBook keeps one plan per stock and window.`
+      );
+    }
     const withJob = await this.openJob({ ...stored, plan, event, planHash }, context);
     const freeze = await chain.freeze({
       owner,
@@ -1198,7 +1208,9 @@ export class PlanService {
           : null;
       trade = { ...trade, order: found ?? lost };
     } else if (trade.order.status === "PENDING") {
-      trade = { ...trade, order: await trader.waitForOrder(trade.order.orderId) };
+      // The swap reply's id may not be the listed one, so look the order up again.
+      const found = await trader.findOrder(quote, trade.submittedAt, trade.order.orderId);
+      trade = { ...trade, order: found ?? trade.order };
     }
 
     const order = trade.order;

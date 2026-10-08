@@ -55,7 +55,7 @@ const SKILLS = [
     id: "plan_check",
     name: "Check a plan",
     description:
-      "Checks an off-hours plan against tonight's window and returns the promise it would make, its fingerprint and the lock deadline. Nothing is saved or locked. Send the plan as a data part.",
+      "Checks an off-hours plan against the next window it could lock for and returns the promise it would make, its fingerprint and the lock deadline. Nothing is saved or locked. Send the plan as a data part.",
     examples: [
       '{"skill":"plan_check","plan":{"ticker":"NVDA","kind":"guard","heldShares":"0.5","params":{"triggerDropPct":"3","sellPct":"50","maxPriceImpactPct":"1","minPoolDepthUsd":"100000","maxGapToRealPricePct":"1"}}}'
     ]
@@ -174,7 +174,7 @@ async function answer(sources: A2aSources, ask: A2aAsk): Promise<{ text: string;
     }
     case "plan_check":
       return {
-        text: "The plan as checked against tonight's window. Nothing was saved or locked.",
+        text: "The plan as checked against the next window it could lock for. Nothing was saved or locked.",
         data: await sources.preview(ask.plan)
       };
   }
