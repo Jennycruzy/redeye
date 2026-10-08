@@ -153,12 +153,31 @@ export function parseEarningsCalendar(record: SourceRecord<unknown>): NasdaqEarn
   });
 }
 
+/** Nasdaq's own error text from status.bCodeMessage, or null when it gave none. */
+function nasdaqRefusal(body: unknown): string | null {
+  if (!isObject(body) || !isObject(body.status)) return null;
+  const messages = body.status.bCodeMessage;
+  if (!Array.isArray(messages)) return null;
+  const texts = messages.flatMap((message) =>
+    isObject(message) && typeof message.errorMessage === "string" ? [message.errorMessage] : []
+  );
+  return texts.length === 0 ? null : texts.join("; ");
+}
+
 export function parseHistoricalPrices(record: SourceRecord<unknown>): NasdaqDailyPrice[] {
   const body = record.response.body;
   if (!isObject(body) || !isObject(body.data) || !isObject(body.data.tradesTable)) {
-    throw new ClientError("shape", "Nasdaq historical response is missing data.tradesTable.");
+    const refusal = nasdaqRefusal(body);
+    throw new ClientError(
+      "shape",
+      refusal === null
+        ? "Nasdaq historical response is missing data.tradesTable."
+        : `Nasdaq refused the historical request: ${refusal}`
+    );
   }
   const rows = body.data.tradesTable.rows;
+  // A range with no session in it yet (today, before Nasdaq posts the row) has rows null.
+  if (rows === null && body.data.totalRecords === 0) return [];
   if (!Array.isArray(rows)) {
     throw new ClientError("shape", "Nasdaq historical response is missing tradesTable.rows.");
   }

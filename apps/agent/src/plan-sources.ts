@@ -9,6 +9,13 @@ import type { ListedToken, OfficialOpen } from "./plan-service.js";
 
 const BSC_CHAIN_ID = "56";
 
+/** The calendar day after a YYYY-MM-DD date. */
+function nextIsoDate(isoDate: string): string {
+  const atMs = Date.parse(`${isoDate}T00:00:00.000Z`);
+  if (!Number.isFinite(atMs)) throw new Error(`Date is invalid: ${isoDate}`);
+  return new Date(atMs + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 function usDate(isoDate: string): string {
   const [year, month, day] = isoDate.split("-");
   return `${month}/${day}/${year}`;
@@ -39,7 +46,8 @@ export async function nasdaqOfficialOpen(
   ticker: string,
   isoDate: string
 ): Promise<OfficialOpen | null> {
-  const record = await fetchHistoricalPrices(ticker, isoDate, isoDate);
+  // Nasdaq refuses a range that starts and ends on the same day, so ask up to the next day.
+  const record = await fetchHistoricalPrices(ticker, isoDate, nextIsoDate(isoDate));
   const path = await storeRawRecord(rawRoot, `nasdaq-${ticker}`, record);
   const row = parseHistoricalPrices(record).find((candidate) => candidate.date === usDate(isoDate));
   if (row === undefined) return null;

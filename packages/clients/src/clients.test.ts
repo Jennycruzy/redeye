@@ -149,6 +149,18 @@ describe("recorded source clients", () => {
     });
   });
 
+  it("gives no rows for a session Nasdaq has not posted yet", async () => {
+    const record = await fixture("nasdaq/nvda-historical-2026-10-08-no-row-yet.json");
+    expect(parseHistoricalPrices(record)).toEqual([]);
+  });
+
+  it("names Nasdaq's reason when it refuses a historical request", async () => {
+    const record = await fixture("nasdaq/nvda-historical-same-day-refused.json");
+    expect(() => parseHistoricalPrices(record)).toThrow(
+      "Nasdaq refused the historical request: Provided date is less than from date"
+    );
+  });
+
   it("reads the last session's close from a closed-market Nasdaq quote", async () => {
     const record = await fixture("nasdaq/nvda-quote-closed-2026-10-08.json");
     expect(parseClosedQuote(record)).toEqual({ date: "10/07/2026", close: "237.47" });

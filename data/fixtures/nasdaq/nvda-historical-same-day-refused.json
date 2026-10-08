@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "fetchedAt": "2026-10-08T17:13:55.709Z",
+  "completedAt": "2026-10-08T17:13:55.747Z",
+  "request": {
+    "method": "GET",
+    "url": "https://api.nasdaq.com/api/quote/NVDA/historical?assetclass=stocks&fromdate=2026-10-07&todate=2026-10-07&limit=5000"
+  },
+  "response": {
+    "status": 200,
+    "ok": true,
+    "body": {
+      "data": null,
+      "message": null,
+      "status": {
+        "rCode": 400,
+        "bCodeMessage": [
+          {
+            "code": 1011,
+            "errorMessage": "Provided date is less than from date"
+          }
+        ],
+        "developerMessage": null
+      }
+    }
+  }
+}

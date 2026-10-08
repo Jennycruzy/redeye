@@ -262,6 +262,8 @@ export interface PlanServiceOptions {
   teamJobLimit?: number;
   now?: () => number;
   newId?: () => string;
+  /** Where a new or changed error is written; defaults to one JSON line on stderr. */
+  log?: (line: Record<string, unknown>) => void;
 }
 
 function nyDate(atMs: number): string {
@@ -559,12 +561,10 @@ export class PlanService {
         try {
           await this.advanceStanding(standing);
         } catch (error) {
+          const message = this.reportError("standing", standing.id, standing.lastError, error);
           await this.options.store.saveStanding({
             ...standing,
-            lastError: {
-              at: new Date(this.now()).toISOString(),
-              message: error instanceof Error ? error.message : String(error)
-            }
+            lastError: { at: new Date(this.now()).toISOString(), message }
           });
         }
       }
@@ -575,22 +575,45 @@ export class PlanService {
         if (stored.status !== "locked" && stored.status !== "decided") continue;
         try {
           await this.advance(stored);
+          // A pass that only waits saves nothing, so clear an error a past pass left behind.
+          if (stored.lastError !== undefined) {
+            const latest = await this.options.store.getPlan(stored.id);
+            if (latest?.lastError !== undefined) {
+              await this.options.store.savePlan(withoutError(latest));
+            }
+          }
         } catch (error) {
           // Re-read first: the failed step may have saved progress (such as a sent trade)
           // that must not be overwritten by the copy this pass started with.
           const latest = (await this.options.store.getPlan(stored.id)) ?? stored;
+          const message = this.reportError("plan", stored.id, latest.lastError, error);
           await this.options.store.savePlan({
             ...latest,
-            lastError: {
-              at: new Date(this.now()).toISOString(),
-              message: error instanceof Error ? error.message : String(error)
-            }
+            lastError: { at: new Date(this.now()).toISOString(), message }
           });
         }
       }
     } finally {
       this.running = false;
     }
+  }
+
+  /**
+   * The error's message, written to the log when it is new or differs from the one already
+   * stored, so a step that fails every minute is reported once rather than every pass.
+   */
+  private reportError(
+    scope: string,
+    id: string,
+    previous: { message: string } | undefined,
+    error: unknown
+  ): string {
+    const message = error instanceof Error ? error.message : String(error);
+    if (previous?.message !== message) {
+      const log = this.options.log ?? ((line) => console.error(JSON.stringify(line)));
+      log({ code: "PLAN_STEP_FAILED", scope, id, message });
+    }
+    return message;
   }
 
   /** Rewrites every public record row from the stored plans, so the record always matches them. */
@@ -858,8 +881,8 @@ export class PlanService {
   }
 
   private async jobFailed(stored: StoredPlan, slot: JobSlot, error: unknown): Promise<StoredPlan> {
-    const message = error instanceof Error ? error.message : String(error);
     const job = stored[slot];
+    const message = this.reportError(slot, stored.id, job?.lastError, error);
     if (job === undefined) {
       // Nothing reached the chain; the plan simply has no job of this kind.
       await this.options.store.saveRunEvent(stored.id, "job_failed", { slot, message });
@@ -1249,7 +1272,7 @@ export class PlanService {
       status: "decided",
       decision: { at: input.atMs, input, decision, decisionHash, chain: write }
     };
-    await this.options.store.savePlan(decided);
+    await this.saveWithRecord(decided);
     await this.options.store.saveRunEvent(stored.id, "decided", {
       action: decision.action,
       refusal: decision.refusal?.code ?? null,

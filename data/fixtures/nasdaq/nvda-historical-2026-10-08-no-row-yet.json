@@ -1,0 +1,30 @@
+{
+  "v": 1,
+  "fetchedAt": "2026-10-08T17:13:55.508Z",
+  "completedAt": "2026-10-08T17:13:55.703Z",
+  "request": {
+    "method": "GET",
+    "url": "https://api.nasdaq.com/api/quote/NVDA/historical?assetclass=stocks&fromdate=2026-10-08&todate=2026-10-09&limit=5000"
+  },
+  "response": {
+    "status": 200,
+    "ok": true,
+    "body": {
+      "data": {
+        "symbol": "NVDA",
+        "totalRecords": 0,
+        "tradesTable": {
+          "asOf": null,
+          "headers": null,
+          "rows": null
+        }
+      },
+      "message": null,
+      "status": {
+        "rCode": 200,
+        "bCodeMessage": null,
+        "developerMessage": null
+      }
+    }
+  }
+}

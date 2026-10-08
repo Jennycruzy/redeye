@@ -260,6 +260,7 @@ interface Harness {
   baw: FakeBaw;
   jobs: FakeJobs;
   service: PlanService;
+  logs: Record<string, unknown>[];
   setNow(atMs: number): void;
   setPrice(price: PriceSnapshotOk | null): void;
   setOpen(open: OfficialOpen | null): void;
@@ -272,6 +273,7 @@ async function harness(
   let price: PriceSnapshotOk | null = null;
   let open: OfficialOpen | null = null;
   const store = new SqliteAgentStore(new FakeDatabase());
+  const logs: Record<string, unknown>[] = [];
   const chain = new FakeChain(() => now);
   const baw = new FakeBaw(chain.log);
   const jobs = new FakeJobs(() => now);
@@ -298,7 +300,8 @@ async function harness(
       ticker === "NVDA"
         ? { address: NVDA_TOKEN, multiplier: "1.000778223752807865", multiplierAgreement: true }
         : null,
-    officialOpen: async () => open
+    officialOpen: async () => open,
+    log: (line) => logs.push(line)
   });
   return {
     store,
@@ -306,6 +309,7 @@ async function harness(
     baw,
     jobs,
     service,
+    logs,
     setNow: (atMs) => {
       now = atMs;
     },
@@ -420,6 +424,11 @@ describe("plan service", () => {
     await h.service.tick();
     expect((await plan(h, locked.id)).status).toBe("decided");
     expect(h.chain.verdicts).toHaveLength(0);
+    // The public record shows the decision while the open price is still awaited.
+    expect(await h.store.record()).toMatchObject({
+      open: 1,
+      items: [{ status: "decided", outcome: null }]
+    });
 
     h.setOpen({ value: "198.10", source: "nasdaq:NVDA:daily-history", sourceRecordPath: "raw/x" });
     h.setNow(OPEN + 20 * MINUTE);
@@ -493,6 +502,23 @@ describe("plan service", () => {
     expect(h.chain.decisions).toHaveLength(0);
   });
 
+  it("clears a past error once a pass succeeds while waiting for the open", async () => {
+    const h = await harness();
+    const locked = await lockedGuard(h);
+    h.setNow(OPEN + MINUTE);
+    h.setPrice(snapshot(OPEN + MINUTE, "199"));
+    await h.service.tick();
+    await h.store.savePlan({
+      ...(await plan(h, locked.id)),
+      lastError: { at: "2026-10-08T13:31:00.000Z", message: "Nasdaq is down" }
+    });
+    h.setNow(OPEN + 2 * MINUTE);
+    await h.service.tick();
+    const waiting = await plan(h, locked.id);
+    expect(waiting.status).toBe("decided");
+    expect(waiting.lastError).toBeUndefined();
+  });
+
   it("publishes without an open price after waiting a full day", async () => {
     const h = await harness();
     const locked = await lockedGuard(h);
@@ -510,7 +536,7 @@ describe("plan service", () => {
     const h = await harness();
     const locked = await lockedGuard(h);
     const failing = h.chain.recordDecision.bind(h.chain);
-    let failures = 1;
+    let failures = 2;
     h.chain.recordDecision = async (planId, hash) => {
       if (failures-- > 0) throw new Error("rpc timeout");
       return failing(planId, hash);
@@ -519,6 +545,11 @@ describe("plan service", () => {
     h.setPrice(snapshot(OPEN + MINUTE, "199"));
     await h.service.tick();
     expect((await plan(h, locked.id)).lastError?.message).toBe("rpc timeout");
+    await h.service.tick();
+    // The same error on the next pass is not logged again.
+    expect(h.logs).toEqual([
+      { code: "PLAN_STEP_FAILED", scope: "plan", id: locked.id, message: "rpc timeout" }
+    ]);
     await h.service.tick();
     const decided = await plan(h, locked.id);
     expect(decided.status).toBe("decided");
