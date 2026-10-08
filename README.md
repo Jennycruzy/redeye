@@ -9,13 +9,14 @@ connected yet: a plan whose trigger is reached is published as refused
 
 ## On chain
 
-| What                                          | Address or transaction                                                                                                         |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| PlanBook                                      | [`0xC7B860d561f2208c725ac9a873bf4eA5205e9057`](https://bscscan.com/address/0xC7B860d561f2208c725ac9a873bf4eA5205e9057)         |
-| PlanAccount (shared permission code)          | [`0x141B2a28895c12FD17209eC621496f0F9f1F1048`](https://bscscan.com/address/0x141B2a28895c12FD17209eC621496f0F9f1F1048)         |
-| Agent                                         | [`0xe201bbf3C736a5d188797974a7e4B9464f707eA8`](https://bscscan.com/address/0xe201bbf3C736a5d188797974a7e4B9464f707eA8)         |
-| PlanJobHook (team jobs)                       | [`0x42a7F449e4950524c13deBC96a0549100b516594`](https://bscscan.com/address/0x42a7F449e4950524c13deBC96a0549100b516594)         |
-| Plan 1: Guard on NVDA, 7 Oct overnight window | [lock](https://bscscan.com/tx/0x759ead4af86268d4015ab4074a58f2dc866ff8ee96dd077f85a5cd6ad2902092), 5 h 27 min before the close |
+| What                                                            | Address or transaction                                                                                                                            |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PlanBook                                                        | [`0xC7B860d561f2208c725ac9a873bf4eA5205e9057`](https://bscscan.com/address/0xC7B860d561f2208c725ac9a873bf4eA5205e9057)                            |
+| PlanAccount (shared permission code)                            | [`0x141B2a28895c12FD17209eC621496f0F9f1F1048`](https://bscscan.com/address/0x141B2a28895c12FD17209eC621496f0F9f1F1048)                            |
+| Agent                                                           | [`0xe201bbf3C736a5d188797974a7e4B9464f707eA8`](https://bscscan.com/address/0xe201bbf3C736a5d188797974a7e4B9464f707eA8)                            |
+| First x402 sale: NVDA 24/7 price, 0.002 U, settled by the agent | [settle](https://bscscan.com/tx/0x7dd090f39dfa8ba765a50c3dddc547418a9ac8e1d25244e97737cbf072e79a78) (team buyer wallet, labelled as our own test) |
+| PlanJobHook (team jobs)                                         | [`0x42a7F449e4950524c13deBC96a0549100b516594`](https://bscscan.com/address/0x42a7F449e4950524c13deBC96a0549100b516594)                            |
+| Plan 1: Guard on NVDA, 7 Oct overnight window                   | [lock](https://bscscan.com/tx/0x759ead4af86268d4015ab4074a58f2dc866ff8ee96dd077f85a5cd6ad2902092), 5 h 27 min before the close                    |
 
 ## Start here
 
