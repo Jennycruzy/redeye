@@ -1,0 +1,86 @@
+{
+  "v": 1,
+  "fetchedAt": "2026-10-08T22:20:52.804Z",
+  "completedAt": "2026-10-08T22:20:52.930Z",
+  "request": {
+    "method": "GET",
+    "url": "https://api.nasdaq.com/api/quote/NVDA/info?assetclass=stocks"
+  },
+  "response": {
+    "status": 200,
+    "ok": true,
+    "body": {
+      "data": {
+        "symbol": "NVDA",
+        "companyName": "NVIDIA Corporation Common Stock",
+        "stockType": "Common Stock",
+        "exchange": "NASDAQ-GS",
+        "isNasdaqListed": true,
+        "isNasdaq100": true,
+        "isHeld": false,
+        "primaryData": {
+          "lastSalePrice": "$231.37",
+          "netChange": "+0.89",
+          "percentageChange": "+0.39%",
+          "deltaIndicator": "up",
+          "lastTradeTimestamp": "Oct 8, 2026 6:20 PM ET",
+          "isRealTime": true,
+          "bidPrice": "$231.31",
+          "askPrice": "$231.37",
+          "bidSize": "11",
+          "askSize": "125",
+          "volume": "118,381,984.884706",
+          "currency": null
+        },
+        "secondaryData": {
+          "lastSalePrice": "$230.48",
+          "netChange": "-6.99",
+          "percentageChange": "-2.94%",
+          "deltaIndicator": "down",
+          "lastTradeTimestamp": "Closed at Oct 8, 2026 4:00 PM ET",
+          "isRealTime": false,
+          "bidPrice": "",
+          "askPrice": "",
+          "bidSize": "",
+          "askSize": "",
+          "volume": "",
+          "currency": null
+        },
+        "marketStatus": "After-Hours",
+        "assetClass": "STOCKS",
+        "keyStats": {
+          "fiftyTwoWeekHighLow": {
+            "label": "52 Week Range:",
+            "value": "164.27 - 243.37"
+          },
+          "dayrange": {
+            "label": "High/Low:",
+            "value": "229.85 - 237.07"
+          }
+        },
+        "notifications": [
+          {
+            "headline": "HIGH TECHNICAL ATTRIBUTE",
+            "eventTypes": [
+              {
+                "message": "NVDA has a High Technical Rating by Nasdaq Dorsey Wright. Discover why technical analysis matters",
+                "eventName": "High Technical Attribute",
+                "url": {
+                  "label": "Discover why technical analysis matters",
+                  "value": "https://www.nasdaq.com/solutions/nasdaq-dorsey-wright/technical-analysis"
+                },
+                "id": "tech_attribute"
+              }
+            ]
+          }
+        ]
+      },
+      "message": null,
+      "status": {
+        "rCode": 200,
+        "bCodeMessage": null,
+        "developerMessage": null
+      }
+    }
+  }
+}

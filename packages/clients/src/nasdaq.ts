@@ -211,13 +211,31 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 /**
  * The last session's close from the quote endpoint, which Nasdaq updates within minutes of
  * the close while the daily history can lag into the next morning. Returns null unless the
- * market is reported closed and the last trade is stamped with a date only ("Oct 7, 2026");
- * while trading, pre-market or after hours the price is not a close.
+ * market is reported closed and the last trade is stamped with a date only ("Oct 7, 2026"),
+ * or it is after hours and the session's close is stamped "Closed at <date> <time> ET".
+ * While trading or pre-market the price is not a close.
  */
 export function parseClosedQuote(record: SourceRecord<unknown>): NasdaqClosedQuote | null {
   const body = record.response.body;
   if (!isObject(body) || !isObject(body.data) || !isObject(body.data.primaryData)) {
     throw new ClientError("shape", "Nasdaq quote response is missing data.primaryData.");
+  }
+  // After hours, the main price is after-hours trading; the session's official close sits
+  // in secondaryData, stamped "Closed at Oct 8, 2026 4:00 PM ET".
+  if (body.data.marketStatus === "After-Hours") {
+    const secondary = body.data.secondaryData;
+    if (!isObject(secondary)) return null;
+    const closedStamp = secondary.lastTradeTimestamp;
+    const closed =
+      typeof closedStamp === "string"
+        ? /^Closed at ([A-Z][a-z]{2}) (\d{1,2}), (\d{4}) \d{1,2}:\d{2} [AP]M ET$/.exec(closedStamp)
+        : null;
+    const closedMonth = closed ? MONTHS.indexOf(closed[1]!) + 1 : 0;
+    if (!closed || closedMonth === 0) return null;
+    return {
+      date: `${String(closedMonth).padStart(2, "0")}/${closed[2]!.padStart(2, "0")}/${closed[3]}`,
+      close: requiredPositivePrice(secondary.lastSalePrice, "quote.secondaryData.lastSalePrice")
+    };
   }
   if (body.data.marketStatus !== "Closed") return null;
   const stamp = body.data.primaryData.lastTradeTimestamp;

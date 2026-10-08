@@ -166,6 +166,26 @@ describe("recorded source clients", () => {
     expect(parseClosedQuote(record)).toEqual({ date: "10/07/2026", close: "237.47" });
   });
 
+  it("reads the session's close from the second price while after hours", async () => {
+    const record = await fixture("nasdaq/nvda-quote-after-hours-2026-10-08.json");
+    expect(parseClosedQuote(record)).toEqual({ date: "10/08/2026", close: "230.48" });
+    type Data = { secondaryData: Record<string, string> };
+    const variant = (edit: (data: Data) => void) => {
+      const copy = structuredClone(record) as { response: { body: { data: Data } } };
+      edit(copy.response.body.data);
+      return parseClosedQuote(copy as never);
+    };
+    // Without the "Closed at" stamp the second price is not a close.
+    expect(
+      variant((data) => (data.secondaryData.lastTradeTimestamp = "Oct 8, 2026 6:20 PM ET"))
+    ).toBeNull();
+    expect(
+      variant(
+        (data) => (data.secondaryData.lastTradeTimestamp = "Closed at Okt 8, 2026 4:00 PM ET")
+      )
+    ).toBeNull();
+  });
+
   it("gives no close from a quote while the market is not closed or the stamp has a time", async () => {
     const record = await fixture("nasdaq/nvda-quote-closed-2026-10-08.json");
     type QuoteData = { marketStatus?: string; primaryData?: Record<string, string> };
