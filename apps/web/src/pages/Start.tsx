@@ -745,11 +745,7 @@ function SignAndLock({
         );
       }
       setState({ step: "busy", label: "Checking PlanAccount compatibility…" });
-      const delegated = await hasPlanAccountDelegation(
-        wallet,
-        owner,
-        preview.permission.template
-      );
+      const delegated = await hasPlanAccountDelegation(wallet, owner, preview.permission.template);
       const authorization = delegated
         ? undefined
         : await (async () => {

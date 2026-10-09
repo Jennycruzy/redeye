@@ -117,8 +117,6 @@ describe("PlanAccount wallet compatibility", () => {
       throw Object.assign(new Error("Method not found"), { code: -32601 });
     });
 
-    await expect(signDelegation(choice, OWNER, TEMPLATE)).rejects.toBeInstanceOf(
-      WalletUnsupported
-    );
+    await expect(signDelegation(choice, OWNER, TEMPLATE)).rejects.toBeInstanceOf(WalletUnsupported);
   });
 });
