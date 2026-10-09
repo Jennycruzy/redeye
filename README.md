@@ -15,7 +15,7 @@ publishes their results at the open.
 | What                                                            | Address or transaction                                                                                                                            |
 | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | PlanBook                                                        | [`0xC7B860d561f2208c725ac9a873bf4eA5205e9057`](https://bscscan.com/address/0xC7B860d561f2208c725ac9a873bf4eA5205e9057)                            |
-| PlanAccount template (bounded permission revision)              | [`0xC9Af0c92c31614E7b5e9f27a4F2001d97F219844`](https://bscscan.com/address/0xC9Af0c92c31614E7b5e9f27a4F2001d97F219844)                            |
+| PlanAccount template (bounded permission + ERC-1271 revision)   | [`0x9736a95F6a5c24165Ecf282e3E08016715460AAC`](https://bscscan.com/address/0x9736a95F6a5c24165Ecf282e3E08016715460AAC)                            |
 | Agent                                                           | [`0xe201bbf3C736a5d188797974a7e4B9464f707eA8`](https://bscscan.com/address/0xe201bbf3C736a5d188797974a7e4B9464f707eA8)                            |
 | First x402 sale: NVDA 24/7 price, 0.002 U, settled by the agent | [settle](https://bscscan.com/tx/0x7dd090f39dfa8ba765a50c3dddc547418a9ac8e1d25244e97737cbf072e79a78) (team buyer wallet, labelled as our own test) |
 | PlanJobHook (team jobs)                                         | [`0x42a7F449e4950524c13deBC96a0549100b516594`](https://bscscan.com/address/0x42a7F449e4950524c13deBC96a0549100b516594)                            |

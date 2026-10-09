@@ -40,8 +40,7 @@ contract PlanAccountRouter {
 }
 
 contract PlanAccountTest {
-    VmPlanAccount private constant VM =
-        VmPlanAccount(address(uint160(uint256(keccak256("hevm cheat code")))));
+    VmPlanAccount private constant VM = VmPlanAccount(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     uint256 private constant USER_KEY = 0xA11CE;
     address private agent = address(0x1002);
@@ -59,11 +58,11 @@ contract PlanAccountTest {
         book.freezePlan(user, eventKey, planHash, "TSLA", uint64(block.timestamp + 1 days), 1);
     }
 
-    function _permission(
-        PlanAccountRouter router,
-        PlanAccountToken token,
-        address user
-    ) private view returns (PlanAccount.Permission memory permission) {
+    function _permission(PlanAccountRouter router, PlanAccountToken token, address user)
+        private
+        view
+        returns (PlanAccount.Permission memory permission)
+    {
         permission = PlanAccount.Permission({
             planHash: planHash,
             standingRunHash: bytes32(0),
@@ -79,10 +78,10 @@ contract PlanAccountTest {
         user;
     }
 
-    function _swap(
-        PlanAccountToken token,
-        PlanAccountRouter router
-    ) private returns (PlanAccount.SwapCall memory swap) {
+    function _swap(PlanAccountToken token, PlanAccountRouter router, address recipient)
+        private
+        returns (PlanAccount.SwapCall memory swap)
+    {
         swap = PlanAccount.SwapCall({
             planHash: planHash,
             eventKey: eventKey,
@@ -98,7 +97,7 @@ contract PlanAccountTest {
                     tokenIn: address(token),
                     tokenOut: tokenOut,
                     fee: 2500,
-                    recipient: VM.addr(USER_KEY),
+                    recipient: recipient,
                     amountIn: 100,
                     amountOutMinimum: 99,
                     sqrtPriceLimitX96: 0
@@ -107,10 +106,7 @@ contract PlanAccountTest {
         });
     }
 
-    function _signature(
-        PlanAccount account,
-        PlanAccount.Permission memory permission
-    ) private returns (bytes memory) {
+    function _signature(PlanAccount account, PlanAccount.Permission memory permission) private returns (bytes memory) {
         (uint8 v, bytes32 r, bytes32 s) = VM.sign(USER_KEY, account.permissionDigest(permission));
         return abi.encodePacked(r, s, v);
     }
@@ -121,8 +117,10 @@ contract PlanAccountTest {
         PlanAccountToken token = new PlanAccountToken();
         PlanAccountRouter router = new PlanAccountRouter();
         PlanAccount account = new PlanAccount(address(book), user);
+        VM.prank(agent);
+        book.freezePlan(address(account), eventKey, planHash, "TSLA", uint64(block.timestamp + 1 days), 2);
         PlanAccount.Permission memory permission = _permission(router, token, user);
-        PlanAccount.SwapCall memory swap = _swap(token, router);
+        PlanAccount.SwapCall memory swap = _swap(token, router, address(account));
         // The owner signs the bounded permission before the live quote exists.
         // The agent can refresh the quote/call data inside those bounds.
         swap.minAmountOut = 100;
@@ -132,7 +130,7 @@ contract PlanAccountTest {
                 tokenIn: address(token),
                 tokenOut: tokenOut,
                 fee: 2500,
-                recipient: VM.addr(USER_KEY),
+                recipient: address(account),
                 amountIn: 100,
                 amountOutMinimum: 100,
                 sqrtPriceLimitX96: 0
@@ -163,7 +161,7 @@ contract PlanAccountTest {
         PlanAccountRouter router = new PlanAccountRouter();
         PlanAccount account = new PlanAccount(address(book), user);
         PlanAccount.Permission memory permission = _permission(router, token, user);
-        PlanAccount.SwapCall memory swap = _swap(token, router);
+        PlanAccount.SwapCall memory swap = _swap(token, router, address(account));
         bytes memory signature = _signature(account, permission);
 
         permission.agent = address(0x3003);
@@ -189,7 +187,7 @@ contract PlanAccountTest {
         _assert(wrongPairReverted, "wrong token pair succeeded");
 
         permission = _permission(router, token, user);
-        swap = _swap(token, router);
+        swap = _swap(token, router, address(account));
         swap.amountIn = 101;
         signature = _signature(account, permission);
         VM.prank(agent);
@@ -202,7 +200,7 @@ contract PlanAccountTest {
         _assert(amountReverted, "amount cap was not enforced");
 
         permission = _permission(router, token, user);
-        swap = _swap(token, router);
+        swap = _swap(token, router, address(account));
         swap.minAmountOut = 98;
         signature = _signature(account, permission);
         VM.prank(agent);
@@ -222,7 +220,7 @@ contract PlanAccountTest {
         PlanAccountRouter router = new PlanAccountRouter();
         PlanAccount account = new PlanAccount(address(book), user);
         PlanAccount.Permission memory permission = _permission(router, token, user);
-        PlanAccount.SwapCall memory swap = _swap(token, router);
+        PlanAccount.SwapCall memory swap = _swap(token, router, address(account));
         swap.data = abi.encodeWithSelector(
             router.exactInputSingle.selector,
             PlanAccountRouter.ExactInputSingleParams({
@@ -244,7 +242,7 @@ contract PlanAccountTest {
         }
         _assert(recipientReverted, "router recipient was not bound to the owner");
 
-        swap = _swap(token, router);
+        swap = _swap(token, router, address(account));
         swap.data = abi.encodeWithSignature("approve(address,uint256)", address(0xBEEF), 100);
         VM.prank(agent);
         bool methodReverted;
@@ -263,7 +261,7 @@ contract PlanAccountTest {
         PlanAccountRouter router = new PlanAccountRouter();
         PlanAccount account = new PlanAccount(address(book), user);
         PlanAccount.Permission memory permission = _permission(router, token, user);
-        PlanAccount.SwapCall memory swap = _swap(token, router);
+        PlanAccount.SwapCall memory swap = _swap(token, router, address(account));
 
         VM.prank(user);
         account.revoke(permission);
@@ -279,7 +277,7 @@ contract PlanAccountTest {
         PlanAccount.Permission memory expiring = _permission(router, token, user);
         expiring.notBefore = uint64(block.timestamp + 2 hours);
         expiring.notAfter = uint64(block.timestamp + 3 hours);
-        PlanAccount.SwapCall memory expiringSwap = _swap(token, router);
+        PlanAccount.SwapCall memory expiringSwap = _swap(token, router, address(account));
         bytes memory expiringSignature = _signature(account, expiring);
         VM.warp(block.timestamp + 4 hours);
         VM.prank(agent);
@@ -306,18 +304,17 @@ contract PlanAccountTest {
         bytes32 secondPlanHash = keccak256("standing-plan-2");
         bytes32 firstEventKey = keccak256("TSLA:overnight:2026-10-05");
         bytes32 secondEventKey = keccak256("TSLA:overnight:2026-10-06");
-        VM.prank(agent);
-        book.freezeStandingPlan(
-            user, firstEventKey, firstPlanHash, runHash, "TSLA", uint64(block.timestamp + 1 days), 1
-        );
-        VM.prank(agent);
-        book.freezeStandingPlan(
-            user, secondEventKey, secondPlanHash, runHash, "TSLA", uint64(block.timestamp + 2 days), 2
-        );
-
         PlanAccountToken token = new PlanAccountToken();
         PlanAccountRouter router = new PlanAccountRouter();
         PlanAccount account = new PlanAccount(address(book), user);
+        VM.prank(agent);
+        book.freezeStandingPlan(
+            address(account), firstEventKey, firstPlanHash, runHash, "TSLA", uint64(block.timestamp + 1 days), 1
+        );
+        VM.prank(agent);
+        book.freezeStandingPlan(
+            address(account), secondEventKey, secondPlanHash, runHash, "TSLA", uint64(block.timestamp + 2 days), 2
+        );
         PlanAccount.Permission memory permission = PlanAccount.Permission({
             planHash: bytes32(0),
             standingRunHash: runHash,
@@ -330,14 +327,14 @@ contract PlanAccountTest {
             notAfter: uint64(block.timestamp + 1 hours),
             maxPriceDeviationBps: 100
         });
-        PlanAccount.SwapCall memory firstSwap = _swap(token, router);
+        PlanAccount.SwapCall memory firstSwap = _swap(token, router, address(account));
         firstSwap.planHash = firstPlanHash;
         firstSwap.eventKey = firstEventKey;
         bytes memory firstSignature = _signature(account, permission);
         VM.prank(agent);
         account.executeSwap(permission, firstSignature, firstSwap);
 
-        PlanAccount.SwapCall memory secondSwap = _swap(token, router);
+        PlanAccount.SwapCall memory secondSwap = _swap(token, router, address(account));
         secondSwap.planHash = secondPlanHash;
         secondSwap.eventKey = secondEventKey;
         bytes memory secondSignature = _signature(account, permission);
@@ -354,7 +351,7 @@ contract PlanAccountTest {
         }
         _assert(replayReverted, "standing permission replayed a window");
 
-        PlanAccount.SwapCall memory unknownSwap = _swap(token, router);
+        PlanAccount.SwapCall memory unknownSwap = _swap(token, router, address(account));
         unknownSwap.planHash = keccak256("not-frozen");
         unknownSwap.eventKey = keccak256("TSLA:overnight:2026-10-07");
         bytes memory unknownSignature = _signature(account, permission);

@@ -46,10 +46,8 @@ contract PlanAccount {
     error ReentrantCall();
 
     bytes4 private constant ERC1271_MAGIC = 0x1626ba7e;
-    address private constant P256_VERIFIER = address(0x100);
-    bytes32 private constant DOMAIN_TYPEHASH = keccak256(
-        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
-    );
+    bytes32 private constant DOMAIN_TYPEHASH =
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
     bytes32 private constant PERMISSION_TYPEHASH = keccak256(
         "PlanPermission(bytes32 planHash,bytes32 standingRunHash,address agent,address tokenIn,address tokenOut,uint256 maxAmount,address router,uint64 notBefore,uint64 notAfter,uint256 maxPriceDeviationBps)"
     );
@@ -116,6 +114,13 @@ contract PlanAccount {
         return configuredOwner == address(0) ? address(this) : configuredOwner;
     }
 
+    /// @notice The address that holds funds and owns PlanBook records.
+    /// @dev In delegated mode this is the EOA. For a deployed passkey account it
+    ///      is this contract, while accountOwner() is the credential verifier.
+    function accountAddress() public view returns (address) {
+        return address(this);
+    }
+
     function permissionHash(Permission calldata permission) public pure returns (bytes32) {
         return _permissionHash(permission);
     }
@@ -125,18 +130,13 @@ contract PlanAccount {
     ///      account checks the eventual call against these bounds on chain.
     function permissionDigest(Permission calldata permission) public view returns (bytes32) {
         bytes32 permissionHashValue = _permissionHash(permission);
-        return keccak256(
-            abi.encodePacked("\x19\x01", _domainSeparator(), permissionHashValue)
-        );
+        return keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), permissionHashValue));
     }
 
     /// @notice Returns the digest of a concrete call for audit tooling.
     /// @dev This is not the execution authorization. Owners sign the bounded
     ///      permission digest above; the call is validated separately below.
-    function callDigest(
-        Permission calldata permission,
-        SwapCall calldata swap
-    ) public view returns (bytes32) {
+    function callDigest(Permission calldata permission, SwapCall calldata swap) public view returns (bytes32) {
         bytes32 permissionHashValue = _permissionHash(permission);
         bytes32 callHash = keccak256(
             abi.encode(
@@ -168,11 +168,11 @@ contract PlanAccount {
     ///      output band, frozen plan/window, and deadline on chain. This lets the
     ///      agent obtain a fresh quote after the permission is signed without
     ///      giving it authority outside the owner's explicit bounds.
-    function executeSwap(
-        Permission calldata permission,
-        bytes calldata signature,
-        SwapCall calldata swap
-    ) external payable returns (bytes memory result) {
+    function executeSwap(Permission calldata permission, bytes calldata signature, SwapCall calldata swap)
+        external
+        payable
+        returns (bytes memory result)
+    {
         if (msg.sender != permission.agent) revert NotAgent();
         if (permission.agent == address(0) || permission.router == address(0)) revert ZeroAddress();
         if (permission.planHash == bytes32(0) && permission.standingRunHash == bytes32(0)) revert ZeroHash();
@@ -189,8 +189,7 @@ contract PlanAccount {
         }
         if (swap.amountIn == 0 || swap.amountIn > permission.maxAmount) revert AmountExceeded();
         if (swap.referenceAmountOut == 0) revert InvalidPriceBand();
-        uint256 minimumAllowed =
-            (swap.referenceAmountOut * (10_000 - permission.maxPriceDeviationBps) + 9_999) / 10_000;
+        uint256 minimumAllowed = (swap.referenceAmountOut * (10_000 - permission.maxPriceDeviationBps) + 9_999) / 10_000;
         if (swap.minAmountOut < minimumAllowed) revert InvalidPriceBand();
         if (swap.value != msg.value) revert NativeValueMismatch();
         if (permission.tokenIn != address(0) && swap.value != 0) revert NativeValueMismatch();
@@ -201,14 +200,12 @@ contract PlanAccount {
         bytes32 useKey = permissionHashValue;
         if (permission.standingRunHash == bytes32(0)) {
             if (swap.planHash != permission.planHash) revert PlanNotFrozen();
-            if (!planBook.isPlanHashActive(accountOwner(), permission.planHash)) revert PlanNotFrozen();
+            if (!planBook.isPlanHashActive(accountAddress(), permission.planHash)) revert PlanNotFrozen();
             if (used[permissionHashValue]) revert PermissionAlreadyUsed();
         } else {
-            if (
-                !planBook.isStandingPlanForRunAndEvent(
-                    accountOwner(), permission.standingRunHash, swap.planHash, swap.eventKey
-                )
-            ) revert PlanNotFrozen();
+            if (!planBook.isStandingPlanForRunAndEvent(
+                    accountAddress(), permission.standingRunHash, swap.planHash, swap.eventKey
+                )) revert PlanNotFrozen();
             useKey = keccak256(abi.encode(permissionHashValue, swap.eventKey));
             if (usedForWindow[useKey]) revert PermissionAlreadyUsed();
         }
@@ -242,35 +239,33 @@ contract PlanAccount {
     }
 
     function _permissionHash(Permission calldata permission) private pure returns (bytes32) {
-        return
-            keccak256(
-                abi.encode(
-                    PERMISSION_TYPEHASH,
-                    permission.planHash,
-                    permission.standingRunHash,
-                    permission.agent,
-                    permission.tokenIn,
-                    permission.tokenOut,
-                    permission.maxAmount,
-                    permission.router,
-                    permission.notBefore,
-                    permission.notAfter,
-                    permission.maxPriceDeviationBps
-                )
-            );
+        return keccak256(
+            abi.encode(
+                PERMISSION_TYPEHASH,
+                permission.planHash,
+                permission.standingRunHash,
+                permission.agent,
+                permission.tokenIn,
+                permission.tokenOut,
+                permission.maxAmount,
+                permission.router,
+                permission.notBefore,
+                permission.notAfter,
+                permission.maxPriceDeviationBps
+            )
+        );
     }
 
     function _domainSeparator() private view returns (bytes32) {
-        return
-            keccak256(
-                abi.encode(
-                    DOMAIN_TYPEHASH,
-                    keccak256(bytes("Redeye PlanAccount")),
-                    keccak256(bytes("1")),
-                    block.chainid,
-                    address(this)
-                )
-            );
+        return keccak256(
+            abi.encode(
+                DOMAIN_TYPEHASH,
+                keccak256(bytes("Redeye PlanAccount")),
+                keccak256(bytes("1")),
+                block.chainid,
+                address(this)
+            )
+        );
     }
 
     function _validOwnerSignature(bytes32 digest, bytes calldata signature) private view returns (bool) {
@@ -291,32 +286,20 @@ contract PlanAccount {
             }
         }
 
-        (bool passkeyOk, bytes memory passkeyResult) = P256_VERIFIER.staticcall(
-            abi.encode(digest, signature)
-        );
-        if (
-            passkeyOk &&
-            passkeyResult.length >= 32 &&
-            abi.decode(passkeyResult, (uint256)) == 1
-        ) return true;
-
         if (owner.code.length > 0) {
             (bool contractOk, bytes memory contractResult) = owner.staticcall(
                 abi.encodeWithSelector(IERC1271PlanAccount.isValidSignature.selector, digest, signature)
             );
-            if (
-                contractOk &&
-                contractResult.length >= 32 &&
-                abi.decode(contractResult, (bytes4)) == ERC1271_MAGIC
-            ) return true;
+            if (contractOk && contractResult.length >= 32 && abi.decode(contractResult, (bytes4)) == ERC1271_MAGIC) {
+                return true;
+            }
         }
         return false;
     }
 
     function _approveExact(address token, address spender, uint256 amount) private {
-        (bool success, bytes memory returned) = token.call(
-            abi.encodeWithSelector(IERC20PlanAccount.approve.selector, spender, amount)
-        );
+        (bool success, bytes memory returned) =
+            token.call(abi.encodeWithSelector(IERC20PlanAccount.approve.selector, spender, amount));
         if (!success || (returned.length > 0 && !abi.decode(returned, (bool)))) {
             revert TokenApprovalFailed();
         }
@@ -343,12 +326,8 @@ contract PlanAccount {
         fee;
         sqrtPriceLimitX96;
         if (
-            tokenIn != permission.tokenIn ||
-            tokenOut != permission.tokenOut ||
-            recipient != accountOwner() ||
-            amountIn != swap.amountIn ||
-            amountOutMinimum != swap.minAmountOut ||
-            sqrtPriceLimitX96 != 0
+            tokenIn != permission.tokenIn || tokenOut != permission.tokenOut || recipient != accountAddress()
+                || amountIn != swap.amountIn || amountOutMinimum != swap.minAmountOut || sqrtPriceLimitX96 != 0
         ) revert InvalidRouterCall();
     }
 }

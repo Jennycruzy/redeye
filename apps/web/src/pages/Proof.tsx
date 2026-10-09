@@ -13,7 +13,7 @@ const CONTRACTS = [
   },
   {
     name: "PlanAccount",
-    address: "0xC9Af0c92c31614E7b5e9f27a4F2001d97F219844",
+    address: "0x9736a95F6a5c24165Ecf282e3E08016715460AAC",
     what: "Per-plan permission for wallets: the agent may make exactly one matching trade."
   },
   {
