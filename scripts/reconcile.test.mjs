@@ -44,24 +44,45 @@ test("reconciliation marks an extra transfer as broken", () => {
 });
 
 test("reconciliation marks a fill without its transfer as broken", async () => {
-  const result = await reconcileReceipt({
-    fills: [
-      {
-        step: 1,
-        txHash: transaction,
-        confirmedAt: "2026-10-06T00:00:00.000Z",
-        transfers: [expected]
+  const missingFillError = `recorded fill ${transaction} is missing its stock or USDT transfer.`;
+  const result = await reconcileReceipt(
+    {
+      plan: { door: "agentic_wallet" },
+      fills: [
+        {
+          step: 1,
+          txHash: transaction,
+          confirmedAt: "2026-10-06T00:00:00.000Z"
+        }
+      ],
+      reconciliation: {
+        expectedTransfers: [],
+        observedTransfers: [],
+        fillChecks: [{ txHash: transaction, account, stockTokenAddress: token, side: "sell" }],
+        result: {
+          valid: false,
+          outcome: "broken",
+          errors: [missingFillError],
+          matchedTransfers: [],
+          missingTransfers: [],
+          unexpectedTransfers: [],
+          missingFillTransfers: [transaction]
+        }
       }
-    ],
-    reconciliation: { observedTransfers: [] }
-  });
+    },
+    { required: true }
+  );
+  assert.equal(result.state, "checked");
   assert.equal(result.valid, false);
   assert.equal(result.outcome, "broken");
-  assert.match(result.errors[0], /recorded fill has no matching/);
+  assert.equal(result.errors[0], missingFillError);
 });
 
-test("required reconciliation refuses a receipt that omits its evidence", async () => {
-  const result = await reconcileReceipt({ fills: [] }, { required: true });
+test("required reconciliation refuses a wallet receipt that omits its evidence", async () => {
+  const result = await reconcileReceipt(
+    { plan: { door: "agentic_wallet" }, fills: [] },
+    { required: true }
+  );
   assert.equal(result.valid, false);
   assert.equal(result.outcome, "broken");
   assert.match(result.errors[0], /no transfer reconciliation evidence/);

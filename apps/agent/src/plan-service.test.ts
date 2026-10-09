@@ -6,6 +6,7 @@ import {
   SIGNED_PLAN_DOMAIN,
   SIGNED_PLAN_TYPES,
   signedPlanMessage,
+  type ReceiptReconciliation,
   verifyReceipt
 } from "@redeye/core";
 import { privateKeyToAccount } from "viem/accounts";
@@ -305,10 +306,68 @@ interface Harness {
   setOpen(open: OfficialOpen | null): void;
 }
 
+function reconciledWindow(plans: StoredPlan[]): ReceiptReconciliation {
+  const fillChecks: ReceiptReconciliation["fillChecks"] = plans.flatMap((plan) => {
+    const trade = plan.trade;
+    const txHash = trade?.order?.txHash;
+    if (trade?.order?.status !== "FINISHED" || !txHash || !plan.plan) return [];
+    return [
+      {
+        txHash,
+        account: trade.wallet.toLowerCase(),
+        stockTokenAddress: plan.plan.tokenAddress.toLowerCase(),
+        side: plan.plan.kind === "buy_dip" ? "buy" : "sell"
+      }
+    ];
+  });
+  const expectedTransfers = fillChecks.flatMap(
+    (fill): ReceiptReconciliation["expectedTransfers"] => [
+      {
+        tokenAddress: USDT.toLowerCase(),
+        account: fill.account,
+        direction: fill.side === "buy" ? "out" : "in",
+        amountRaw: "100",
+        txHash: fill.txHash,
+        logIndex: 0
+      },
+      {
+        tokenAddress: fill.stockTokenAddress,
+        account: fill.account,
+        direction: fill.side === "buy" ? "in" : "out",
+        amountRaw: "100",
+        txHash: fill.txHash,
+        logIndex: 1
+      }
+    ]
+  );
+  return {
+    v: 1,
+    fromBlock: "0x1",
+    toBlock: "0x2",
+    accounts: [WALLET.toLowerCase()],
+    tokenAddresses: [USDT.toLowerCase(), NVDA_TOKEN],
+    expectedTransfers,
+    fillChecks,
+    result: {
+      valid: true,
+      outcome: "kept",
+      errors: [],
+      matchedTransfers: expectedTransfers.map((transfer) => ({
+        expected: transfer,
+        observed: { ...transfer }
+      })),
+      missingTransfers: [],
+      unexpectedTransfers: [],
+      missingFillTransfers: []
+    }
+  };
+}
+
 async function harness(
   options: {
     chain?: boolean;
     baw?: boolean;
+    reconciliation?: boolean;
     jobs?: boolean;
     teamJobLimit?: number;
     signedDailyCap?: number;
@@ -341,6 +400,9 @@ async function harness(
     teamJobLimit: options.teamJobLimit ?? 0,
     ...(options.signedDailyCap === undefined ? {} : { signedDailyCap: options.signedDailyCap }),
     now: () => now,
+    ...(options.reconciliation
+      ? { reconcileWindow: async (plans: StoredPlan[]) => reconciledWindow(plans) }
+      : {}),
     latestPrice: async () => price,
     listedToken: async (ticker) =>
       ticker === "NVDA"
@@ -904,7 +966,7 @@ describe("trading through the Agentic Wallet", () => {
   });
 
   it("records the decision, then trades, then records the fill", async () => {
-    const h = await harness({ baw: true });
+    const h = await harness({ baw: true, reconciliation: true });
     h.chain.receivedAmount = "191.351";
     const traded = await triggered(h);
 
@@ -955,7 +1017,7 @@ describe("trading through the Agentic Wallet", () => {
   });
 
   it("publishes a failed order as refused, with no fill", async () => {
-    const h = await harness({ baw: true });
+    const h = await harness({ baw: true, reconciliation: true });
     h.baw.statuses = ["FAILED"];
     const failed = await triggered(h);
     expect(failed.trade?.order?.status).toBe("FAILED");
@@ -968,6 +1030,20 @@ describe("trading through the Agentic Wallet", () => {
       reason: "ORDER_FAILED"
     });
     expect(h.chain.fills).toHaveLength(0);
+  });
+
+  it("waits for transfer reconciliation before publishing a wallet result", async () => {
+    const h = await harness({ baw: true });
+    const traded = await triggered(h);
+    h.setOpen({ value: "193", source: "nasdaq:NVDA:daily-history", sourceRecordPath: "raw/x" });
+    h.setNow(OPEN + 30 * MINUTE);
+    await h.service.tick();
+
+    const waiting = await plan(h, traded.id);
+    expect(waiting.status).toBe("decided");
+    expect(waiting.verdict).toBeUndefined();
+    expect(waiting.lastError?.message).toContain("Transfer reconciliation is not configured");
+    expect(h.chain.verdicts).toHaveLength(0);
   });
 
   it("keeps following a pending order until it finishes", async () => {

@@ -107,27 +107,29 @@ async function checkedTransfers(reconciliation: ReceiptReconciliation) {
         })
       ]);
       for (const log of outgoing) {
-        if (log.transactionHash === null || log.logIndex === null) {
-          throw new Error("BSC returned a transfer log without its transaction and index.");
+        const value = log.args.value;
+        if (log.transactionHash === null || log.logIndex === null || value === undefined) {
+          throw new Error("BSC returned a transfer log without its transaction, index, or value.");
         }
         observedTransfers.push({
           tokenAddress: log.address.toLowerCase(),
           account: account.toLowerCase(),
           direction: "out",
-          amountRaw: log.args.value.toString(),
+          amountRaw: value.toString(),
           txHash: log.transactionHash,
           logIndex: log.logIndex
         });
       }
       for (const log of incoming) {
-        if (log.transactionHash === null || log.logIndex === null) {
-          throw new Error("BSC returned a transfer log without its transaction and index.");
+        const value = log.args.value;
+        if (log.transactionHash === null || log.logIndex === null || value === undefined) {
+          throw new Error("BSC returned a transfer log without its transaction, index, or value.");
         }
         observedTransfers.push({
           tokenAddress: log.address.toLowerCase(),
           account: account.toLowerCase(),
           direction: "in",
-          amountRaw: log.args.value.toString(),
+          amountRaw: value.toString(),
           txHash: log.transactionHash,
           logIndex: log.logIndex
         });
