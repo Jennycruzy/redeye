@@ -138,14 +138,17 @@ if (!send) {
 const locked = await json(`${api}/signed-plans`, {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify({
-    plan,
-    owner: account.address,
-    issuedAt: Math.floor(Date.now() / 1000),
-    permission,
-    permissionSignature,
-    ...(authorization ? { authorization } : {})
-  })
+  body: JSON.stringify(
+    {
+      plan,
+      owner: account.address,
+      issuedAt: Math.floor(Date.now() / 1000),
+      permission,
+      permissionSignature,
+      ...(authorization ? { authorization } : {})
+    },
+    (_, value) => (typeof value === "bigint" ? value.toString() : value)
+  )
 });
 console.log(
   JSON.stringify(

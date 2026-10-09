@@ -223,7 +223,12 @@ export class PlanAccountTrader implements PermissionTrader {
       );
     }
     const txHash = await this.writer.sendTransaction({
-      to: owner,
+      // The authorization is applied before the transaction call executes. If
+      // this targeted `owner`, the freshly delegated PlanAccount would receive
+      // an empty call and revert. Carry the authorization on a harmless relayer
+      // self-transfer instead; EIP-7702 permits the transaction destination to
+      // differ from the authorization authority.
+      to: this.account.address,
       data: "0x",
       value: 0n,
       authorizationList: [
