@@ -15,6 +15,7 @@ export interface ReceiptVerdict {
   openPrice?: string;
   actionPrice?: string;
   costs?: Record<string, string>;
+  reconciliationHash?: `0x${string}`;
 }
 
 export interface ReceiptFill {
@@ -33,6 +34,35 @@ export interface ReceiptTransferExpectation {
   logIndex?: number;
 }
 
+export interface ReceiptFillTransferCheck {
+  txHash: `0x${string}`;
+  account: string;
+  stockTokenAddress: string;
+  side: "buy" | "sell";
+}
+
+export interface ReceiptReconciliation {
+  v: 1;
+  fromBlock: string;
+  toBlock: string;
+  accounts: string[];
+  tokenAddresses: string[];
+  expectedTransfers: ReceiptTransferExpectation[];
+  fillChecks: ReceiptFillTransferCheck[];
+  result: {
+    valid: boolean;
+    outcome: "kept" | "broken";
+    errors: string[];
+    matchedTransfers: Array<{
+      expected: ReceiptTransferExpectation;
+      observed: ReceiptTransferExpectation;
+    }>;
+    missingTransfers: ReceiptTransferExpectation[];
+    unexpectedTransfers: ReceiptTransferExpectation[];
+    missingFillTransfers: string[];
+  };
+}
+
 export interface ReceiptBundle {
   v: 1;
   event: EventRecord;
@@ -42,6 +72,7 @@ export interface ReceiptBundle {
   freezeBlockTs: number;
   decisions: Array<{ at: number; input: unknown; decision: Decision; decisionHash: `0x${string}` }>;
   fills: ReceiptFill[];
+  reconciliation?: ReceiptReconciliation;
   verdict: ReceiptVerdict;
   verdictHash: `0x${string}`;
 }

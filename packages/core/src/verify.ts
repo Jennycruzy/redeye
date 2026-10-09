@@ -64,6 +64,24 @@ export function verifyReceipt(receipt: ReceiptBundle): ReceiptVerification {
   if (receipt.verdict.outcome === "kept" && hasTradeDecision && receipt.fills.length === 0) {
     errors.push("a kept trade receipt must include at least one confirmed fill.");
   }
+  const needsReconciliation = receipt.plan.door === "agentic_wallet" || receipt.fills.length > 0;
+  const reconciliation = receipt.reconciliation;
+  if (needsReconciliation && reconciliation === undefined) {
+    errors.push("a trading receipt must include transfer reconciliation evidence.");
+  } else if (reconciliation !== undefined) {
+    const reconciliationHash = hashCanonical(reconciliation);
+    if (receipt.verdict.reconciliationHash !== reconciliationHash) {
+      errors.push("reconciliationHash does not match the published reconciliation.");
+    }
+    if (reconciliation.result.valid !== (reconciliation.result.outcome === "kept")) {
+      errors.push("reconciliation outcome does not match its validity.");
+    }
+    if (!reconciliation.result.valid && receipt.verdict.outcome !== "broken") {
+      errors.push("a failed reconciliation must publish a broken result.");
+    }
+  } else if (receipt.verdict.reconciliationHash !== undefined) {
+    errors.push("verdict has a reconciliationHash but the reconciliation is missing.");
+  }
   return {
     valid: errors.length === 0,
     errors,

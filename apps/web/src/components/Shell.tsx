@@ -7,6 +7,8 @@ const NAV = [
   { to: "/", label: "Tonight" },
   { to: "/start", label: "Start here" },
   { to: "/record", label: "Record" },
+  { to: "/data", label: "Data" },
+  { to: "/replay", label: "Replay" },
   { to: "/proof", label: "Proof" }
 ];
 
@@ -132,6 +134,8 @@ export function Shell({ children }: { children: ReactNode }) {
               <h2>Look around</h2>
               <Link to="/start">Start here</Link>
               <Link to="/record">The record</Link>
+              <Link to="/data">Research data</Link>
+              <Link to="/replay">Replay</Link>
               <Link to="/proof">Proof and contracts</Link>
             </div>
             <div>

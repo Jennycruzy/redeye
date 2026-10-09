@@ -139,6 +139,20 @@ export default function Proof() {
           </Link>
         </li>
         <li>
+          <strong>Download the off-hours sample</strong>
+          <span>Inspect the frozen source data and the method behind the price comparison.</span>
+          <Link to="/data" className="arrowlink arrowlink--sm">
+            Data and method
+          </Link>
+        </li>
+        <li>
+          <strong>Replay a past window</strong>
+          <span>Check where a trigger crossed on historical 24/7 candles; no trade is sent.</span>
+          <Link to="/replay" className="arrowlink arrowlink--sm">
+            Replay
+          </Link>
+        </li>
+        <li>
           <strong>Call the agent</strong>
           <span>Uptime, a plan check, or the A2A card, straight from your terminal.</span>
         </li>
@@ -310,6 +324,13 @@ export default function Proof() {
                 </tbody>
               </table>
             </div>
+            <p className="fine">
+              This is a frozen historical sample, not a live feed.{" "}
+              <Link to="/data" className="arrowlink arrowlink--sm">
+                View the data and download the CSV
+              </Link>
+              .
+            </p>
           </>
         )}
       </section>

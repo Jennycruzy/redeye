@@ -14,7 +14,12 @@ The command checks:
 - the freeze block timestamp against the recorded lock boundary;
 - every decision hash against its recorded input;
 - every fill transaction hash format;
-- the final verdict hash.
+- the final verdict hash;
+- the receipt's expected token transfers against its observed on-chain transfers.
+
+Verification fails when reconciliation evidence is missing. A missing transfer for
+a recorded fill, or an unrecorded transfer in the supplied account/window scope,
+marks the reconciliation broken.
 
 Replay receipts and simulations must remain labeled `REPLAY` or `SIMULATED`.
 
@@ -37,9 +42,24 @@ source records are present; rebuild it with:
 pnpm study:offhours
 ```
 
-The study command reads only the committed raw study records. It does not fetch
-network data.
+The web app's /data page shows the frozen weekend-study summary and downloads
+that CSV. /replay shows whether a selected trigger crossed in the latest eight
+completed windows using historical five-minute 24/7 candles; it does not simulate
+execution or submit a transaction. There is no earnings-night dataset published yet.
 
-Until a mainnet receipt is published, this repository makes no claim that a
-live plan has been locked or traded. Replay receipts and simulations must remain
-labeled `REPLAY` or `SIMULATED`.
+The same checks are publicly available at:
+
+```sh
+curl https://api.theredeyed-agent.site/health
+curl 'https://api.theredeyed-agent.site/prices?tickers=NVDA,TSLA'
+curl https://api.theredeyed-agent.site/record
+curl https://api.theredeyed-agent.site/.well-known/agent-card.json
+```
+
+The study command reads only the stored raw study records. It does not fetch network
+data.
+
+The public record contains mainnet-locked plans and one completed no-trade verdict.
+Six weekend plans are currently locked. No plan-triggered production trade has been
+claimed yet; that claim requires a confirmed fill and a passing reconciliation.
+Replay receipts and simulations remain labeled `REPLAY` or `SIMULATED`.

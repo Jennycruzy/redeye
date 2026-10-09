@@ -72,9 +72,16 @@ if (!path) {
     if (receipt.verdict.outcome === "kept" && hasTradeDecision && receipt.fills.length === 0) {
       errors.push("kept trade receipt has no fill");
     }
-    const reconciliation = await reconcileReceipt(receipt);
+    // Missing transfer evidence must not turn into a successful verification.
+    const reconciliation = await reconcileReceipt(receipt, { required: true });
     if (!reconciliation.valid)
       errors.push(...reconciliation.errors.map((error) => `reconciliation: ${error}`));
+    if (receipt.reconciliation !== undefined) {
+      const reconciliationHash = hash(receipt.reconciliation);
+      if (reconciliationHash !== receipt.verdict.reconciliationHash) {
+        errors.push("reconciliation hash mismatch");
+      }
+    }
     const result = {
       valid: errors.length === 0,
       errors,

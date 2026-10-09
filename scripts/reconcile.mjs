@@ -1,10 +1,12 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { loadRepositoryEnv } from "./load-env.mjs";
 
 loadRepositoryEnv(resolve(dirname(fileURLToPath(import.meta.url)), ".."));
 
 const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+const LOG_BLOCK_CHUNK = 5_000;
 
 function address(value, field) {
   if (typeof value !== "string" || !/^0x[a-fA-F0-9]{40}$/.test(value)) {
@@ -92,7 +94,13 @@ export function reconcileTransfers({ expectedTransfers, observedTransfers }) {
     matchedTransfers.push({ expected: expectedTransfer, observed: observed[index] });
   }
 
-  const unexpectedTransfers = observed.filter((_, index) => !used.has(index));
+  const unexpectedTransfers = observed
+    .filter((_, index) => !used.has(index))
+    .sort((left, right) =>
+      `${left.txHash}:${left.logIndex}:${left.tokenAddress}:${left.account}:${left.direction}`.localeCompare(
+        `${right.txHash}:${right.logIndex}:${right.tokenAddress}:${right.account}:${right.direction}`
+      )
+    );
   const errors = [];
   for (const transfer of missingTransfers) {
     errors.push(
@@ -125,6 +133,7 @@ async function rpc(url, method, params) {
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
+    signal: AbortSignal.timeout(30_000),
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
   });
   if (!response.ok) throw new Error(`BSC RPC returned HTTP ${response.status}.`);
@@ -197,25 +206,52 @@ export async function fetchAccountTransfers({
   const start = hexNumber(fromBlock, "fromBlock");
   const end = hexNumber(toBlock, "toBlock");
   if (end < start) throw new Error("toBlock must not be before fromBlock.");
-  const logs = [];
-  for (const token of tokens) {
-    const result = await rpc(rpcUrl, "eth_getLogs", [
-      {
-        address: token,
-        fromBlock: `0x${start.toString(16)}`,
-        toBlock: `0x${end.toString(16)}`,
-        topics: [TRANSFER_TOPIC]
+  const accountTopics = [...accountSet].map((value) => `0x${"0".repeat(24)}${value.slice(2)}`);
+  const transfers = new Map();
+  for (let chunkStart = start; chunkStart <= end; chunkStart += LOG_BLOCK_CHUNK) {
+    const chunkEnd = Math.min(end, chunkStart + LOG_BLOCK_CHUNK - 1);
+    for (const topics of [
+      [accountTopics, null],
+      [null, accountTopics]
+    ]) {
+      const result = await rpc(rpcUrl, "eth_getLogs", [
+        {
+          address: tokens,
+          fromBlock: `0x${chunkStart.toString(16)}`,
+          toBlock: `0x${chunkEnd.toString(16)}`,
+          topics: [TRANSFER_TOPIC, ...topics]
+        }
+      ]);
+      if (!Array.isArray(result)) throw new Error("BSC RPC returned invalid logs.");
+      for (const log of result) {
+        for (const transfer of logTransfer(log, accountSet)) {
+          const key = `${transfer.txHash}:${transfer.logIndex}:${transfer.account}:${transfer.direction}`;
+          transfers.set(key, transfer);
+        }
       }
-    ]);
-    if (!Array.isArray(result)) throw new Error("BSC RPC returned invalid logs.");
-    for (const log of result) logs.push(...logTransfer(log, accountSet));
+    }
   }
-  return logs;
+  return [...transfers.values()].sort((left, right) =>
+    `${left.txHash}:${left.logIndex}:${left.tokenAddress}:${left.account}:${left.direction}`.localeCompare(
+      `${right.txHash}:${right.logIndex}:${right.tokenAddress}:${right.account}:${right.direction}`
+    )
+  );
 }
 
 export async function reconcileReceipt(receipt, options = {}) {
   const configuration = receipt?.reconciliation;
   if (configuration === undefined || configuration === null) {
+    if (
+      options.required === true &&
+      (receipt?.plan?.door === "agentic_wallet" || (receipt?.fills?.length ?? 0) > 0)
+    ) {
+      return {
+        state: "not_configured",
+        valid: false,
+        outcome: "broken",
+        errors: ["receipt has no transfer reconciliation evidence."]
+      };
+    }
     return { state: "not_configured", valid: true, outcome: null, errors: [] };
   }
   if (typeof configuration !== "object" || Array.isArray(configuration)) {
@@ -226,12 +262,17 @@ export async function reconcileReceipt(receipt, options = {}) {
       errors: ["reconciliation must be an object."]
     };
   }
-  const expectedTransfers =
-    configuration.expectedTransfers ??
-    (Array.isArray(receipt.fills)
-      ? receipt.fills.flatMap((fill) => (Array.isArray(fill.transfers) ? fill.transfers : []))
-      : []);
-  if (!Array.isArray(expectedTransfers) || expectedTransfers.length === 0) {
+  const expectedTransfers = configuration.expectedTransfers;
+  const fillChecks = configuration.fillChecks;
+  if (!Array.isArray(expectedTransfers) || !Array.isArray(fillChecks)) {
+    if (options.required === true) {
+      return {
+        state: "not_configured",
+        valid: false,
+        outcome: "broken",
+        errors: ["receipt has incomplete transfer reconciliation evidence."]
+      };
+    }
     return { state: "not_configured", valid: true, outcome: null, errors: [] };
   }
   let observedTransfers = configuration.observedTransfers;
@@ -239,8 +280,9 @@ export async function reconcileReceipt(receipt, options = {}) {
     const rpcUrl =
       options.rpcUrl ??
       configuration.rpcUrl ??
-      process.env.BSC_RPC_URL_ARCHIVE ??
-      process.env.BSC_RPC_URL_LIVE;
+      (process.env.BSC_RPC_URL_LOGS?.trim() ||
+        process.env.BSC_RPC_URL_ARCHIVE?.trim() ||
+        process.env.BSC_RPC_URL_LIVE?.trim());
     observedTransfers = await fetchAccountTransfers({
       rpcUrl,
       fromBlock: configuration.fromBlock,
@@ -251,8 +293,71 @@ export async function reconcileReceipt(receipt, options = {}) {
   }
   return {
     state: "checked",
-    ...reconcileTransfers({ expectedTransfers, observedTransfers })
+    ...reconcileReceiptTransfers({
+      expectedTransfers,
+      observedTransfers,
+      fillChecks,
+      storedResult: configuration.result
+    })
   };
+}
+
+function reconcileReceiptTransfers({
+  expectedTransfers,
+  observedTransfers,
+  fillChecks,
+  storedResult
+}) {
+  const base = reconcileTransfers({ expectedTransfers, observedTransfers });
+  const missingFillTransfers = [];
+  for (const fill of fillChecks) {
+    const account = address(fill.account, "fillChecks.account");
+    const token = address(fill.stockTokenAddress, "fillChecks.stockTokenAddress");
+    const hash = txHash(fill.txHash, "fillChecks.txHash");
+    if (fill.side !== "buy" && fill.side !== "sell") {
+      throw new Error("fillChecks.side must be buy or sell.");
+    }
+    const cashDirection = fill.side === "buy" ? "out" : "in";
+    const stockDirection = fill.side === "buy" ? "in" : "out";
+    const hasCash = observedTransfers.some(
+      (transfer) =>
+        transfer.txHash === hash &&
+        transfer.account === account &&
+        transfer.tokenAddress === address("0x55d398326f99059ff775485246999027b3197955", "USDT") &&
+        transfer.direction === cashDirection
+    );
+    const hasStock = observedTransfers.some(
+      (transfer) =>
+        transfer.txHash === hash &&
+        transfer.account === account &&
+        transfer.tokenAddress === token &&
+        transfer.direction === stockDirection
+    );
+    if (!hasCash || !hasStock) missingFillTransfers.push(hash);
+  }
+  const errors = [...base.errors];
+  for (const fillHash of missingFillTransfers) {
+    errors.push(`recorded fill ${fillHash} is missing its stock or USDT transfer.`);
+  }
+  const result = {
+    ...base,
+    valid: errors.length === 0,
+    outcome: errors.length === 0 ? "kept" : "broken",
+    errors,
+    missingFillTransfers
+  };
+  if (storedResult === undefined || !isDeepStrictEqual(storedResult, result)) {
+    return {
+      ...result,
+      valid: false,
+      outcome: "broken",
+      errors: [
+        ...result.errors,
+        "stored reconciliation result does not match current chain transfers."
+      ]
+    };
+  }
+  return result;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

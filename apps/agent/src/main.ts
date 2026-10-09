@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { loadEnvFile } from "node:process";
 import type { Address, Hex } from "viem";
+import { fetchRwaList, parseRwaList, storeRawRecord } from "@redeye/clients";
 import { AgenticWallet, createBawRunner, walletStatus } from "./agentic-wallet.js";
 import { buildIdentityCard, identityConfigFromEnv } from "./identity.js";
 import { B402Client } from "@bnb-chain/b402/server";
@@ -9,6 +10,7 @@ import { createJobBook } from "./job-chain.js";
 import { createA2aHandler } from "./a2a.js";
 import { createMcpHandler } from "./mcp.js";
 import { createPlanChain } from "./plan-chain.js";
+import { reconcilePlanWindow } from "./chain-reconciliation.js";
 import { PlanService } from "./plan-service.js";
 import { createNightService } from "./night.js";
 import { listedBstock, nasdaqCloseOn, nasdaqOfficialOpen, xyzCandles } from "./plan-sources.js";
@@ -80,6 +82,24 @@ const planChain =
 // are then refused at lock time instead of failing later.
 const trader =
   process.env.EXECUTION_ENABLED === "true" ? new AgenticWallet(createBawRunner()) : null;
+let rwaTokenAddresses: Promise<string[]> | null = null;
+const allBscRwaTokenAddresses = (): Promise<string[]> => {
+  if (rwaTokenAddresses !== null) return rwaTokenAddresses;
+  const loading = Promise.all(
+    ([1, 2, 3] as const).map(async (type) => {
+      const record = await fetchRwaList(type);
+      await storeRawRecord(rawRoot, `binance-rwa-list-type-${type}`, record);
+      return parseRwaList(record, type)
+        .filter((token) => token.chainId === "56")
+        .map((token) => token.contractAddress);
+    })
+  ).then((lists) => [...new Set(lists.flat())]);
+  rwaTokenAddresses = loading.catch((error: unknown) => {
+    rwaTokenAddresses = null;
+    throw error;
+  });
+  return rwaTokenAddresses;
+};
 // Each locked plan becomes an ERC-8183 job only when a separate team buyer wallet is set.
 const buyerKey = process.env.JOB_BUYER_PRIVATE_KEY?.trim();
 const asKey = (key: string) => (key.startsWith("0x") ? key : `0x${key}`) as Hex;
@@ -101,7 +121,21 @@ const planService = new PlanService({
   signedDailyCap: Number(process.env.SIGNED_PLAN_DAILY_CAP ?? "20"),
   latestPrice: (ticker) => store.latestPrice(ticker),
   listedToken: (ticker) => listedBstock(rawRoot, ticker),
-  officialOpen: (ticker, date) => nasdaqOfficialOpen(rawRoot, ticker, date)
+  officialOpen: (ticker, date) => nasdaqOfficialOpen(rawRoot, ticker, date),
+  ...(trader && planChain
+    ? {
+        reconcileWindow: async (plans, event) =>
+          reconcilePlanWindow(plans, event, {
+            rpcUrl:
+              process.env.BSC_RPC_URL_LOGS?.trim() ||
+              process.env.BSC_RPC_URL_ARCHIVE?.trim() ||
+              process.env.BSC_RPC_URL_LIVE?.trim() ||
+              "https://bsc-dataseed.bnbchain.org",
+            walletAddress: await trader.address(),
+            stockTokenAddresses: await allBscRwaTokenAddresses()
+          })
+      }
+    : {})
 });
 store.setPlanActions({
   lock: (id) => planService.lock(id),

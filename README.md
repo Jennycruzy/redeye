@@ -2,10 +2,12 @@ Redeye is the agent for when Wall Street is closed. It prices your stock from th
 
 Redeye reads the last US close, a source-labelled 24/7 equity price, and the token's own BNB Smart Chain price. It turns a plain plan into deterministic checks, publishes the plan fingerprint before the window starts, and keeps the result visible.
 
-Status: PlanBook and PlanAccount are live on BNB Smart Chain, and the agent locks
-off-hours plans and publishes their results at the open. Trading from a plan is not
-connected yet: a plan whose trigger is reached is published as refused
-(`EXECUTION_DISABLED`), never as a trade.
+Status: PlanBook and PlanAccount are live on BNB Smart Chain. The always-on agent
+locks off-hours plans, checks them every minute, can execute eligible plans through
+the connected Binance Agentic Wallet, and publishes their results at the open.
+The first production trigger-to-trade execution is still pending. Signed plans from
+other wallets currently lock a public promise only; their PlanAccount execution path
+is not connected yet.
 
 ## On chain
 
@@ -48,6 +50,12 @@ The current implementation establishes the first proof slice:
 - a plan service that locks a plan in PlanBook before the close, checks it every
   minute against the 24/7 price and that night's official close, and records the
   decision and the result (with the official open) on chain.
+- automatic post-window reconciliation of Agentic Wallet token and USDT
+  transfers; publication waits if chain evidence is unavailable, and the
+  reconciliation is included in the receipt fingerprint.
+- /data for the frozen weekend sample and enriched CSV, and /replay for
+  trigger-only replays of the eight latest completed windows. Earnings-night
+  data is not available yet and is kept separate from the weekend sample.
 
 The central story is deliberately narrow: a plan must be frozen before the
 market-close window, then end as a confirmed action or a visible refusal. The
@@ -94,14 +102,14 @@ pnpm contract:build
 pnpm contract:test
 ```
 
-The contract test suite is offline and does not deploy or move funds. Wallet
-execution, the filing feed, the web app and Agent Studio evidence are not
-represented as complete yet.
+The contract test suite is offline and does not deploy or move funds. The first live
+plan-triggered wallet execution, executable signed-wallet door, newcomer Telegram
+flow, and complete Agent Studio job evidence are not represented as complete yet.
 
 The agent process requires Node 22, `OWNER_API_TOKEN` and `WEB_ORIGIN`. Build it
 with `pnpm agent:build`; it will refuse to start if those values are absent. The
-wallet, filing feed and PlanBook write services are intentionally not wired into
-the store yet, so they return named errors instead of simulated success.
+filing feed and executable signed-wallet permission path are not wired into the live
+plan service yet, so those paths return named errors instead of simulated success.
 
 The web shell is source-driven and responsive at 360px. Build it with
 `pnpm web:build`. With no agent data it shows explicit empty/error states and a

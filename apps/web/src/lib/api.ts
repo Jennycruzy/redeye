@@ -109,11 +109,18 @@ export interface StudyWindow {
   overHalfPct: number;
   overOnePct: number;
   maxAbsDifference: number;
+  directionWins: number;
+  directionN: number;
 }
 
 export interface Study {
   state: string;
+  source?: string;
+  summaryText?: string;
+  csv?: string;
   summary?: {
+    v?: number;
+    source?: string;
     samples: number;
     stocks: string[];
     medianWeekendGap: number;

@@ -59,3 +59,10 @@ test("reconciliation marks a fill without its transfer as broken", async () => {
   assert.equal(result.outcome, "broken");
   assert.match(result.errors[0], /recorded fill has no matching/);
 });
+
+test("required reconciliation refuses a receipt that omits its evidence", async () => {
+  const result = await reconcileReceipt({ fills: [] }, { required: true });
+  assert.equal(result.valid, false);
+  assert.equal(result.outcome, "broken");
+  assert.match(result.errors[0], /no transfer reconciliation evidence/);
+});

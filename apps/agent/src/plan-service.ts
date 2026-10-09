@@ -26,6 +26,7 @@ import {
   type PlanKind,
   type QuoteCheckResult,
   type ReceiptBundle,
+  type ReceiptReconciliation,
   type ReceiptVerdict,
   type RefusalCode,
   type StandingPlanRun,
@@ -160,6 +161,7 @@ export interface StoredPlan {
   decision?: StoredDecision;
   trade?: StoredTrade;
   verdict?: ReceiptVerdict & { verdictHash: Hex };
+  reconciliation?: ReceiptReconciliation;
   verdictChain?: ChainWrite | null;
   /** Official ERC-8183 job. Absent when no job buyer is configured; the plan then locks with job id 0. */
   job?: StoredJob;
@@ -280,6 +282,8 @@ export interface PlanServiceOptions {
   latestPrice(ticker: string): Promise<PriceSnapshotOk | null>;
   listedToken(ticker: string): Promise<ListedToken | null>;
   officialOpen(ticker: string, nyDate: string): Promise<OfficialOpen | null>;
+  /** Reconciles every Agentic Wallet transfer against all fills in a window. */
+  reconcileWindow?(plans: StoredPlan[], event: EventRecord): Promise<ReceiptReconciliation>;
   /** Null until a wallet is connected; plans that may trade are then refused. */
   trader?: Trader | null;
   /** Null or absent when no job buyer is configured; plans then lock without a job. */
@@ -409,9 +413,7 @@ function outcomeFor(decision: Decision): Outcome {
 
 /**
  * Locks off-hours plans in PlanBook, checks each one every minute between the US
- * close and the next open, and publishes the result at the open. Trading is not
- * connected yet, so a triggered plan is refused with EXECUTION_DISABLED and that
- * refusal is what gets published.
+ * close and the next open, and publishes reconciled results at the open.
  */
 export class PlanService {
   private readonly now: () => number;
@@ -729,8 +731,69 @@ export class PlanService {
           });
         }
       }
+      await this.publishReadyWindows();
     } finally {
       this.running = false;
+    }
+  }
+
+  /** Publishes a window only after its plan decisions and wallet orders have settled. */
+  private async publishReadyWindows(): Promise<void> {
+    const plans = await this.options.store.listPlans();
+    const windows = new Map<string, StoredPlan[]>();
+    for (const plan of plans) {
+      const event = plan.event;
+      if (!event || event.lockTs === null || event.openTs === null) continue;
+      if (plan.status !== "locked" && plan.status !== "decided" && plan.status !== "done") continue;
+      const key = `${event.kind}:${event.lockTs}:${event.openTs}`;
+      const group = windows.get(key) ?? [];
+      group.push(plan);
+      windows.set(key, group);
+    }
+
+    for (const group of windows.values()) {
+      const event = group[0]?.event;
+      if (!event || event.openTs === null || this.now() < event.openTs) continue;
+      if (group.some((plan) => plan.status === "locked" || this.tradePending(plan))) continue;
+      if (!group.some((plan) => plan.status === "decided")) continue;
+
+      try {
+        const tradingPlans = group.filter((plan) => plan.plan?.door === "agentic_wallet");
+        if (tradingPlans.length > 0 && !this.options.reconcileWindow) {
+          throw new Error(
+            "Transfer reconciliation is not configured; the trading result was not published."
+          );
+        }
+        const reconciliation =
+          tradingPlans.length > 0
+            ? await this.options.reconcileWindow!(tradingPlans, event)
+            : undefined;
+        for (const plan of group) {
+          if (plan.status !== "decided") continue;
+          await this.publishResult(
+            plan,
+            this.now(),
+            plan.plan?.door === "agentic_wallet" ? reconciliation : undefined
+          );
+        }
+      } catch (error) {
+        const first = group.find((plan) => plan.status === "decided");
+        if (!first) continue;
+        const message = this.reportError(
+          "reconciliation",
+          String(event.openTs),
+          first.lastError,
+          error
+        );
+        for (const plan of group) {
+          if (plan.status !== "decided") continue;
+          const latest = (await this.options.store.getPlan(plan.id)) ?? plan;
+          await this.options.store.savePlan({
+            ...latest,
+            lastError: { at: new Date(this.now()).toISOString(), message }
+          });
+        }
+      }
     }
   }
 
@@ -1252,10 +1315,6 @@ export class PlanService {
       stored = await this.trade(stored);
       if (this.tradePending(stored)) return;
     }
-
-    if (stored.status === "decided" && atMs >= context.openTs) {
-      await this.publishResult(stored, atMs);
-    }
   }
 
   /** The decision input with a checked quote and the wallet's state, or null without a wallet. */
@@ -1472,7 +1531,11 @@ export class PlanService {
     return decided;
   }
 
-  private async publishResult(stored: StoredPlan, atMs: number): Promise<void> {
+  private async publishResult(
+    stored: StoredPlan,
+    atMs: number,
+    reconciliation?: ReceiptReconciliation
+  ): Promise<void> {
     const { decision, event, plan } = stored;
     if (decision === undefined || event === undefined || plan === undefined) {
       throw new Error("Decided plan is incomplete.");
@@ -1483,12 +1546,22 @@ export class PlanService {
 
     const trade = stored.trade;
     const failedOrder = trade?.order?.status === "FAILED";
-    const outcome = failedOrder ? "refused" : outcomeFor(decision.decision);
+    const outcome =
+      reconciliation?.result.valid === false
+        ? "broken"
+        : failedOrder
+          ? "refused"
+          : outcomeFor(decision.decision);
+    const reconciliationHash = reconciliation ? hashCanonical(reconciliation) : undefined;
     const verdict: ReceiptVerdict = {
       outcome,
-      reason: failedOrder
-        ? "ORDER_FAILED"
-        : (decision.decision.refusal?.code ?? decision.decision.reason),
+      reason:
+        reconciliation?.result.valid === false
+          ? "TRANSFER_RECONCILIATION_FAILED"
+          : failedOrder
+            ? "ORDER_FAILED"
+            : (decision.decision.refusal?.code ?? decision.decision.reason),
+      ...(reconciliationHash === undefined ? {} : { reconciliationHash }),
       ...(open === null ? {} : { openPrice: open.value }),
       ...(trade?.received ? { actionPrice: actionPricePerShare(trade) } : {})
     };
@@ -1502,6 +1575,7 @@ export class PlanService {
       ...withoutError(stored),
       status: "done",
       verdict: { ...verdict, verdictHash },
+      ...(reconciliation === undefined ? {} : { reconciliation }),
       verdictChain: write
     };
     await this.options.store.savePlan(done);
@@ -1511,11 +1585,11 @@ export class PlanService {
       openSource: open?.sourceRecordPath ?? null,
       txHash: write.txHash
     });
-    await this.options.store.saveReceipt(stored.id, this.receipt(done));
+    await this.options.store.saveReceipt(stored.id, this.receipt(done, reconciliation));
     await this.saveRecord(done);
   }
 
-  private receipt(stored: StoredPlan): ReceiptBundle {
+  private receipt(stored: StoredPlan, reconciliation?: ReceiptReconciliation): ReceiptBundle {
     const { event, plan, planHash, freeze, decision, verdict } = stored;
     if (!event || !plan || !planHash || !freeze || !decision || !verdict) {
       throw new Error("Receipt needs a finished plan.");
@@ -1542,10 +1616,20 @@ export class PlanService {
               {
                 step: 1,
                 txHash: stored.trade.order.txHash,
-                confirmedAt: new Date(stored.trade.fillChain.blockTs * 1000).toISOString()
+                confirmedAt: new Date(stored.trade.fillChain.blockTs * 1000).toISOString(),
+                ...(reconciliation === undefined
+                  ? {}
+                  : {
+                      transfers: reconciliation.expectedTransfers.filter(
+                        (transfer) =>
+                          transfer.txHash?.toLowerCase() ===
+                          stored.trade!.order!.txHash!.toLowerCase()
+                      )
+                    })
               }
             ]
           : [],
+      ...(reconciliation === undefined ? {} : { reconciliation }),
       verdict: verdictBody,
       verdictHash
     };

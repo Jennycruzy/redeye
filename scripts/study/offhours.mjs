@@ -196,8 +196,72 @@ function rowsCsv(rows) {
     "H_Mon07",
     "B_Mon07"
   ];
-  return `${headers.join(",")}\n${rows
-    .map((row) => headers.map((header) => csvValue(row[header])).join(","))
+  const checkpoints = ["Sat12", "Sun23", "Mon07"];
+  const enrichedHeaders = [...headers, "close_error_to_open_pct"];
+  for (const name of checkpoints) {
+    enrichedHeaders.push(
+      `H_${name}_error_to_open_pct`,
+      `B_${name}_error_to_open_pct`,
+      `${name}_token_vs_hl_gap_pct`,
+      `${name}_token_drift_gt_0_5_pct`,
+      `${name}_token_drift_gt_1_pct`,
+      `${name}_direction_hit`,
+      `${name}_drift_next_checkpoint`
+    );
+  }
+  const positive = (value) => {
+    const number = Number(value);
+    return value === null || value === undefined || !Number.isFinite(number) || number <= 0
+      ? null
+      : number;
+  };
+  const errorPct = (open, price) => {
+    const parsedOpen = positive(open);
+    const parsedPrice = positive(price);
+    return parsedOpen === null || parsedPrice === null
+      ? null
+      : Math.abs(parsedOpen / parsedPrice - 1) * 100;
+  };
+  const windowedRows = rows.map((row) => {
+    const values = { ...row, close_error_to_open_pct: errorPct(row.O, row.C) };
+    for (const [index, name] of checkpoints.entries()) {
+      const hyperliquid = positive(row[`H_${name}`]);
+      const token = positive(row[`B_${name}`]);
+      const open = positive(row.O);
+      const close = positive(row.C);
+      const gap = hyperliquid === null || token === null ? null : (token / hyperliquid - 1) * 100;
+      const move = hyperliquid === null || close === null ? null : (hyperliquid / close - 1) * 100;
+      const nextName = checkpoints[index + 1];
+      const nextHyperliquid = nextName === undefined ? null : positive(row[`H_${nextName}`]);
+      const nextToken = nextName === undefined ? null : positive(row[`B_${nextName}`]);
+      const nextGap =
+        nextHyperliquid === null || nextToken === null
+          ? null
+          : (nextToken / nextHyperliquid - 1) * 100;
+      values[`H_${name}_error_to_open_pct`] = errorPct(row.O, row[`H_${name}`]);
+      values[`B_${name}_error_to_open_pct`] = errorPct(row.O, row[`B_${name}`]);
+      values[`${name}_token_vs_hl_gap_pct`] = gap;
+      values[`${name}_token_drift_gt_0_5_pct`] = gap === null ? null : Math.abs(gap) > 0.5;
+      values[`${name}_token_drift_gt_1_pct`] = gap === null ? null : Math.abs(gap) > 1;
+      values[`${name}_direction_hit`] =
+        move === null || open === null || Math.abs(move) <= 0.5
+          ? null
+          : (hyperliquid - close) * (open - close) > 0;
+      values[`${name}_drift_next_checkpoint`] =
+        gap === null || Math.abs(gap) <= 0.5
+          ? null
+          : nextName === undefined
+            ? "no-later-checkpoint"
+            : nextGap === null
+              ? "next-checkpoint-unavailable"
+              : Math.abs(nextGap) <= 0.5
+                ? "within-0.5%-at-next-checkpoint"
+                : "still-over-0.5%-at-next-checkpoint";
+    }
+    return values;
+  });
+  return `${enrichedHeaders.join(",")}\n${windowedRows
+    .map((row) => enrichedHeaders.map((header) => csvValue(row[header])).join(","))
     .join("\n")}\n`;
 }
 

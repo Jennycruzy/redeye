@@ -30,6 +30,14 @@ The command reads only `data/raw/offhours/` and writes these generated files:
 - `data/derived/offhours/summary.txt`
 - `data/derived/offhours/summary.json`
 
+The CSV retains the raw prices for all 120 source rows and adds per-row close,
+Hyperliquid and token errors to the next official open; the signed token-to-
+Hyperliquid gap; 0.5% and 1% drift flags; and direction-hit flags. A drift's
+next-checkpoint field says whether the sampled gap was back within 0.5%, still
+over 0.5%, or could not be observed at the next checkpoint. The final checkpoint
+has no later sample in this study. These are discrete snapshots, not a
+continuous drift timeline.
+
 It makes no network requests. The built-in test compares all 120 Node rows
 with the frozen Python rows and compares the rendered summary with the Python
 reference output:

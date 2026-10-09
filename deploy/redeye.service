@@ -8,6 +8,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/redeye
 EnvironmentFile=/home/ubuntu/redeye/.env
+ExecStartPre=/usr/bin/node /home/ubuntu/redeye/scripts/study/offhours.mjs
 ExecStart=/usr/bin/node /home/ubuntu/redeye/apps/agent/dist/main.js
 Restart=on-failure
 RestartSec=5

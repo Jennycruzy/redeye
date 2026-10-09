@@ -1,12 +1,23 @@
 import {
   hashDecision,
+  hashCanonical,
   hashPlan,
   hashVerdict,
   type Decision,
   type PlanContext,
+  type ReceiptReconciliation,
   type ReceiptVerdict
 } from "@redeye/core";
-import { createPublicClient, decodeEventLog, fallback, http, parseAbi, type Hex } from "viem";
+import {
+  createPublicClient,
+  decodeEventLog,
+  fallback,
+  http,
+  parseAbi,
+  parseAbiItem,
+  type Address,
+  type Hex
+} from "viem";
 import { bsc } from "viem/chains";
 
 export const PLANBOOK = "0xC7B860d561f2208c725ac9a873bf4eA5205e9057" as const;
@@ -17,6 +28,10 @@ const ABI = parseAbi([
   "event DecisionRecorded(uint256 indexed planId, bytes32 decisionHash, uint64 at)",
   "event VerdictRecorded(uint256 indexed planId, uint8 outcome, bytes32 verdictHash)"
 ]);
+const TRANSFER_EVENT = parseAbiItem(
+  "event Transfer(address indexed from, address indexed to, uint256 value)"
+);
+const LOG_BLOCK_CHUNK = 5_000n;
 
 /** Public BNB Smart Chain nodes that answer browsers; the check needs nothing from Redeye's server. */
 const client = createPublicClient({
@@ -49,6 +64,149 @@ export interface PublishedRun {
   };
   verdict?: ReceiptVerdict & { verdictHash: Hex };
   verdictChain?: { txHash: Hex };
+  reconciliation?: ReceiptReconciliation;
+}
+
+function sameTransfer(
+  expected: ReceiptReconciliation["expectedTransfers"][number],
+  observed: ReceiptReconciliation["expectedTransfers"][number]
+): boolean {
+  return (
+    expected.tokenAddress.toLowerCase() === observed.tokenAddress.toLowerCase() &&
+    expected.account.toLowerCase() === observed.account.toLowerCase() &&
+    expected.direction === observed.direction &&
+    expected.amountRaw === observed.amountRaw &&
+    expected.txHash?.toLowerCase() === observed.txHash?.toLowerCase() &&
+    expected.logIndex === observed.logIndex
+  );
+}
+
+async function checkedTransfers(reconciliation: ReceiptReconciliation) {
+  const fromBlock = BigInt(reconciliation.fromBlock);
+  const toBlock = BigInt(reconciliation.toBlock);
+  const tokenAddresses = reconciliation.tokenAddresses as Address[];
+  const observedTransfers: ReceiptReconciliation["expectedTransfers"] = [];
+  for (const account of reconciliation.accounts) {
+    for (let chunkStart = fromBlock; chunkStart <= toBlock; chunkStart += LOG_BLOCK_CHUNK) {
+      const chunkEnd =
+        chunkStart + LOG_BLOCK_CHUNK - 1n > toBlock ? toBlock : chunkStart + LOG_BLOCK_CHUNK - 1n;
+      const [outgoing, incoming] = await Promise.all([
+        client.getLogs({
+          address: tokenAddresses,
+          fromBlock: chunkStart,
+          toBlock: chunkEnd,
+          event: TRANSFER_EVENT,
+          args: { from: account as Address }
+        }),
+        client.getLogs({
+          address: tokenAddresses,
+          fromBlock: chunkStart,
+          toBlock: chunkEnd,
+          event: TRANSFER_EVENT,
+          args: { to: account as Address }
+        })
+      ]);
+      for (const log of outgoing) {
+        if (log.transactionHash === null || log.logIndex === null) {
+          throw new Error("BSC returned a transfer log without its transaction and index.");
+        }
+        observedTransfers.push({
+          tokenAddress: log.address.toLowerCase(),
+          account: account.toLowerCase(),
+          direction: "out",
+          amountRaw: log.args.value.toString(),
+          txHash: log.transactionHash,
+          logIndex: log.logIndex
+        });
+      }
+      for (const log of incoming) {
+        if (log.transactionHash === null || log.logIndex === null) {
+          throw new Error("BSC returned a transfer log without its transaction and index.");
+        }
+        observedTransfers.push({
+          tokenAddress: log.address.toLowerCase(),
+          account: account.toLowerCase(),
+          direction: "in",
+          amountRaw: log.args.value.toString(),
+          txHash: log.transactionHash,
+          logIndex: log.logIndex
+        });
+      }
+    }
+  }
+  return observedTransfers;
+}
+
+function compareTransfers(
+  reconciliation: ReceiptReconciliation,
+  observedTransfers: ReceiptReconciliation["expectedTransfers"]
+): ReceiptReconciliation["result"] {
+  const used = new Set<number>();
+  const matchedTransfers: ReceiptReconciliation["result"]["matchedTransfers"] = [];
+  const missingTransfers: ReceiptReconciliation["expectedTransfers"] = [];
+  for (const expected of reconciliation.expectedTransfers) {
+    const index = observedTransfers.findIndex(
+      (observed, i) => !used.has(i) && sameTransfer(expected, observed)
+    );
+    if (index < 0) missingTransfers.push(expected);
+    else {
+      used.add(index);
+      matchedTransfers.push({ expected, observed: observedTransfers[index]! });
+    }
+  }
+  const unexpectedTransfers = observedTransfers
+    .filter((_, index) => !used.has(index))
+    .sort((left, right) =>
+      `${left.txHash}:${left.logIndex}:${left.tokenAddress}:${left.account}:${left.direction}`.localeCompare(
+        `${right.txHash}:${right.logIndex}:${right.tokenAddress}:${right.account}:${right.direction}`
+      )
+    );
+  const usdt = "0x55d398326f99059ff775485246999027b3197955";
+  const missingFillTransfers = reconciliation.fillChecks
+    .filter((fill) => {
+      const cashDirection = fill.side === "buy" ? "out" : "in";
+      const stockDirection = fill.side === "buy" ? "in" : "out";
+      const hasCash = observedTransfers.some(
+        (transfer) =>
+          transfer.txHash?.toLowerCase() === fill.txHash.toLowerCase() &&
+          transfer.account.toLowerCase() === fill.account.toLowerCase() &&
+          transfer.tokenAddress.toLowerCase() === usdt &&
+          transfer.direction === cashDirection
+      );
+      const hasStock = observedTransfers.some(
+        (transfer) =>
+          transfer.txHash?.toLowerCase() === fill.txHash.toLowerCase() &&
+          transfer.account.toLowerCase() === fill.account.toLowerCase() &&
+          transfer.tokenAddress.toLowerCase() === fill.stockTokenAddress.toLowerCase() &&
+          transfer.direction === stockDirection
+      );
+      return !hasCash || !hasStock;
+    })
+    .map((fill) => fill.txHash);
+  const errors = missingTransfers.map(
+    (transfer) =>
+      `recorded fill has no matching ${transfer.direction} transfer for ${transfer.tokenAddress} (${transfer.amountRaw}).`
+  );
+  errors.push(
+    ...unexpectedTransfers.map(
+      (transfer) =>
+        `unrecorded ${transfer.direction} transfer found for ${transfer.tokenAddress} (${transfer.amountRaw}) in ${transfer.txHash ?? "an unknown transaction"}.`
+    )
+  );
+  errors.push(
+    ...missingFillTransfers.map(
+      (hash) => `recorded fill ${hash} is missing its stock or USDT transfer.`
+    )
+  );
+  return {
+    valid: errors.length === 0,
+    outcome: errors.length === 0 ? "kept" : "broken",
+    errors,
+    matchedTransfers,
+    missingTransfers,
+    unexpectedTransfers,
+    missingFillTransfers
+  };
 }
 
 async function eventIn<T extends "DecisionRecorded" | "VerdictRecorded">(
@@ -158,5 +316,30 @@ export async function checkRun(
     state: verdictEvent?.verdictHash === verdictHash && verdictHash === published ? "pass" : "fail",
     detail: `${verdict.outcome}${verdict.openPrice ? `, open ${verdict.openPrice}` : ""}`
   });
+
+  if (run.plan.door === "agentic_wallet") {
+    const reconciliation = run.reconciliation;
+    if (!reconciliation) {
+      push({
+        label: "Wallet transfers match recorded fills",
+        state: "fail",
+        detail: "The agent did not publish transfer reconciliation for this trading plan."
+      });
+      return steps;
+    }
+    const publishedHash = hashCanonical(reconciliation);
+    const observed = await checkedTransfers(reconciliation);
+    const recomputed = compareTransfers(reconciliation, observed);
+    const resultMatches = hashCanonical(recomputed) === hashCanonical(reconciliation.result);
+    const hashMatches = publishedHash === run.verdict.reconciliationHash;
+    push({
+      label: "Wallet transfers match recorded fills",
+      state: resultMatches && hashMatches && recomputed.valid ? "pass" : "fail",
+      detail:
+        resultMatches && hashMatches
+          ? `${observed.length} wallet transfers checked across blocks ${reconciliation.fromBlock}–${reconciliation.toBlock}.`
+          : "The published reconciliation does not match the wallet's transfer logs on BNB Smart Chain."
+    });
+  }
   return steps;
 }
