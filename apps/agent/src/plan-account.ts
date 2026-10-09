@@ -48,6 +48,16 @@ function raw(value: string, field: string): bigint {
   }
 }
 
+/** Matches PlanAccount's upward rounding so the relayer never submits a
+ * one-raw-unit-too-low minimum that the contract rejects. */
+export function boundedMinimumOutput(reference: bigint, slippageBps: number): bigint {
+  if (!Number.isInteger(slippageBps) || slippageBps < 0 || slippageBps > 10_000) {
+    throw new Error("slippage bps must be a whole number from 0 to 10000.");
+  }
+  const numerator = reference * BigInt(10_000 - slippageBps);
+  return (numerator + 9_999n) / 10_000n;
+}
+
 function hashId(value: string): string {
   // The quote id only needs to be stable inside the plan receipt; avoid exposing
   // provider-specific order identifiers or secrets.
@@ -255,7 +265,7 @@ export class PlanAccountTrader implements PermissionTrader {
       throw new Error("PLAN_ACCOUNT_PRICE_BAND: slippage exceeds the signed price band.");
     }
     const reference = BigInt(execution.referenceAmountOutRaw);
-    const minimum = (reference * BigInt(Math.max(0, 10_000 - slippageBps))) / 10_000n;
+    const minimum = boundedMinimumOutput(reference, slippageBps);
     const tokenIn = permission.tokenIn as Address;
     const tokenOut = permission.tokenOut as Address;
     const fee = execution.fee;

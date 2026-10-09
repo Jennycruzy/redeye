@@ -1382,6 +1382,30 @@ describe("plans signed in the owner's own wallet", () => {
     ).rejects.toMatchObject({ code: "SIGNED_LIMIT" });
   });
 
+  it("checks a PlanAccount preview against the connected owner after the live dry-run failure", async () => {
+    const h = await harness({ planAccount: true });
+    const preview = await h.service.preview({
+      ticker: "NVDA",
+      kind: "buy_dip",
+      heldShares: "0",
+      door: "plan_account",
+      owner: owner.address,
+      auditNoDataAccepted: true,
+      params: {
+        maxPriceImpactPct: "1",
+        minPoolDepthUsd: "100000",
+        triggerDropPct: "1",
+        maxGapToRealPricePct: "1",
+        maxUsd: "2"
+      }
+    });
+    expect(preview.valid).toBe(true);
+    expect(h.chain.balanceReads.at(-1)).toEqual({
+      token: USDT.toLowerCase(),
+      account: owner.address
+    });
+  });
+
   it("locks a bounded PlanAccount permission under the wallet owner", async () => {
     const h = await harness({ planAccount: true, jobs: true });
     const input = { ...guardInput, door: "plan_account", auditNoDataAccepted: true };

@@ -951,7 +951,7 @@ describe("v1.5 proof rules", () => {
           maxPriceImpactPct: "1",
           minPoolDepthUsd: "50000",
           triggerDropPct: "0.5",
-          maxUsd: "4",
+          maxUsd: "1",
           maxGapToRealPricePct: "3"
         }
       }),

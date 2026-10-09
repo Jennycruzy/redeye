@@ -126,8 +126,8 @@ export function validatePlan(plan: PlanContext, event: EventContext): PlanValida
     );
     between(maximumGap, "0.1", "2", "params.maxGapToRealPricePct", issues);
     const maxUsd = numberValue(plan.params.maxUsd, "params.maxUsd", issues);
-    if (maxUsd !== null && maxUsd.lt(5)) {
-      issues.push({ field: "params.maxUsd", message: "must be at least 5 USD." });
+    if (maxUsd !== null && maxUsd.lt(2)) {
+      issues.push({ field: "params.maxUsd", message: "must be at least 2 USD." });
     }
   }
 

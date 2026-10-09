@@ -124,6 +124,13 @@ signed-wallet code path is covered offline and its mainnet template is deployed 
 source-verified, but wallet-provider EIP-7702 support and a real small-value mainnet swap remain
 release gates.
 
+The PlanAccount path also has an opt-in BSC fork test against the live Pancake
+SmartRouter, QuoterV2, USDT and INTCB pool. Run it with
+`REDEYE_FORK_RPC=... pnpm contract:test:fork`. `pnpm plan-account:live` builds and
+signs the same bounded permission as the browser without sending it; add `--send`
+only with a dedicated `PLAN_ACCOUNT_TEST_PRIVATE_KEY`. The team's isolated proof
+wallet can be used explicitly with `--team-test`.
+
 The agent process requires Node 22, `OWNER_API_TOKEN` and `WEB_ORIGIN`. Build it
 with `pnpm agent:build`; it will refuse to start if those values are absent. The
 filing feed and Binance Transaction API integration remain separate release gates;

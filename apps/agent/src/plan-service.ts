@@ -676,7 +676,13 @@ export class PlanService {
           auditNoDataAccepted: input.auditNoDataAccepted === true
         };
       } else {
-        plan = await this.planFromInput(input, null);
+        plan = await this.planFromInput(
+          input,
+          null,
+          typeof input.owner === "string" && isAddress(input.owner)
+            ? getAddress(input.owner)
+            : undefined
+        );
       }
     } catch (error) {
       if (!(error instanceof PlanError)) throw error;
