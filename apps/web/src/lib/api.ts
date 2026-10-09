@@ -73,7 +73,7 @@ export interface RecordItem {
   teamJobState: string | null;
   params?: PlanParams;
   heldShares?: string;
-  door?: "agentic_wallet" | null;
+  door?: "agentic_wallet" | "signed" | null;
   decisionTx?: string | null;
   decidedAt?: number | null;
   action?: string | null;
@@ -206,6 +206,16 @@ export const agent = {
   run: (id: string) => request<Record<string, unknown>>(`/runs/${id}`),
   runEvents: (id: string) => request<{ state: string; items: RunEvent[] }>(`/runs/${id}/events`),
   receipt: (id: string) => request<Record<string, unknown>>(`/runs/${id}/receipt`),
+  lockSigned: (body: {
+    plan: Record<string, unknown>;
+    owner: string;
+    issuedAt: number;
+    signature: string;
+  }) =>
+    request<{ id: string; planId: number; freeze: { txHash: string } }>("/signed-plans", {
+      method: "POST",
+      body: JSON.stringify(body)
+    }),
   preview: (plan: Record<string, unknown>) =>
     request<PlanPreview>("/preview", { method: "POST", body: JSON.stringify(plan) })
 };

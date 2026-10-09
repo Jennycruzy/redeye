@@ -139,7 +139,7 @@ export function reasonWords(code: string | null | undefined): string {
     case "CONDITION_NOT_MET":
       return "The price never reached the trigger, so nothing was done.";
     case "EXECUTION_DISABLED":
-      return "The trigger was hit, but trading was switched off for this plan.";
+      return "The trigger was hit. This plan had no way to trade, so it was recorded, not traded.";
     case "ORDER_FAILED":
       return "The wallet's order failed, so no trade happened.";
     case "LOCK_MISSED":

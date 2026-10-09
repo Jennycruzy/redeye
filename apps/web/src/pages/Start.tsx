@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Problem, Skeleton } from "../components/bits";
+import { Problem, Skeleton, TxLink } from "../components/bits";
 import { NightStrip } from "../components/NightStrip";
 import { stockName } from "../components/PriceBoard";
 import { agent, type PlanPreview, type PriceItem } from "../lib/api";
@@ -16,6 +16,7 @@ import {
 } from "../lib/format";
 import { useAgent, useNow } from "../lib/hooks";
 import { Link, useLocation } from "../lib/router";
+import { connect, discoverWallets, signPlan, type WalletChoice } from "../lib/wallet";
 import { lastFinishedClose, replayResult } from "../lib/replay";
 
 type Kind = "guard" | "buy_dip" | "sell_rise" | "hold";
@@ -169,6 +170,12 @@ function Slider({
 
 const DOORS = [
   {
+    id: "signed",
+    name: "Sign it with your wallet",
+    state: "Live",
+    body: "MetaMask, Trust Wallet, Binance Web3 Wallet or Rabby signs the promise. It goes on chain under your address and Redeye pays the network fee. No funds move: the plan is watched all night and graded at the open, in your name."
+  },
+  {
     id: "agentic",
     name: "Binance Agentic Wallet",
     state: "Live",
@@ -176,9 +183,9 @@ const DOORS = [
   },
   {
     id: "wallet",
-    name: "Any wallet you already use",
+    name: "Trade from your own wallet",
     state: "Contract live",
-    body: "MetaMask, Trust Wallet or Binance Web3 Wallet sign one permission for one plan. PlanAccount on BNB Chain lets the agent make exactly that trade and refuses anything else."
+    body: "Your wallet signs one permission for one plan. PlanAccount on BNB Chain lets the agent make exactly that trade and refuses anything else. The signing page for trades is in progress."
   },
   {
     id: "newcomer",
@@ -199,7 +206,7 @@ export default function Start() {
   const [share, setShare] = useState(DEFAULTS.guard.share);
   const [amount, setAmount] = useState(DEFAULTS.guard.usd);
   const [held, setHeld] = useState("1");
-  const [door, setDoor] = useState("agentic");
+  const [door, setDoor] = useState("signed");
   const [standing, setStanding] = useState(false);
   const [days, setDays] = useState(5);
 
@@ -609,7 +616,9 @@ export default function Start() {
                   </p>
                 </div>
                 <div className="lockbox__how">
-                  {door === "agentic" ? (
+                  {door === "signed" ? (
+                    <SignAndLock plan={plan} preview={preview} />
+                  ) : door === "agentic" ? (
                     <>
                       <p>
                         With a Binance Agentic Wallet paired to a Redeye agent, this is exactly the
@@ -641,6 +650,111 @@ export default function Start() {
         </div>
       </div>
     </div>
+  );
+}
+
+type SignState =
+  | { step: "idle" }
+  | { step: "choosing"; wallets: WalletChoice[] }
+  | { step: "busy"; label: string }
+  | { step: "done"; id: string; planId: number; tx: string; owner: string }
+  | { step: "error"; message: string };
+
+/** Connect, sign the exact promise, and have the agent lock it under the signer's address. */
+function SignAndLock({ plan, preview }: { plan: Record<string, unknown>; preview: PlanPreview }) {
+  const [state, setState] = useState<SignState>({ step: "idle" });
+
+  const lockWith = async (wallet: WalletChoice) => {
+    try {
+      setState({ step: "busy", label: `Connecting ${wallet.name}…` });
+      const owner = await connect(wallet);
+      setState({ step: "busy", label: "Check the promise in your wallet and sign it…" });
+      const { signature, issuedAt } = await signPlan(wallet, {
+        promise: preview.promise,
+        owner,
+        ticker: String(plan.ticker),
+        planHash: preview.planHash,
+        windowCloseMs: preview.window.closeTs
+      });
+      setState({ step: "busy", label: "Locking it on BNB Chain…" });
+      const locked = await agent.lockSigned({ plan, owner, issuedAt, signature });
+      setState({
+        step: "done",
+        id: locked.id,
+        planId: locked.planId,
+        tx: locked.freeze.txHash,
+        owner
+      });
+    } catch (error) {
+      setState({
+        step: "error",
+        message: error instanceof Error ? error.message : "Locking failed."
+      });
+    }
+  };
+
+  const start = async () => {
+    setState({ step: "busy", label: "Looking for a wallet in this browser…" });
+    const wallets = await discoverWallets();
+    if (wallets.length === 0) {
+      setState({
+        step: "error",
+        message:
+          "No wallet found in this browser. Install MetaMask or Rabby, or open this page in the browser inside Trust Wallet or Binance Web3 Wallet."
+      });
+      return;
+    }
+    if (wallets.length === 1) void lockWith(wallets[0]!);
+    else setState({ step: "choosing", wallets });
+  };
+
+  if (state.step === "done") {
+    return (
+      <div className="locked" role="status">
+        <p className="locked__title">Locked as plan #{state.planId}, in your name.</p>
+        <p>
+          PlanBook now holds it under {state.owner.slice(0, 6)}…{state.owner.slice(-4)}. It cannot
+          be changed, and it will be graded at the open whatever happens.
+        </p>
+        <TxLink hash={state.tx}>lock transaction</TxLink>
+        <Link to={`/runs/${state.id}`} className="arrowlink">
+          Follow your plan through the night
+        </Link>
+      </div>
+    );
+  }
+  return (
+    <>
+      <p>
+        Your wallet will show the promise word for word. Signing is free and moves no funds; Redeye
+        pays the network fee to lock it.
+      </p>
+      {state.step === "choosing" ? (
+        <div className="walletlist">
+          {state.wallets.map((w) => (
+            <button
+              key={w.id}
+              type="button"
+              className="button button--ghost"
+              onClick={() => void lockWith(w)}
+            >
+              {w.icon && <img src={w.icon} alt="" width={20} height={20} />}
+              {w.name}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <button
+          className="button button--primary"
+          type="button"
+          onClick={() => void start()}
+          disabled={state.step === "busy" || !preview.valid}
+        >
+          {state.step === "busy" ? state.label : "Sign and lock it"}
+        </button>
+      )}
+      {state.step === "error" && <p className="problem">{state.message}</p>}
+    </>
   );
 }
 

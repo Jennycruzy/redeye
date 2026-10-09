@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { createWindowRecord, hashPlan, nextWindow, verifyReceipt } from "@redeye/core";
+import {
+  createWindowRecord,
+  hashPlan,
+  nextWindow,
+  SIGNED_PLAN_DOMAIN,
+  SIGNED_PLAN_TYPES,
+  signedPlanMessage,
+  verifyReceipt
+} from "@redeye/core";
+import { privateKeyToAccount } from "viem/accounts";
 import { keccak256, toBytes, type Address, type Hex } from "viem";
 import { AgenticWallet, type BawRunner } from "./agentic-wallet.js";
 import type { JobBook, JobKind, JobOpenInput, JobState, JobView } from "./job-chain.js";
@@ -297,7 +306,13 @@ interface Harness {
 }
 
 async function harness(
-  options: { chain?: boolean; baw?: boolean; jobs?: boolean; teamJobLimit?: number } = {}
+  options: {
+    chain?: boolean;
+    baw?: boolean;
+    jobs?: boolean;
+    teamJobLimit?: number;
+    signedDailyCap?: number;
+  } = {}
 ): Promise<Harness> {
   let now = BEFORE_CLOSE;
   let price: PriceSnapshotOk | null = null;
@@ -324,6 +339,7 @@ async function harness(
     trader,
     jobs: options.jobs ? jobs : null,
     teamJobLimit: options.teamJobLimit ?? 0,
+    ...(options.signedDailyCap === undefined ? {} : { signedDailyCap: options.signedDailyCap }),
     now: () => now,
     latestPrice: async () => price,
     listedToken: async (ticker) =>
@@ -1006,6 +1022,134 @@ describe("trading through the Agentic Wallet", () => {
     const bought = await plan(h, locked.id);
     expect(bought.decision?.decision.action).toBe("buy");
     expect(bought.trade?.quote).toMatchObject({ side: "buy", inputAmount: "10" });
+  });
+});
+
+describe("plans signed in the owner's own wallet", () => {
+  // A throwaway key: the test signs exactly as a browser wallet would.
+  const owner = privateKeyToAccount(`0x${"42".repeat(32)}`);
+  const holdInput = {
+    ticker: "NVDA",
+    kind: "hold",
+    heldShares: "3",
+    params: { maxPriceImpactPct: "1", minPoolDepthUsd: "100000", maxGapToRealPricePct: "1" }
+  };
+
+  async function sign(
+    plan: typeof guardInput | typeof holdInput,
+    issuedAtS: number,
+    promise: string
+  ) {
+    const context = {
+      kind: "guard" as const,
+      standingRunId: null,
+      ticker: plan.ticker,
+      wrapper: "bStock" as const,
+      tokenAddress: NVDA_TOKEN,
+      heldShares: plan.heldShares,
+      params: plan.params
+    };
+    const message = signedPlanMessage({
+      promise,
+      owner: owner.address,
+      ticker: plan.ticker,
+      planHash: hashPlan({ ...context, kind: plan.kind as "guard" }),
+      windowCloseMs: CLOSE,
+      issuedAtS
+    });
+    return owner.signTypedData({
+      domain: SIGNED_PLAN_DOMAIN,
+      types: SIGNED_PLAN_TYPES,
+      primaryType: "Plan",
+      message
+    });
+  }
+
+  it("locks under the signer's address, pays no job, and labels it signed", async () => {
+    const h = await harness({ jobs: true, teamJobLimit: 4 });
+    const issuedAt = Math.floor(BEFORE_CLOSE / 1000);
+    const preview = await h.service.preview(holdInput);
+    const signature = await sign(holdInput, issuedAt, preview.promise!);
+    const locked = await h.service.lockSigned({
+      plan: holdInput,
+      owner: owner.address,
+      issuedAt,
+      signature
+    });
+    expect(locked.status).toBe("locked");
+    expect(locked.owner).toBe(owner.address);
+    expect(h.chain.freezes[0]).toMatchObject({ owner: owner.address, planHash: preview.planHash });
+    expect(h.jobs.kinds).toEqual([]);
+    expect(await h.store.record()).toMatchObject({
+      items: [{ owner: owner.address, door: "signed", status: "locked" }]
+    });
+  });
+
+  it("refuses a plan that differs from what was signed", async () => {
+    const h = await harness();
+    const issuedAt = Math.floor(BEFORE_CLOSE / 1000);
+    const preview = await h.service.preview(holdInput);
+    const signature = await sign(holdInput, issuedAt, preview.promise!);
+    await expect(
+      h.service.lockSigned({
+        plan: { ...holdInput, heldShares: "30" },
+        owner: owner.address,
+        issuedAt,
+        signature
+      })
+    ).rejects.toMatchObject({ code: "SIGNATURE_MISMATCH" });
+    expect(h.chain.freezes).toHaveLength(0);
+  });
+
+  it("refuses an old signature and a plan that asks to trade", async () => {
+    const h = await harness();
+    const stale = Math.floor(BEFORE_CLOSE / 1000) - 11 * 60;
+    const preview = await h.service.preview(holdInput);
+    const signature = await sign(holdInput, stale, preview.promise!);
+    await expect(
+      h.service.lockSigned({ plan: holdInput, owner: owner.address, issuedAt: stale, signature })
+    ).rejects.toMatchObject({ code: "SIGNATURE_EXPIRED" });
+    await expect(
+      h.service.lockSigned({
+        plan: { ...holdInput, door: "agentic_wallet" },
+        owner: owner.address,
+        issuedAt: stale + 11 * 60,
+        signature
+      })
+    ).rejects.toMatchObject({ code: "PLAN_INVALID" });
+  });
+
+  it("stops at the daily cap, and sits beside the team's own plan on the same stock", async () => {
+    const h = await harness({ signedDailyCap: 1 });
+    await lockedGuard(h);
+    const issuedAt = Math.floor(BEFORE_CLOSE / 1000);
+    const preview = await h.service.preview(holdInput);
+    const signature = await sign(holdInput, issuedAt, preview.promise!);
+    await h.service.lockSigned({ plan: holdInput, owner: owner.address, issuedAt, signature });
+    expect(h.chain.freezes.map((f) => f.owner)).toEqual([AGENT, owner.address]);
+
+    const other = privateKeyToAccount(`0x${"43".repeat(32)}`);
+    const otherSignature = await other.signTypedData({
+      domain: SIGNED_PLAN_DOMAIN,
+      types: SIGNED_PLAN_TYPES,
+      primaryType: "Plan",
+      message: signedPlanMessage({
+        promise: preview.promise!,
+        owner: other.address,
+        ticker: "NVDA",
+        planHash: preview.planHash as `0x${string}`,
+        windowCloseMs: CLOSE,
+        issuedAtS: issuedAt
+      })
+    });
+    await expect(
+      h.service.lockSigned({
+        plan: holdInput,
+        owner: other.address,
+        issuedAt,
+        signature: otherSignature
+      })
+    ).rejects.toMatchObject({ code: "SIGNED_LIMIT" });
   });
 });
 

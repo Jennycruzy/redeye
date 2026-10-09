@@ -2177,3 +2177,26 @@ button {
     border-top: 1px solid var(--rule);
   }
 }
+
+.walletlist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.walletlist img {
+  border-radius: 4px;
+}
+.locked {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  border-left: 2px solid var(--kept);
+  padding-left: 16px;
+  animation: rise 0.45s var(--ease) both;
+}
+.locked__title {
+  font-family: var(--serif);
+  font-size: 26px;
+  line-height: 1.1;
+  color: var(--ink) !important;
+}

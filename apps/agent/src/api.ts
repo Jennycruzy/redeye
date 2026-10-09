@@ -85,6 +85,17 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
           return error(400, "CLOSE_INVALID", "close must be a time in milliseconds.", config);
         return json(200, await config.night(id, closeTs), config);
       }
+      if (request.method === "POST" && root === "signed-plans" && parts.length === 1) {
+        if (!config.lockSigned)
+          return error(404, "NOT_FOUND", "Signed plans are not accepted here.", config);
+        if (
+          typeof request.body !== "object" ||
+          request.body === null ||
+          Array.isArray(request.body)
+        )
+          return error(400, "PLAN_INVALID", "Send the signed plan as a JSON object.", config);
+        return json(201, await config.lockSigned(request.body as Record<string, unknown>), config);
+      }
       if (request.method === "POST" && root === "preview" && parts.length === 1) {
         if (!config.preview)
           return error(404, "NOT_FOUND", "Plan checks are not served here.", config);

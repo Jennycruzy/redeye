@@ -11,6 +11,10 @@ import {
   hashVerdict,
   nextWindow,
   planLockDeadlineMs,
+  signedPlanMessage,
+  SIGNED_PLAN_DOMAIN,
+  SIGNED_PLAN_MAX_AGE_S,
+  SIGNED_PLAN_TYPES,
   validatePlan,
   verifyReceipt,
   type Decision,
@@ -29,7 +33,15 @@ import {
 } from "@redeye/core";
 import Decimal from "decimal.js";
 import type { OrderResult, QuoteRequest } from "./agentic-wallet.js";
-import { keccak256, toBytes, type Address, type Hex } from "viem";
+import {
+  getAddress,
+  isAddress,
+  keccak256,
+  recoverTypedDataAddress,
+  toBytes,
+  type Address,
+  type Hex
+} from "viem";
 import type { JobBook, JobKind, JobState } from "./job-chain.js";
 import type { ChainWrite, Outcome, PlanChain } from "./plan-chain.js";
 import type { PriceSnapshotOk } from "./price-service.js";
@@ -136,6 +148,8 @@ export interface StoredPlan {
   status: PlanStatus;
   createdAt: string;
   input: Record<string, unknown>;
+  /** Set when the owner signed the plan in their own wallet and the agent locked it for them. */
+  signedBy?: { owner: Address; signature: Hex; issuedAt: number };
   plan?: PlanContext;
   event?: EventRecord;
   planHash?: Hex;
@@ -183,8 +197,9 @@ export interface PlanRecordItem {
   /** The plan's own numbers (trigger, share of holding, limits), for drawing it. */
   params: PlanContext["params"];
   heldShares: string;
-  /** "agentic_wallet" when the plan may trade through the Agentic Wallet. */
-  door: "agentic_wallet" | null;
+  /** "agentic_wallet" when the plan may trade through the Agentic Wallet; "signed" when its
+   * owner signed it in their own wallet (a promise only, no trading). */
+  door: "agentic_wallet" | "signed" | null;
   /** The decision written on chain once the trigger was hit or the window ended. */
   decisionTx: Hex | null;
   decidedAt: number | null;
@@ -195,7 +210,7 @@ export interface PlanRecordItem {
 
 /** The plan in one plain sentence, as shown in the public record. */
 export function describePlan(plan: PlanContext): string {
-  const shares = `${plan.heldShares} ${plan.ticker} shares`;
+  const shares = `${plan.heldShares} ${plan.ticker} ${Number(plan.heldShares) === 1 ? "share" : "shares"}`;
   const { params } = plan;
   if (plan.kind === "guard") {
     return `If the 24/7 price falls ${params.triggerDropPct}% below the close, sell ${params.sellPct}% of ${shares}.`;
@@ -271,6 +286,8 @@ export interface PlanServiceOptions {
   jobs?: JobBook | null;
   /** How many plans in total get a team job as well; 0 or absent turns team jobs off. */
   teamJobLimit?: number;
+  /** How many wallet-signed plans the agent locks (and pays gas for) per 24 hours. */
+  signedDailyCap?: number;
   now?: () => number;
   newId?: () => string;
   /** Where a new or changed error is written; defaults to one JSON line on stderr. */
@@ -459,6 +476,114 @@ export class PlanService {
     const validation = validatePlan(plan, context);
     if (!validation.valid) throw invalid(validation.issues);
     return this.freeze(chain, stored, plan, event);
+  }
+
+  /**
+   * Locks a plan its owner signed in their own wallet. The agent rebuilds the plan, its
+   * sentence and fingerprint from the input, checks that the signature over exactly those
+   * recovers the owner, then locks it in PlanBook under the owner's address and pays the
+   * gas. These plans are promises only: no trading door, no paid job, a daily cap.
+   */
+  async lockSigned(body: Record<string, unknown>): Promise<StoredPlan> {
+    const chain = this.requireConfiguredChain();
+    const input = body.plan;
+    if (typeof input !== "object" || input === null || Array.isArray(input)) {
+      throw new PlanError(400, "PLAN_INVALID", "Send the plan as an object.");
+    }
+    const planInput = { ...(input as Record<string, unknown>) };
+    if (planInput.door !== undefined && planInput.door !== null) {
+      throw new PlanError(
+        400,
+        "PLAN_INVALID",
+        "A signed plan is a promise only; it has no trading door."
+      );
+    }
+    delete planInput.door;
+    delete planInput.auditNoDataAccepted;
+    if (typeof body.owner !== "string" || !isAddress(body.owner)) {
+      throw new PlanError(400, "OWNER_INVALID", "owner must be a wallet address.");
+    }
+    const owner = getAddress(body.owner);
+    const issuedAt = Number(body.issuedAt);
+    const signature = body.signature;
+    if (typeof signature !== "string" || !/^0x[0-9a-fA-F]+$/.test(signature)) {
+      throw new PlanError(400, "SIGNATURE_INVALID", "signature must be a hex string.");
+    }
+
+    const atMs = this.now();
+    const age = Math.floor(atMs / 1000) - issuedAt;
+    if (!Number.isInteger(issuedAt) || age < -60 || age > SIGNED_PLAN_MAX_AGE_S) {
+      throw new PlanError(
+        400,
+        "SIGNATURE_EXPIRED",
+        "The signature is too old; sign the plan again."
+      );
+    }
+
+    const plan = await this.planFromInput(planInput, null);
+    const window = lockableWindow(atMs);
+    const event = createWindowRecord(window.kind, plan.ticker, window.closeTs, window.openTs);
+    const context = eventContext(event);
+    if (atMs >= planLockDeadlineMs(context)) {
+      throw new PlanError(
+        409,
+        "LOCK_MISSED",
+        "Plans must be locked at least 5 minutes before the US close."
+      );
+    }
+    const validation = validatePlan(plan, context);
+    if (!validation.valid) throw invalid(validation.issues);
+
+    const message = signedPlanMessage({
+      promise: describePlan(plan),
+      owner,
+      ticker: plan.ticker,
+      planHash: hashPlan(plan),
+      windowCloseMs: window.closeTs,
+      issuedAtS: issuedAt
+    });
+    let signer: Address;
+    try {
+      signer = await recoverTypedDataAddress({
+        domain: SIGNED_PLAN_DOMAIN,
+        types: SIGNED_PLAN_TYPES,
+        primaryType: "Plan",
+        message,
+        signature: signature as Hex
+      });
+    } catch {
+      throw new PlanError(400, "SIGNATURE_INVALID", "The signature could not be read.");
+    }
+    if (signer.toLowerCase() !== owner.toLowerCase()) {
+      throw new PlanError(
+        403,
+        "SIGNATURE_MISMATCH",
+        "The signature does not match this plan and address. Sign the plan shown, from this wallet."
+      );
+    }
+
+    const cap = this.options.signedDailyCap ?? 20;
+    const recent = (await this.options.store.listPlans()).filter(
+      (p) => p.signedBy && p.freeze && atMs - p.freeze.blockTs * 1000 < 86_400_000
+    ).length;
+    if (recent >= cap) {
+      throw new PlanError(
+        429,
+        "SIGNED_LIMIT",
+        `The agent locks ${cap} signed plans a day; try again tomorrow.`
+      );
+    }
+
+    const signed: StoredPlan = {
+      v: 1,
+      id: this.newId(),
+      status: "draft",
+      createdAt: new Date(atMs).toISOString(),
+      input: planInput,
+      signedBy: { owner, signature: signature as Hex, issuedAt }
+    };
+    await this.options.store.savePlan(signed);
+    return this.freeze(chain, signed, plan, event, undefined, { owner, jobs: false });
   }
 
   /**
@@ -826,11 +951,12 @@ export class PlanService {
     stored: StoredPlan,
     plan: PlanContext,
     event: EventRecord,
-    standingRunHash?: Hex
+    standingRunHash?: Hex,
+    lockFor?: { owner: Address; jobs: boolean }
   ): Promise<StoredPlan> {
     const context = eventContext(event);
     const planHash = hashPlan(plan);
-    const owner = chain.agentAddress;
+    const owner = lockFor?.owner ?? chain.agentAddress;
     // PlanBook keeps one plan per owner, stock and window. Checked before a job is opened,
     // so a refused lock never leaves a paid job behind.
     const existing = await chain.planIdFor(owner, event.eventKey as Hex);
@@ -841,7 +967,10 @@ export class PlanService {
         `Plan #${existing} is already locked for ${plan.ticker} in this window; PlanBook keeps one plan per stock and window.`
       );
     }
-    const withJob = await this.openJob({ ...stored, plan, event, planHash }, context);
+    const withJob =
+      lockFor?.jobs === false
+        ? { ...stored, plan, event, planHash }
+        : await this.openJob({ ...stored, plan, event, planHash }, context);
     const freeze = await chain.freeze({
       owner,
       eventKey: event.eventKey,
@@ -1449,7 +1578,7 @@ export class PlanService {
       teamJobState: stored.teamJob?.state ?? null,
       params: plan.params,
       heldShares: plan.heldShares,
-      door: plan.door ?? null,
+      door: plan.door ?? (stored.signedBy ? "signed" : null),
       decisionTx: stored.decision?.chain?.txHash ?? null,
       decidedAt: stored.decision?.at ?? null,
       action: stored.decision?.decision.action ?? null,

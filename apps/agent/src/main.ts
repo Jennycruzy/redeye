@@ -98,6 +98,7 @@ const planService = new PlanService({
   trader,
   jobs,
   teamJobLimit: Number(process.env.TEAM_JOB_LIMIT ?? "0"),
+  signedDailyCap: Number(process.env.SIGNED_PLAN_DAILY_CAP ?? "20"),
   latestPrice: (ticker) => store.latestPrice(ticker),
   listedToken: (ticker) => listedBstock(rawRoot, ticker),
   officialOpen: (ticker, date) => nasdaqOfficialOpen(rawRoot, ticker, date)
@@ -214,6 +215,7 @@ const server = startAgentServer(
     a2a,
     night,
     preview: (input) => planService.preview(input),
+    lockSigned: (body) => planService.lockSigned(body),
     mcp: createMcpHandler(readSources, AGENT_VERSION)
   },
   port
