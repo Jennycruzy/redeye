@@ -3,8 +3,40 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0d1117" />
-    <title>Redeye — off-hours price and plan proof</title>
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0e0f12" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f3efe6" media="(prefers-color-scheme: light)" />
+    <title>Redeye</title>
+    <meta
+      name="description"
+      content="The agent for when Wall Street is closed. Redeye prices your stock from the market that never shuts, locks its plan on chain before the close, and at the next open shows whether it kept its word."
+    />
+    <meta property="og:title" content="Redeye: Wall Street is closed. Your stock isn't." />
+    <meta
+      property="og:description"
+      content="Plans locked on BNB Chain before the US close, watched all night against the 24/7 price, graded at the open."
+    />
+    <meta property="og:type" content="website" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <script>
+      try {
+        var theme = localStorage.getItem("redeye-theme");
+        if (theme) document.documentElement.dataset.theme = theme;
+      } catch (e) {}
+    </script>
+    <style>
+      html {
+        background: #0e0f12;
+      }
+      @media (prefers-color-scheme: light) {
+        html:not([data-theme="dark"]) {
+          background: #f3efe6;
+        }
+      }
+      html[data-theme="light"] {
+        background: #f3efe6;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
