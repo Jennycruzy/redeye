@@ -55,6 +55,17 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
     try {
       if (request.method === "GET" && root === "health" && parts.length === 1)
         return json(200, await store.health(), config);
+      if (request.method === "GET" && root === "passkey" && parts.length === 1)
+        return json(
+          200,
+          config.passkeyStatus?.() ?? {
+            available: false,
+            rpId: "",
+            factory: null,
+            reason: "Passkey account deployment is not configured."
+          },
+          config
+        );
       if (
         request.method === "GET" &&
         ((root === ".well-known" && id === "agent-registration.json" && parts.length === 2) ||

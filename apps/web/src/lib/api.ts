@@ -102,6 +102,13 @@ export interface Health {
   priceAgeSeconds: Record<string, number>;
 }
 
+export interface PasskeyStatus {
+  available: boolean;
+  rpId: string;
+  factory: string | null;
+  reason: string | null;
+}
+
 export interface StudyWindow {
   n: number;
   closeError: number;
@@ -213,6 +220,7 @@ export const agent = {
     request<NightTrace>(`/night/${ticker}${closeTs === undefined ? "" : `?close=${closeTs}`}`),
   record: () => request<PlanRecord>("/record"),
   health: () => request<Health>("/health"),
+  passkey: () => request<PasskeyStatus>("/passkey"),
   study: () => request<Study>("/study"),
   wallet: () => request<WalletStatus>("/wallet"),
   run: (id: string) => request<Record<string, unknown>>(`/runs/${id}`),

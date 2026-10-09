@@ -39,6 +39,8 @@ export interface AgentApiConfig {
   preview?: (input: Record<string, unknown>) => Promise<unknown>;
   /** Checks a standing run and returns its run hash plus one bounded permission. */
   previewStanding?: (input: Record<string, unknown>) => Promise<unknown>;
+  /** Public readiness only; account creation stays off until Telegram verification is configured. */
+  passkeyStatus?: () => unknown;
   /** MCP over streamable HTTP at /mcp; absent when not set up. */
   mcp?: (request: Request, parsedBody: unknown) => Promise<Response>;
   /** x402 sales under /x402/; absent when the seller is not set up. */

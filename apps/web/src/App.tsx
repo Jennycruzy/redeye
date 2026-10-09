@@ -11,6 +11,7 @@ const Stock = lazy(() => import("./pages/Stock"));
 const Proof = lazy(() => import("./pages/Proof"));
 const Data = lazy(() => import("./pages/Data"));
 const Replay = lazy(() => import("./pages/Replay"));
+const Newcomer = lazy(() => import("./pages/Newcomer"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 function Page() {
@@ -21,6 +22,7 @@ function Page() {
   if (path === "/proof") return <Proof />;
   if (path === "/data") return <Data />;
   if (path === "/replay") return <Replay />;
+  if (path === "/new") return <Newcomer />;
   const run = /^\/runs\/([\w:-]{1,80})$/.exec(path);
   if (run) return <Run id={run[1]!} />;
   const stock = /^\/t\/([A-Za-z][A-Za-z0-9.-]{0,14})$/.exec(path);

@@ -9,6 +9,7 @@ import {
   WalletUnsupported,
   type WalletChoice
 } from "./wallet";
+import { p256Coordinates } from "./passkey";
 
 const THU_CLOSE = Date.parse("2026-10-08T20:00:00Z");
 const FRI_OPEN = Date.parse("2026-10-09T13:30:00Z");
@@ -118,5 +119,24 @@ describe("PlanAccount wallet compatibility", () => {
     });
 
     await expect(signDelegation(choice, OWNER, TEMPLATE)).rejects.toBeInstanceOf(WalletUnsupported);
+  });
+});
+
+describe("passkey registration", () => {
+  it("extracts both P-256 coordinates from a browser SPKI key", () => {
+    const prefix = new Uint8Array(26);
+    const point = new Uint8Array(65);
+    point[0] = 4;
+    point.fill(0x11, 1, 33);
+    point.fill(0x22, 33);
+    const spki = new Uint8Array([...prefix, ...point]);
+    expect(p256Coordinates(spki.buffer)).toEqual({
+      publicKeyX: `0x${"11".repeat(32)}`,
+      publicKeyY: `0x${"22".repeat(32)}`
+    });
+  });
+
+  it("refuses a non-P-256 point", () => {
+    expect(() => p256Coordinates(new Uint8Array(40).buffer)).toThrow("P-256");
   });
 });

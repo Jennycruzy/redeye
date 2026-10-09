@@ -284,6 +284,20 @@ const server = startAgentServer(
     night,
     preview: (input) => planService.preview(input),
     previewStanding: (input) => planService.previewStanding(input),
+    passkeyStatus: () => {
+      const rpId = process.env.PASSKEY_RP_ID?.trim() ?? "";
+      const factory = process.env.PASSKEY_FACTORY_ADDRESS?.trim() ?? "";
+      const telegram = process.env.TELEGRAM_BOT_TOKEN?.trim() ?? "";
+      const available = rpId.length > 0 && factory.length > 0 && telegram.length > 0;
+      return {
+        available,
+        rpId,
+        factory: factory || null,
+        reason: available
+          ? null
+          : "RP ID, factory deployment and Telegram verification must all be configured."
+      };
+    },
     lockSigned: (body) => planService.lockSigned(body),
     mcp: createMcpHandler(readSources, AGENT_VERSION)
   },
