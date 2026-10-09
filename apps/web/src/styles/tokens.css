@@ -1,0 +1,84 @@
+/*
+ * Redeye design tokens. Night is the default: ink paper, parchment type, one ember accent.
+ * Outcome colours (kept / refused / broken) were checked with the dataviz validator in both
+ * modes (all pairs, colour-blind simulations included) and always ship with a word and an icon.
+ */
+:root {
+  color-scheme: dark;
+
+  --paper: #0e0f12;
+  --paper-raised: #15171b;
+  --paper-sunk: #0a0b0d;
+  --rule: #24272d;
+  --rule-strong: #34383f;
+
+  --ink: #ece6da;
+  --ink-2: #a9a397;
+  --ink-3: #75706a;
+
+  --ember: #ff5a3c;
+  --ember-wash: rgb(255 90 60 / 0.1);
+  --dawn: #f3b65b;
+  --dawn-wash: rgb(243 182 91 / 0.12);
+
+  --kept: #2fa37a;
+  --refused: #8a7cf0;
+  --broken: #e5432a;
+  --running: var(--dawn);
+
+  --focus: #f3b65b;
+
+  --serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --sans: "Geist Variable", "Geist", ui-sans-serif, system-ui, sans-serif;
+  --mono: "Geist Mono Variable", "Geist Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  --radius: 14px;
+  --radius-sm: 8px;
+  --gutter: clamp(16px, 4vw, 40px);
+  --section: clamp(72px, 10vw, 136px);
+  --max: 1200px;
+
+  --ease: cubic-bezier(0.2, 0.7, 0.1, 1);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --paper: #f3efe6;
+    --paper-raised: #fbf8f2;
+    --paper-sunk: #ebe5d8;
+    --rule: #dcd4c4;
+    --rule-strong: #c9bfac;
+    --ink: #17140f;
+    --ink-2: #5c554a;
+    --ink-3: #8a8274;
+    --ember: #c6341c;
+    --ember-wash: rgb(198 52 28 / 0.09);
+    --dawn: #a5640c;
+    --dawn-wash: rgb(165 100 12 / 0.1);
+    --kept: #1e8460;
+    --refused: #6a5bd6;
+    --broken: #c6341c;
+    --focus: #a5640c;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --paper: #f3efe6;
+  --paper-raised: #fbf8f2;
+  --paper-sunk: #ebe5d8;
+  --rule: #dcd4c4;
+  --rule-strong: #c9bfac;
+  --ink: #17140f;
+  --ink-2: #5c554a;
+  --ink-3: #8a8274;
+  --ember: #c6341c;
+  --ember-wash: rgb(198 52 28 / 0.09);
+  --dawn: #a5640c;
+  --dawn-wash: rgb(165 100 12 / 0.1);
+  --kept: #1e8460;
+  --refused: #6a5bd6;
+  --broken: #c6341c;
+  --focus: #a5640c;
+}

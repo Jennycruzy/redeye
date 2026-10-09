@@ -12,8 +12,14 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@fontsource-variable/geist": "5.3.0",
+    "@fontsource-variable/geist-mono": "5.3.0",
+    "@fontsource/instrument-serif": "5.3.0",
+    "@redeye/core": "workspace:*",
+    "@redeye/shared": "workspace:*",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "viem": "2.21.54"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
