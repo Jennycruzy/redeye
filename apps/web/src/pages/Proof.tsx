@@ -54,7 +54,7 @@ const REAL = [
   ],
   ["x402 sales of the 24/7 price", "Live", "First settled sale on 8 Oct"],
   ["MCP and A2A doors for other agents", "Live", "Read-only; a plan check saves nothing"],
-  ["ERC-8004 identity", "Ready", "Registers once the agent has its public address"],
+  ["ERC-8004 identity", "Live", "Agent #368521 on BNB Chain's identity registry"],
   ["Wallet door through PlanAccount", "Contract live", "Signing page in progress"],
   ["Telegram and Face ID for newcomers", "In progress", "Not live yet"]
 ] as const;
@@ -190,6 +190,25 @@ export default function Proof() {
             </li>
           ))}
         </ul>
+      </section>
+
+      <section className="section--tight">
+        <h2 className="h2">Identity</h2>
+        <p className="muted">
+          Redeye is agent #368521 in the ERC-8004 identity registry on BNB Chain. The registry links
+          to its registration file, which lists the site, the record, uptime, MCP and A2A.
+        </p>
+        <p>
+          <a
+            className="tx"
+            href={txUrl("0x674625e3d3000b4e748e4fc518763e94693db4d0f28f7ed05b6bf212fe02156f")}
+            target="_blank"
+            rel="noreferrer"
+          >
+            registration transaction
+          </a>{" "}
+          · <a href="/.well-known/agent-registration.json">registration file</a>
+        </p>
       </section>
 
       <section className="section--tight" id="agents">

@@ -4,6 +4,8 @@
 //
 //   node scripts/register-identity.mjs            check the card and simulate
 //   node scripts/register-identity.mjs --send     register (or update, if ERC8004_AGENT_ID is set)
+//   --check-at http://127.0.0.1:8787               read the card from this agent instead, for when
+//                                                  the public address is not answering yet
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -41,12 +43,23 @@ const existingId = process.env.ERC8004_AGENT_ID?.trim() || null;
 if (!agentUrl) fail("PUBLIC_AGENT_URL is not set.");
 if (!key) fail("AGENT_PRIVATE_KEY is not set.");
 
-// The card must already be served at its public address, since the registry only stores the link.
+// The registry stores only the link, so the card it points to is checked first: at the public
+// address, or with --check-at at the agent itself, which must already name that address.
 const cardUrl = `${agentUrl}/.well-known/agent-registration.json`;
-const response = await fetch(cardUrl).catch((error) => fail(`${cardUrl}: ${error.message}`));
-if (!response.ok) fail(`${cardUrl} returned HTTP ${response.status}.`);
+const checkAtIndex = process.argv.indexOf("--check-at");
+const checkAt = checkAtIndex === -1 ? null : process.argv[checkAtIndex + 1]?.replace(/\/$/, "");
+if (checkAtIndex !== -1 && !checkAt) fail("--check-at needs an address.");
+const readFrom = checkAt ? `${checkAt}/.well-known/agent-registration.json` : cardUrl;
+const response = await fetch(readFrom).catch((error) => fail(`${readFrom}: ${error.message}`));
+if (!response.ok) fail(`${readFrom} returned HTTP ${response.status}.`);
 const card = await response.json();
 if (card.type !== REGISTRATION_TYPE) fail("The served card is not an ERC-8004 registration file.");
+const serviceUrl = (name) => card.services.find((service) => service.name === name)?.endpoint;
+if (!serviceUrl("record")?.startsWith(agentUrl)) {
+  fail(
+    `The card at ${readFrom} does not name ${agentUrl}; restart the agent with PUBLIC_AGENT_URL set.`
+  );
+}
 
 const account = privateKeyToAccount(key.startsWith("0x") ? key : `0x${key}`);
 const rpc = http(process.env.BSC_RPC_URL_LIVE ?? "https://bsc-dataseed.bnbchain.org");
