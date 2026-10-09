@@ -60,10 +60,21 @@ export function discoverWallets(timeoutMs = 400): Promise<WalletChoice[]> {
 
 export class WalletRefused extends Error {}
 
+export class WalletUnsupported extends WalletRefused {}
+
 function readable(error: unknown): string {
   const e = error as { code?: number; message?: string };
   if (e?.code === 4001) return "You declined in your wallet. Nothing was signed.";
   return e?.message ?? "The wallet did not answer.";
+}
+
+function unsupportedMethod(error: unknown): boolean {
+  const e = error as { code?: number; message?: string };
+  return (
+    e?.code === -32601 ||
+    e?.code === 4200 ||
+    /not supported|unsupported|not implemented|method not found/i.test(e?.message ?? "")
+  );
 }
 
 export async function connect(wallet: WalletChoice): Promise<`0x${string}`> {
@@ -110,6 +121,23 @@ export interface SignedAuthorization {
   yParity: number;
   r: `0x${string}`;
   s: `0x${string}`;
+}
+
+/** True when this account already delegates to the configured PlanAccount template. */
+export async function hasPlanAccountDelegation(
+  wallet: WalletChoice,
+  owner: `0x${string}`,
+  template: `0x${string}`
+): Promise<boolean> {
+  await onBsc(wallet.provider);
+  const code = await wallet.provider.request({
+    method: "eth_getCode",
+    params: [owner, "latest"]
+  });
+  if (typeof code !== "string") {
+    throw new WalletRefused("The wallet returned invalid account code.");
+  }
+  return code.toLowerCase() === `0xef0100${template.slice(2).toLowerCase()}`;
 }
 
 function hexNumber(value: unknown, field: string): number {
@@ -179,6 +207,7 @@ export async function signDelegation(
     }
   ];
   let last: unknown = null;
+  let unsupported = 0;
   for (const request of requests) {
     try {
       const result = await wallet.provider.request(request);
@@ -186,13 +215,15 @@ export async function signDelegation(
     } catch (error) {
       last = error;
       if ((error as { code?: number }).code === 4001) throw new WalletRefused(readable(error));
+      if (unsupportedMethod(error)) unsupported += 1;
     }
   }
-  throw new WalletRefused(
-    last instanceof Error
-      ? `This wallet does not expose EIP-7702 signing yet: ${last.message}`
-      : "This wallet does not expose EIP-7702 signing yet."
-  );
+  if (unsupported === requests.length) {
+    throw new WalletUnsupported(
+      "This wallet cannot authorize an EIP-7702 PlanAccount yet. Your plan is still here; use a compatible wallet or the Binance Agentic Wallet door."
+    );
+  }
+  throw new WalletRefused(readable(last));
 }
 
 /** Signs the bounded permission, not live swap calldata. */

@@ -19,6 +19,7 @@ import { Link, useLocation } from "../lib/router";
 import {
   connect,
   discoverWallets,
+  hasPlanAccountDelegation,
   signDelegation,
   signPlan,
   signPlanPermission,
@@ -743,10 +744,20 @@ function SignAndLock({
           "The agent has not configured a PlanAccount template and approved router yet."
         );
       }
+      setState({ step: "busy", label: "Checking PlanAccount compatibility…" });
+      const delegated = await hasPlanAccountDelegation(
+        wallet,
+        owner,
+        preview.permission.template
+      );
+      const authorization = delegated
+        ? undefined
+        : await (async () => {
+            setState({ step: "busy", label: "Authorize the PlanAccount delegation…" });
+            return signDelegation(wallet, owner, preview.permission!.template);
+          })();
       setState({ step: "busy", label: "Check the bounded trade permission in your wallet…" });
       const { signature, issuedAt } = await signPlanPermission(wallet, owner, preview.permission);
-      setState({ step: "busy", label: "Authorize the PlanAccount delegation…" });
-      const authorization = await signDelegation(wallet, owner, preview.permission.template);
       if (standing) {
         setState({ step: "busy", label: "Starting the standing run on BNB Chain…" });
         const started = await agent.startStanding({
@@ -759,7 +770,7 @@ function SignAndLock({
           issuedAt,
           permission: preview.permission,
           permissionSignature: signature,
-          authorization
+          ...(authorization ? { authorization } : {})
         });
         setState({ step: "standing-done", id: String(started.id), owner });
       } else {
@@ -770,7 +781,7 @@ function SignAndLock({
           issuedAt,
           permission: preview.permission,
           permissionSignature: signature,
-          authorization
+          ...(authorization ? { authorization } : {})
         });
         setState({
           step: "done",

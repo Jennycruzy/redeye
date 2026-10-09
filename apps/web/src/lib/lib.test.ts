@@ -3,6 +3,12 @@ import type { NightTrace } from "./api";
 import { changePct, duration, pct, reasonWords, usd } from "./format";
 import { triggerLabel, triggerPrice } from "./plans";
 import { lastFinishedClose, replayResult } from "./replay";
+import {
+  hasPlanAccountDelegation,
+  signDelegation,
+  WalletUnsupported,
+  type WalletChoice
+} from "./wallet";
 
 const THU_CLOSE = Date.parse("2026-10-08T20:00:00Z");
 const FRI_OPEN = Date.parse("2026-10-09T13:30:00Z");
@@ -80,5 +86,39 @@ describe("replay against a recorded night", () => {
     expect(lastFinishedClose(THU_CLOSE + 3600e3)).toBe(Date.parse("2026-10-07T20:00:00Z"));
     // After Friday's open, Thursday night is finished.
     expect(lastFinishedClose(FRI_OPEN + 3600e3)).toBe(THU_CLOSE);
+  });
+});
+
+const OWNER = `0x${"11".repeat(20)}` as const;
+const TEMPLATE = `0x${"22".repeat(20)}` as const;
+
+function wallet(request: WalletChoice["provider"]["request"]): WalletChoice {
+  return { id: "test", name: "Test wallet", icon: null, provider: { request } };
+}
+
+describe("PlanAccount wallet compatibility", () => {
+  it("recognizes an existing delegation without asking for another authorization", async () => {
+    const methods: string[] = [];
+    const choice = wallet(async ({ method }) => {
+      methods.push(method);
+      if (method === "eth_chainId") return "0x38";
+      if (method === "eth_getCode") return `0xef0100${TEMPLATE.slice(2)}`;
+      throw new Error(`unexpected ${method}`);
+    });
+
+    await expect(hasPlanAccountDelegation(choice, OWNER, TEMPLATE)).resolves.toBe(true);
+    expect(methods).toEqual(["eth_chainId", "eth_getCode"]);
+  });
+
+  it("turns two unsupported authorization methods into an actionable refusal", async () => {
+    const choice = wallet(async ({ method }) => {
+      if (method === "eth_chainId") return "0x38";
+      if (method === "eth_getTransactionCount") return "0x1";
+      throw Object.assign(new Error("Method not found"), { code: -32601 });
+    });
+
+    await expect(signDelegation(choice, OWNER, TEMPLATE)).rejects.toBeInstanceOf(
+      WalletUnsupported
+    );
   });
 });
