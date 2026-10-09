@@ -47,9 +47,11 @@ function Row({ item }: { item: RecordItem }) {
         <span>
           {item.door === "agentic_wallet"
             ? "trades through the Agentic Wallet"
-            : item.door === "signed"
-              ? `signed in ${item.owner.slice(0, 6)}…${item.owner.slice(-4)}'s wallet · promise only`
-              : "promise only, no trading"}
+            : item.door === "plan_account"
+              ? "trades through the owner's PlanAccount permission"
+              : item.door === "signed"
+                ? `signed in ${item.owner.slice(0, 6)}…${item.owner.slice(-4)}'s wallet · promise only`
+                : "promise only, no trading"}
         </span>
         {item.owner.toLowerCase() === TEAM && <span className="tag">team</span>}
         {item.standingRunId && <span className="tag">standing</span>}

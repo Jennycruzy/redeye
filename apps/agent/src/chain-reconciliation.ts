@@ -246,12 +246,21 @@ export async function reconcilePlanWindow(
     throw new Error("Window reconciliation needs close and open timestamps.");
   }
   const tradablePlans = plans.filter(
-    (plan) => plan.plan?.door === "agentic_wallet" && plan.event?.openTs === event.openTs
+    (plan) =>
+      (plan.plan?.door === "agentic_wallet" || plan.plan?.door === "plan_account") &&
+      plan.event?.openTs === event.openTs
   );
   const accounts = [
     ...new Set(
       tradablePlans
-        .map((plan) => plan.trade?.wallet ?? options.walletAddress)
+        .map(
+          (plan) =>
+            plan.trade?.wallet ??
+            (plan.plan?.door === "plan_account"
+              ? plan.signedPermission?.owner
+              : options.walletAddress)
+        )
+        .filter((value): value is string => value !== undefined)
         .map((value) => address(value, "reconciliation account"))
     )
   ];

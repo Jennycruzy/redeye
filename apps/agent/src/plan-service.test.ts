@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   createWindowRecord,
+  createStandingRun,
+  expandStandingPlan,
+  hashCanonical,
   hashPlan,
   nextWindow,
+  planPermissionTypedData,
+  deserializePlanPermission,
+  serializePlanPermission,
+  type NormalizedQuote,
+  type WalletContext,
   SIGNED_PLAN_DOMAIN,
   SIGNED_PLAN_TYPES,
   signedPlanMessage,
@@ -18,6 +26,7 @@ import {
   lockableWindow,
   PlanError,
   PlanService,
+  type PermissionTrader,
   type OfficialOpen,
   type StoredPlan
 } from "./plan-service.js";
@@ -272,6 +281,64 @@ class FakeBaw {
   };
 }
 
+class FakePermissionTrader implements PermissionTrader {
+  readonly ensured: Array<{ owner: Address; permission: string }> = [];
+  readonly delegationTx: Hex = `0x${"cd".repeat(32)}`;
+
+  async address(): Promise<Address> {
+    return AGENT;
+  }
+
+  async context(
+    requiredQuotaUsd: string,
+    requiredUntilMs: number,
+    _account?: Address
+  ): Promise<WalletContext> {
+    void _account;
+    return {
+      connected: true,
+      tokenAllowed: true,
+      quotaLeftUsd: requiredQuotaUsd,
+      requiredQuotaUsd,
+      sessionExpiresAtMs: requiredUntilMs + 1,
+      requiredUntilMs
+    };
+  }
+
+  async quote(_request: Parameters<PermissionTrader["quote"]>[0]): Promise<NormalizedQuote> {
+    void _request;
+    throw new Error("quote not used by lock test");
+  }
+
+  async swap(
+    _quote: NormalizedQuote,
+    _slippagePct: string,
+    _permission: Parameters<PermissionTrader["swap"]>[2]
+  ): Promise<never> {
+    void _quote;
+    void _slippagePct;
+    void _permission;
+    throw new Error("swap not used by lock test");
+  }
+
+  async waitForOrder(_orderId: string): Promise<never> {
+    void _orderId;
+    throw new Error("order not used by lock test");
+  }
+
+  async findOrder(_quote: NormalizedQuote, _sinceMs: number, _replyId?: string): Promise<null> {
+    void _quote;
+    void _sinceMs;
+    void _replyId;
+    return null;
+  }
+
+  async ensureAccount(owner: Address, permission: Parameters<PermissionTrader["swap"]>[2]) {
+    this.ensured.push({ owner, permission: permission.permission.planHash });
+    return this.delegationTx;
+  }
+}
+
 function snapshot(atMs: number, real: string, closeDate = "2026-10-07"): PriceSnapshotOk {
   const at = new Date(atMs).toISOString();
   const point = (value: string, source: string) => ({
@@ -299,6 +366,7 @@ interface Harness {
   chain: FakeChain;
   baw: FakeBaw;
   jobs: FakeJobs;
+  permissionTrader: FakePermissionTrader | null;
   service: PlanService;
   logs: Record<string, unknown>[];
   setNow(atMs: number): void;
@@ -371,6 +439,8 @@ async function harness(
     jobs?: boolean;
     teamJobLimit?: number;
     signedDailyCap?: number;
+    planAccount?: boolean;
+    newId?: () => string;
   } = {}
 ): Promise<Harness> {
   let now = BEFORE_CLOSE;
@@ -392,13 +462,24 @@ async function harness(
         }
       )
     : null;
+  const permissionTrader = options.planAccount ? new FakePermissionTrader() : null;
   const service = new PlanService({
     store,
     chain: options.chain === false ? null : chain,
     trader,
+    permissionTrader,
+    ...(options.planAccount
+      ? {
+          planAccount: {
+            template: "0x0000000000000000000000000000000000007001" as Address,
+            router: "0x0000000000000000000000000000000000007002" as Address
+          }
+        }
+      : {}),
     jobs: options.jobs ? jobs : null,
     teamJobLimit: options.teamJobLimit ?? 0,
     ...(options.signedDailyCap === undefined ? {} : { signedDailyCap: options.signedDailyCap }),
+    ...(options.newId === undefined ? {} : { newId: options.newId }),
     now: () => now,
     ...(options.reconciliation
       ? { reconcileWindow: async (plans: StoredPlan[]) => reconciledWindow(plans) }
@@ -418,6 +499,7 @@ async function harness(
     chain,
     baw,
     jobs,
+    permissionTrader,
     service,
     logs,
     setNow: (atMs) => {
@@ -800,6 +882,78 @@ describe("standing plans", () => {
     expect(await h.store.record()).toMatchObject({
       items: [{ standingRunId: standing.id, status: "locked" }]
     });
+  });
+
+  it("uses one owner-signed permission across standing windows", async () => {
+    const h = await harness({
+      planAccount: true,
+      newId: () => "unused-server-id"
+    });
+    const owner = privateKeyToAccount(`0x${"44".repeat(32)}`);
+    const input = {
+      ...guardInput,
+      days: 3,
+      runId: "standing-account",
+      door: "plan_account",
+      auditNoDataAccepted: true,
+      owner: owner.address
+    };
+    const template = {
+      kind: "guard" as const,
+      standingRunId: "standing-account",
+      door: "plan_account" as const,
+      auditNoDataAccepted: true,
+      ticker: "NVDA",
+      wrapper: "bStock" as const,
+      tokenAddress: NVDA_TOKEN,
+      heldShares: "2",
+      params: guardInput.params
+    };
+    const run = createStandingRun({
+      runId: "standing-account",
+      template,
+      startAtMs: BEFORE_CLOSE,
+      untilTs: BEFORE_CLOSE + 3 * 86_400_000
+    });
+    const copies = expandStandingPlan(run).filter((copy) => copy.lockByMs > BEFORE_CLOSE);
+    const runHash = hashCanonical({
+      runId: run.runId,
+      template: run.template,
+      startAtMs: run.startAtMs,
+      untilTs: run.untilTs
+    });
+    const permission = {
+      planHash: `0x${"00".repeat(32)}` as Hex,
+      standingRunHash: runHash,
+      agent: AGENT as Address,
+      tokenIn: NVDA_TOKEN as Address,
+      tokenOut: USDT as Address,
+      maxAmount: 999222381408450703n,
+      router: "0x0000000000000000000000000000000000007002" as Address,
+      notBefore: BigInt(Math.floor(copies[0]!.event.lockTs! / 1000)),
+      notAfter: BigInt(Math.floor(copies.at(-1)!.event.openTs! / 1000)),
+      maxPriceDeviationBps: 100n
+    };
+    const signature = await owner.signTypedData(planPermissionTypedData(owner.address, permission));
+    const standing = await h.service.startStanding({
+      ...input,
+      issuedAt: Math.floor(BEFORE_CLOSE / 1000),
+      permission: serializePlanPermission(permission),
+      permissionSignature: signature
+    });
+    expect(standing.owner).toBe(owner.address);
+    expect(standing.runHash).toBe(runHash);
+    expect(standing.signedPermission).toMatchObject({ owner: owner.address, signature });
+    expect(h.chain.freezes[0]).toMatchObject({
+      owner: owner.address,
+      standingRunHash: runHash
+    });
+    const night = Object.values(standing.nights)[0]!;
+    const copy = await plan(h, night.planStoreId!);
+    expect(copy.plan?.door).toBe("plan_account");
+    expect(copy.signedPermission?.permission.standingRunHash).toBe(runHash);
+    expect(copy.signedPermission?.planHash).toBe(copy.planHash);
+    expect(copy.signedPermission?.eventKey).toBe(copy.event?.eventKey);
   });
 
   it("locks the next night only after the night before it has closed", async () => {
@@ -1226,6 +1380,50 @@ describe("plans signed in the owner's own wallet", () => {
         signature: otherSignature
       })
     ).rejects.toMatchObject({ code: "SIGNED_LIMIT" });
+  });
+
+  it("locks a bounded PlanAccount permission under the wallet owner", async () => {
+    const h = await harness({ planAccount: true, jobs: true });
+    const input = { ...guardInput, door: "plan_account", auditNoDataAccepted: true };
+    const preview = await h.service.preview(input);
+    expect(preview.valid).toBe(true);
+    expect(preview.permission).toMatchObject({
+      planHash: preview.planHash,
+      tokenIn: NVDA_TOKEN,
+      tokenOut: USDT,
+      maxAmount: expect.any(String)
+    });
+    const { template: _template, ...permission } = preview.permission!;
+    void _template;
+    const signature = await owner.signTypedData(
+      planPermissionTypedData(owner.address, deserializePlanPermission(permission))
+    );
+    const locked = await h.service.lockSigned({
+      plan: input,
+      owner: owner.address,
+      issuedAt: Math.floor(BEFORE_CLOSE / 1000),
+      permission,
+      permissionSignature: signature
+    });
+    expect(locked.status).toBe("locked");
+    expect(locked.owner).toBe(owner.address);
+    expect(locked.signedPermission).toMatchObject({
+      owner: owner.address,
+      signature,
+      delegationTx: h.permissionTrader!.delegationTx
+    });
+    expect(locked.signedPermission!.permission).toMatchObject({
+      ...permission,
+      tokenIn: expect.stringMatching(new RegExp(`^${NVDA_TOKEN}$`, "i"))
+    });
+    expect(h.permissionTrader!.ensured).toEqual([
+      { owner: owner.address, permission: preview.planHash }
+    ]);
+    expect(h.chain.freezes[0]).toMatchObject({ owner: owner.address, planHash: preview.planHash });
+    expect(h.jobs.kinds).toEqual(["official"]);
+    expect(await h.store.record()).toMatchObject({
+      items: [{ owner: owner.address, door: "plan_account", status: "locked" }]
+    });
   });
 });
 

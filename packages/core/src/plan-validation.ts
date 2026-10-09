@@ -207,8 +207,8 @@ export function validatePlan(plan: PlanContext, event: EventContext): PlanValida
     }
   }
 
-  if (plan.door !== undefined && plan.door !== "agentic_wallet") {
-    issues.push({ field: "door", message: "must be agentic_wallet when set." });
+  if (plan.door !== undefined && plan.door !== "agentic_wallet" && plan.door !== "plan_account") {
+    issues.push({ field: "door", message: "must be agentic_wallet or plan_account when set." });
   }
   if (plan.door !== undefined && plan.auditNoDataAccepted !== true) {
     issues.push({

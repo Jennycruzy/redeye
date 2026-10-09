@@ -33,10 +33,12 @@ export interface AgentApiConfig {
   a2a?: (request: IncomingMessage, response: ServerResponse) => void;
   /** The 24/7 price through one off-hours window, for the site's night strip. */
   night?: (ticker: string, closeTs?: number) => Promise<unknown>;
-  /** Locks a plan its owner signed in their own wallet; the signature is the authorization. */
+  /** Locks a promise-only or PlanAccount permission signed in the owner's wallet. */
   lockSigned?: (body: Record<string, unknown>) => Promise<unknown>;
   /** Checks a plan against the next lockable window; saves nothing. */
   preview?: (input: Record<string, unknown>) => Promise<unknown>;
+  /** Checks a standing run and returns its run hash plus one bounded permission. */
+  previewStanding?: (input: Record<string, unknown>) => Promise<unknown>;
   /** MCP over streamable HTTP at /mcp; absent when not set up. */
   mcp?: (request: Request, parsedBody: unknown) => Promise<Response>;
   /** x402 sales under /x402/; absent when the seller is not set up. */

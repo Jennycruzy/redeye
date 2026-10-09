@@ -40,6 +40,7 @@ contract PlanAccount {
     error AmountExceeded();
     error NativeValueMismatch();
     error InvalidPriceBand();
+    error InvalidRouterCall();
     error TokenApprovalFailed();
     error RouterCallFailed(bytes reason);
     error ReentrantCall();
@@ -55,6 +56,11 @@ contract PlanAccount {
     bytes32 private constant CALL_TYPEHASH = keccak256(
         "PlanSwapCall(bytes32 permissionHash,bytes32 planHash,bytes32 eventKey,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 referenceAmountOut,uint256 value,bytes32 dataHash)"
     );
+    // The approved v1.8 adapter currently emits Pancake V3 SmartRouter's
+    // exactInputSingle calldata. Do not forward arbitrary router methods from
+    // an owner-signed permission: that would let the agent change the recipient
+    // or invoke approvals/multicalls while keeping the same token pair.
+    bytes4 private constant EXACT_INPUT_SINGLE_SELECTOR = 0x04e45aaf;
 
     struct Permission {
         bytes32 planHash;
@@ -114,7 +120,20 @@ contract PlanAccount {
         return _permissionHash(permission);
     }
 
-    function permissionDigest(
+    /// @notice Returns the EIP-712 digest the owner signs once for a permission.
+    /// @dev The permission deliberately excludes live quote/router calldata. The
+    ///      account checks the eventual call against these bounds on chain.
+    function permissionDigest(Permission calldata permission) public view returns (bytes32) {
+        bytes32 permissionHashValue = _permissionHash(permission);
+        return keccak256(
+            abi.encodePacked("\x19\x01", _domainSeparator(), permissionHashValue)
+        );
+    }
+
+    /// @notice Returns the digest of a concrete call for audit tooling.
+    /// @dev This is not the execution authorization. Owners sign the bounded
+    ///      permission digest above; the call is validated separately below.
+    function callDigest(
         Permission calldata permission,
         SwapCall calldata swap
     ) public view returns (bytes32) {
@@ -134,9 +153,7 @@ contract PlanAccount {
                 keccak256(swap.data)
             )
         );
-        return keccak256(
-            abi.encodePacked("\x19\x01", _domainSeparator(), callHash)
-        );
+        return keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), callHash));
     }
 
     function revoke(Permission calldata permission) external {
@@ -146,9 +163,11 @@ contract PlanAccount {
         emit PermissionRevoked(hash, accountOwner());
     }
 
-    /// @notice Executes the exact call signed for a plan permission.
-    /// @dev The router calldata is part of the signed digest. The account also
-    ///      checks the token pair, amount cap, signed output band and deadline.
+    /// @notice Executes one call covered by an owner-signed plan permission.
+    /// @dev The account checks the live router calldata's token pair, amount cap,
+    ///      output band, frozen plan/window, and deadline on chain. This lets the
+    ///      agent obtain a fresh quote after the permission is signed without
+    ///      giving it authority outside the owner's explicit bounds.
     function executeSwap(
         Permission calldata permission,
         bytes calldata signature,
@@ -175,6 +194,7 @@ contract PlanAccount {
         if (swap.minAmountOut < minimumAllowed) revert InvalidPriceBand();
         if (swap.value != msg.value) revert NativeValueMismatch();
         if (permission.tokenIn != address(0) && swap.value != 0) revert NativeValueMismatch();
+        _validateRouterCall(permission, swap);
 
         bytes32 permissionHashValue = _permissionHash(permission);
         if (revoked[permissionHashValue]) revert PermissionIsRevoked();
@@ -193,13 +213,13 @@ contract PlanAccount {
             if (usedForWindow[useKey]) revert PermissionAlreadyUsed();
         }
 
-        bytes32 digest = permissionDigest(permission, swap);
+        bytes32 digest = permissionDigest(permission);
         if (!_validOwnerSignature(digest, signature)) revert InvalidSignature();
         if (executing) revert ReentrantCall();
         executing = true;
         if (permission.standingRunHash == bytes32(0)) used[permissionHashValue] = true;
         else usedForWindow[useKey] = true;
-        emit PermissionUsed(permissionHashValue, digest);
+        emit PermissionUsed(permissionHashValue, callDigest(permission, swap));
 
         if (permission.tokenIn != address(0)) {
             _approveExact(permission.tokenIn, permission.router, swap.amountIn);
@@ -300,5 +320,35 @@ contract PlanAccount {
         if (!success || (returned.length > 0 && !abi.decode(returned, (bool)))) {
             revert TokenApprovalFailed();
         }
+    }
+
+    function _validateRouterCall(Permission calldata permission, SwapCall calldata swap) private view {
+        if (swap.data.length < 4) revert InvalidRouterCall();
+        bytes calldata data = swap.data;
+        bytes4 selector;
+        assembly {
+            selector := calldataload(data.offset)
+        }
+        if (selector != EXACT_INPUT_SINGLE_SELECTOR) revert InvalidRouterCall();
+
+        (
+            address tokenIn,
+            address tokenOut,
+            uint24 fee,
+            address recipient,
+            uint256 amountIn,
+            uint256 amountOutMinimum,
+            uint160 sqrtPriceLimitX96
+        ) = abi.decode(swap.data[4:], (address, address, uint24, address, uint256, uint256, uint160));
+        fee;
+        sqrtPriceLimitX96;
+        if (
+            tokenIn != permission.tokenIn ||
+            tokenOut != permission.tokenOut ||
+            recipient != accountOwner() ||
+            amountIn != swap.amountIn ||
+            amountOutMinimum != swap.minAmountOut ||
+            sqrtPriceLimitX96 != 0
+        ) revert InvalidRouterCall();
     }
 }

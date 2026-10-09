@@ -12,6 +12,7 @@ The command checks:
 - the event key against ticker, event kind and expected date;
 - the plan hash against the canonical pre-freeze plan (`planId: null`);
 - the freeze block timestamp against the recorded lock boundary;
+- the optional `permissionTx` EIP-7702 delegation transaction hash;
 - every decision hash against its recorded input;
 - every fill transaction hash format;
 - the final verdict hash;

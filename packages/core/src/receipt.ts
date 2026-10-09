@@ -1,4 +1,4 @@
-import { encodePacked, keccak256 } from "viem";
+import { encodePacked, keccak256, type Hex } from "viem";
 import { hashCanonical } from "./canonical.js";
 import type { Decision, EventKind, PlanContext } from "./types.js";
 import type { EventRecord } from "./events.js";
@@ -70,6 +70,8 @@ export interface ReceiptBundle {
   planHash: `0x${string}`;
   freezeTx: `0x${string}`;
   freezeBlockTs: number;
+  /** EIP-7702 delegation transaction, when a wallet was delegated during lock. */
+  permissionTx?: Hex;
   decisions: Array<{ at: number; input: unknown; decision: Decision; decisionHash: `0x${string}` }>;
   fills: ReceiptFill[];
   reconciliation?: ReceiptReconciliation;

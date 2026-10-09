@@ -71,7 +71,8 @@ describe("agent HTTP boundary", () => {
         }
         return { ticker };
       },
-      preview: async (input) => ({ valid: true, input })
+      preview: async (input) => ({ valid: true, input }),
+      previewStanding: async (input) => ({ valid: true, standing: true, input })
     });
     expect((await api(request("/night/NVDA"))).body).toEqual({ ticker: "NVDA" });
     const query = new URLSearchParams({ close: "1791576000000" });
@@ -94,6 +95,13 @@ describe("agent HTTP boundary", () => {
     });
     const notObject = await api(request("/preview", { method: "POST", body: [1] }));
     expect(notObject.status).toBe(400);
+    const standing = await api(
+      request("/preview-standing", { method: "POST", body: { ticker: "NVDA", days: 3 } })
+    );
+    expect(standing).toMatchObject({
+      status: 200,
+      body: { valid: true, standing: true, input: { ticker: "NVDA", days: 3 } }
+    });
   });
 
   it("rejects writes without the owner token", async () => {
@@ -161,6 +169,13 @@ describe("agent HTTP boundary", () => {
     expect(stopped.body).toEqual({ id: "run-1", stopped: true });
     expect((await api(request("/standing/run-1"))).body).toEqual({ id: "run-1" });
     expect((await api(request("/standing", { method: "POST" }))).status).toBe(401);
+    const signed = await api(
+      request("/standing", {
+        method: "POST",
+        body: { door: "plan_account", owner: "0x0000000000000000000000000000000000000001" }
+      })
+    );
+    expect(signed.status).toBe(201);
     expect((await api(request("/standing/run-1/stop", { method: "POST" }))).status).toBe(401);
   });
 

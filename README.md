@@ -2,23 +2,24 @@ Redeye is the agent for when Wall Street is closed. It prices your stock from th
 
 Redeye reads the last US close, a source-labelled 24/7 equity price, and the token's own BNB Smart Chain price. It turns a plain plan into deterministic checks, publishes the plan fingerprint before the window starts, and keeps the result visible.
 
-Status: PlanBook and PlanAccount are live on BNB Smart Chain. The always-on agent
-locks off-hours plans, checks them every minute, can execute eligible plans through
-the connected Binance Agentic Wallet, and publishes their results at the open.
-The first production trigger-to-trade execution is still pending. Signed plans from
-other wallets currently lock a public promise only; their PlanAccount execution path
-is not connected yet.
+Status: PlanBook is live on BNB Smart Chain and the bounded PlanAccount path is
+implemented in the contract, agent and web signer. The existing PlanAccount address
+was deployed before this permission revision, so a new template deployment and a
+wallet provider that exposes EIP-7702 signing are still required before that door is
+called live. The always-on agent locks off-hours plans, checks them every minute,
+can execute eligible plans through the connected Binance Agentic Wallet, and
+publishes their results at the open.
 
 ## On chain
 
-| What                                                            | Address or transaction                                                                                                                            |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PlanBook                                                        | [`0xC7B860d561f2208c725ac9a873bf4eA5205e9057`](https://bscscan.com/address/0xC7B860d561f2208c725ac9a873bf4eA5205e9057)                            |
-| PlanAccount (shared permission code)                            | [`0x141B2a28895c12FD17209eC621496f0F9f1F1048`](https://bscscan.com/address/0x141B2a28895c12FD17209eC621496f0F9f1F1048)                            |
-| Agent                                                           | [`0xe201bbf3C736a5d188797974a7e4B9464f707eA8`](https://bscscan.com/address/0xe201bbf3C736a5d188797974a7e4B9464f707eA8)                            |
-| First x402 sale: NVDA 24/7 price, 0.002 U, settled by the agent | [settle](https://bscscan.com/tx/0x7dd090f39dfa8ba765a50c3dddc547418a9ac8e1d25244e97737cbf072e79a78) (team buyer wallet, labelled as our own test) |
-| PlanJobHook (team jobs)                                         | [`0x42a7F449e4950524c13deBC96a0549100b516594`](https://bscscan.com/address/0x42a7F449e4950524c13deBC96a0549100b516594)                            |
-| Plan 1: Guard on NVDA, 7 Oct overnight window                   | [lock](https://bscscan.com/tx/0x759ead4af86268d4015ab4074a58f2dc866ff8ee96dd077f85a5cd6ad2902092), 5 h 27 min before the close                    |
+| What                                                                                      | Address or transaction                                                                                                                            |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PlanBook                                                                                  | [`0xC7B860d561f2208c725ac9a873bf4eA5205e9057`](https://bscscan.com/address/0xC7B860d561f2208c725ac9a873bf4eA5205e9057)                            |
+| PlanAccount template (previous deployment; redeploy required for current permission code) | [`0x141B2a28895c12FD17209eC621496f0F9f1F1048`](https://bscscan.com/address/0x141B2a28895c12FD17209eC621496f0F9f1F1048)                            |
+| Agent                                                                                     | [`0xe201bbf3C736a5d188797974a7e4B9464f707eA8`](https://bscscan.com/address/0xe201bbf3C736a5d188797974a7e4B9464f707eA8)                            |
+| First x402 sale: NVDA 24/7 price, 0.002 U, settled by the agent                           | [settle](https://bscscan.com/tx/0x7dd090f39dfa8ba765a50c3dddc547418a9ac8e1d25244e97737cbf072e79a78) (team buyer wallet, labelled as our own test) |
+| PlanJobHook (team jobs)                                                                   | [`0x42a7F449e4950524c13deBC96a0549100b516594`](https://bscscan.com/address/0x42a7F449e4950524c13deBC96a0549100b516594)                            |
+| Plan 1: Guard on NVDA, 7 Oct overnight window                                             | [lock](https://bscscan.com/tx/0x759ead4af86268d4015ab4074a58f2dc866ff8ee96dd077f85a5cd6ad2902092), 5 h 27 min before the close                    |
 
 ## Start here
 
@@ -43,6 +44,9 @@ The current implementation establishes the first proof slice:
 - verbatim filing-value verification;
 - canonical plan, decision and verdict hashes;
 - a no-custody PlanBook contract with uniqueness and lifecycle tests;
+- a no-custody PlanAccount permission contract that checks one owner-signed
+  permission, Pancake exact-input calldata, price band, replay, revocation,
+  expiry and standing-run windows;
 - a typed agent HTTP boundary and Node 22 SQLite store with explicit empty and
   unconfigured states;
 - a live source-backed price service for the US close, 24/7 price and token price,
@@ -53,6 +57,8 @@ The current implementation establishes the first proof slice:
 - automatic post-window reconciliation of Agentic Wallet token and USDT
   transfers; publication waits if chain evidence is unavailable, and the
   reconciliation is included in the receipt fingerprint.
+- a wallet-signed PlanAccount relay path with EIP-7702 authorization capture,
+  one permission per plan or standing run, and `permissionTx` receipt evidence;
 - /data for the frozen weekend sample and enriched CSV, and /replay for
   trigger-only replays of the eight latest completed windows. Earnings-night
   data is not available yet and is kept separate from the weekend sample.
@@ -62,6 +68,15 @@ market-close window, then end as a confirmed action or a visible refusal. The
 current price view shows the US close, 24/7 price and token price with source
 timestamps. Until a live plan resolves, replay output must be labeled `REPLAY`
 and simulations must be labeled `SIMULATED`.
+
+### Wallet-door boundary
+
+The signed-wallet path uses a direct Pancake V3 quote/simulation adapter because
+the installed `baw` CLI exposes no Trading API transaction-data endpoint. The
+adapter is restricted on chain to Pancake `exactInputSingle`, binds the owner as
+recipient, and fails closed when the quote, router or EIP-7702 provider is not
+available. The deployed template above predates these checks; do not enable the
+wallet door until the replacement template is deployed and source-verified.
 
 ## Agent identity
 
@@ -103,13 +118,16 @@ pnpm contract:test
 ```
 
 The contract test suite is offline and does not deploy or move funds. The first live
-plan-triggered wallet execution, executable signed-wallet door, newcomer Telegram
-flow, and complete Agent Studio job evidence are not represented as complete yet.
+plan-triggered wallet execution and newcomer Telegram flow are still pending. The
+signed-wallet code path is covered offline, but its mainnet template redeployment,
+wallet-provider EIP-7702 support and a real small-value fork/mainnet swap remain
+release gates.
 
 The agent process requires Node 22, `OWNER_API_TOKEN` and `WEB_ORIGIN`. Build it
 with `pnpm agent:build`; it will refuse to start if those values are absent. The
-filing feed and executable signed-wallet permission path are not wired into the live
-plan service yet, so those paths return named errors instead of simulated success.
+filing feed and Binance Transaction API integration remain separate release gates;
+the PlanAccount adapter returns named quote/router/provider errors instead of
+simulated success when those prerequisites are unavailable.
 
 The web shell is source-driven and responsive at 360px. Build it with
 `pnpm web:build`. With no agent data it shows explicit empty/error states and a

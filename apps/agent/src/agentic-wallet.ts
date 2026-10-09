@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { NormalizedQuote, WalletContext } from "@redeye/core";
+import type { Address } from "viem";
 import Decimal from "decimal.js";
 
 const BSC_CHAIN_ID = "56";
@@ -110,6 +111,8 @@ export interface QuoteRequest {
   amount: string;
   /** The token's displayed price per real share, used to measure the quote's price impact. */
   displayedPricePerShare: string;
+  /** Recipient for a non-custodial PlanAccount quote; Agentic Wallet ignores it. */
+  account?: Address;
 }
 
 /**

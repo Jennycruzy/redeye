@@ -12,3 +12,4 @@ export * from "./standing.js";
 export * from "./types.js";
 export * from "./verify.js";
 export * from "./signed-plan.js";
+export * from "./plan-permission.js";

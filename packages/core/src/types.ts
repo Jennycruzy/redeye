@@ -1,4 +1,5 @@
 import type { Wrapper } from "@redeye/shared";
+import type { Hex } from "viem";
 
 export type EventKind =
   "overnight" | "weekend" | "holiday" | "earnings" | "scheduled_report" | "material_filing";
@@ -27,7 +28,7 @@ export interface ExtractedReport {
 }
 
 /** Who places the plan's trades. Absent means the plan never trades. */
-export type TradeDoor = "agentic_wallet";
+export type TradeDoor = "agentic_wallet" | "plan_account";
 
 export interface PlanContext {
   kind: PlanKind;
@@ -98,6 +99,15 @@ export interface NormalizedQuote {
   priceImpactPct: string;
   feeUsd: string;
   quotedAtMs: number;
+  /** Raw router call data for a PlanAccount execution, when the quote source provides it. */
+  execution?: {
+    router: `0x${string}`;
+    data: Hex;
+    value: string;
+    amountInRaw: string;
+    referenceAmountOutRaw: string;
+    fee: number;
+  };
 }
 
 export type QuoteCheckCode =

@@ -107,6 +107,21 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
           return error(400, "PLAN_INVALID", "Send the plan as a JSON object.", config);
         return json(200, await config.preview(request.body as Record<string, unknown>), config);
       }
+      if (request.method === "POST" && root === "preview-standing" && parts.length === 1) {
+        if (!config.previewStanding)
+          return error(404, "NOT_FOUND", "Standing plan checks are not served here.", config);
+        if (
+          typeof request.body !== "object" ||
+          request.body === null ||
+          Array.isArray(request.body)
+        )
+          return error(400, "PLAN_INVALID", "Send the standing plan as a JSON object.", config);
+        return json(
+          200,
+          await config.previewStanding(request.body as Record<string, unknown>),
+          config
+        );
+      }
       if (request.method === "GET" && root === "study" && parts.length === 1)
         return json(200, await store.study(), config);
       if (request.method === "GET" && root === "calendar" && parts.length === 1) {
@@ -210,7 +225,13 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
       if (request.method === "GET" && root === "standing" && id !== undefined && parts.length === 2)
         return json(200, await store.standingGet(id), config);
       if (request.method === "POST" && root === "standing" && parts.length === 1) {
-        if (!ownerAuthorized(request, config))
+        const body = request.body;
+        const signedWalletStanding =
+          typeof body === "object" &&
+          body !== null &&
+          !Array.isArray(body) &&
+          (body as Record<string, unknown>).door === "plan_account";
+        if (!ownerAuthorized(request, config) && !signedWalletStanding)
           return error(
             401,
             "OWNER_AUTH_REQUIRED",

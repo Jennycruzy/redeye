@@ -16,7 +16,14 @@ import {
 } from "../lib/format";
 import { useAgent, useNow } from "../lib/hooks";
 import { Link, useLocation } from "../lib/router";
-import { connect, discoverWallets, signPlan, type WalletChoice } from "../lib/wallet";
+import {
+  connect,
+  discoverWallets,
+  signDelegation,
+  signPlan,
+  signPlanPermission,
+  type WalletChoice
+} from "../lib/wallet";
 import { lastFinishedClose, replayResult } from "../lib/replay";
 
 type Kind = "guard" | "buy_dip" | "sell_rise" | "hold";
@@ -173,7 +180,7 @@ const DOORS = [
     id: "signed",
     name: "Sign it with your wallet",
     state: "Live",
-    body: "MetaMask, Trust Wallet, Binance Web3 Wallet or Rabby signs the promise. It goes on chain under your address and Redeye pays the network fee. No funds move: the plan is watched all night and graded at the open, in your name."
+    body: "Your wallet signs one bounded PlanAccount permission and, where needed, an EIP-7702 delegation. The agent can make only this plan's swap; your funds stay in your wallet and the chain rejects anything else."
   },
   {
     id: "agentic",
@@ -184,8 +191,8 @@ const DOORS = [
   {
     id: "wallet",
     name: "Trade from your own wallet",
-    state: "Contract live",
-    body: "Your wallet signs one permission for one plan. PlanAccount on BNB Chain lets the agent make exactly that trade and refuses anything else. The signing page for trades is in progress."
+    state: "Built",
+    body: "Your wallet signs one bounded permission for one plan or standing run. PlanAccount on BNB Chain lets the agent make only the approved swap and refuses anything else."
   },
   {
     id: "newcomer",
@@ -209,6 +216,9 @@ export default function Start() {
   const [door, setDoor] = useState("signed");
   const [standing, setStanding] = useState(false);
   const [days, setDays] = useState(5);
+  const [standingRunId] = useState(
+    () => globalThis.crypto?.randomUUID?.() ?? `standing-${Math.random().toString(36).slice(2)}`
+  );
 
   const chooseKind = (next: Kind) => {
     setKind(next);
@@ -229,14 +239,35 @@ export default function Start() {
     if (kind === "buy_dip") params.maxUsd = String(amount);
     return { ticker, kind, heldShares: kind === "buy_dip" ? "0" : held || "0", params };
   }, [ticker, kind, trigger, share, amount, held]);
-  const debounced = useDebounced(plan, 250);
+  // The door is part of the canonical plan hash. Preview the exact input that
+  // the signed lock will submit, otherwise the permission's planHash would be
+  // for a door-less draft and PlanBook would correctly reject the mismatch.
+  const previewPlan = useMemo(
+    () =>
+      door === "signed" && (kind !== "hold" || standing)
+        ? {
+            ...plan,
+            ...(standing ? { days, runId: standingRunId } : {}),
+            door: "plan_account",
+            auditNoDataAccepted: true
+          }
+        : door === "agentic"
+          ? {
+              ...plan,
+              ...(standing ? { days, runId: standingRunId } : {}),
+              door: "agentic_wallet",
+              auditNoDataAccepted: true
+            }
+          : { ...plan, ...(standing ? { days, runId: standingRunId } : {}) },
+    [days, door, plan, standing, standingRunId]
+  );
+  const debounced = useDebounced(previewPlan, 250);
 
   const [preview, setPreview] = useState<PlanPreview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
-    agent
-      .preview(debounced)
+    (standing ? agent.previewStanding(debounced) : agent.preview(debounced))
       .then((value) => active && (setPreview(value), setPreviewError(null)))
       .catch(
         (error: unknown) =>
@@ -245,7 +276,7 @@ export default function Start() {
     return () => {
       active = false;
     };
-  }, [debounced]);
+  }, [debounced, standing]);
 
   const replayClose = useMemo(() => lastFinishedClose(now), [Math.floor(now / 600_000)]);
   const replay = useAgent(() => agent.night(ticker, replayClose), [ticker, replayClose]);
@@ -617,14 +648,20 @@ export default function Start() {
                 </div>
                 <div className="lockbox__how">
                   {door === "signed" ? (
-                    <SignAndLock plan={plan} preview={preview} />
+                    <SignAndLock
+                      plan={plan}
+                      preview={preview}
+                      standing={standing}
+                      days={days}
+                      runId={standingRunId}
+                    />
                   ) : door === "agentic" ? (
                     <>
                       <p>
                         With a Binance Agentic Wallet paired to a Redeye agent, this is exactly the
                         plan it locks. Copy it and send it to the agent before the deadline.
                       </p>
-                      <CopyPlan plan={plan} />
+                      <CopyPlan plan={previewPlan} />
                     </>
                   ) : (
                     <>
@@ -632,7 +669,7 @@ export default function Start() {
                         This door is not open yet. Your plan is ready: copy it, and watch plans #2
                         and #3 run through the Agentic Wallet this weekend in the meantime.
                       </p>
-                      <CopyPlan plan={plan} />
+                      <CopyPlan plan={previewPlan} />
                     </>
                   )}
                   <Link to="/record" className="arrowlink">
@@ -658,33 +695,91 @@ type SignState =
   | { step: "choosing"; wallets: WalletChoice[] }
   | { step: "busy"; label: string }
   | { step: "done"; id: string; planId: number; tx: string; owner: string }
+  | { step: "standing-done"; id: string; owner: string }
   | { step: "error"; message: string };
 
-/** Connect, sign the exact promise, and have the agent lock it under the signer's address. */
-function SignAndLock({ plan, preview }: { plan: Record<string, unknown>; preview: PlanPreview }) {
+/** Connect, sign the bounded permission, and have the agent lock it under the signer's address. */
+function SignAndLock({
+  plan,
+  preview,
+  standing,
+  days,
+  runId
+}: {
+  plan: Record<string, unknown>;
+  preview: PlanPreview;
+  standing: boolean;
+  days: number;
+  runId: string;
+}) {
   const [state, setState] = useState<SignState>({ step: "idle" });
 
   const lockWith = async (wallet: WalletChoice) => {
     try {
       setState({ step: "busy", label: `Connecting ${wallet.name}…` });
       const owner = await connect(wallet);
-      setState({ step: "busy", label: "Check the promise in your wallet and sign it…" });
-      const { signature, issuedAt } = await signPlan(wallet, {
-        promise: preview.promise,
-        owner,
-        ticker: String(plan.ticker),
-        planHash: preview.planHash,
-        windowCloseMs: preview.window.closeTs
-      });
-      setState({ step: "busy", label: "Locking it on BNB Chain…" });
-      const locked = await agent.lockSigned({ plan, owner, issuedAt, signature });
-      setState({
-        step: "done",
-        id: locked.id,
-        planId: locked.planId,
-        tx: locked.freeze.txHash,
-        owner
-      });
+      if (!standing && String(plan.kind) === "hold") {
+        setState({ step: "busy", label: "Check the promise in your wallet and sign it…" });
+        const { signature, issuedAt } = await signPlan(wallet, {
+          promise: preview.promise,
+          owner,
+          ticker: String(plan.ticker),
+          planHash: preview.planHash,
+          windowCloseMs: preview.window.closeTs
+        });
+        setState({ step: "busy", label: "Locking it on BNB Chain…" });
+        const locked = await agent.lockSigned({ plan, owner, issuedAt, signature });
+        setState({
+          step: "done",
+          id: locked.id,
+          planId: locked.planId,
+          tx: locked.freeze.txHash,
+          owner
+        });
+        return;
+      }
+      if (preview.permission === undefined) {
+        throw new Error(
+          "The agent has not configured a PlanAccount template and approved router yet."
+        );
+      }
+      setState({ step: "busy", label: "Check the bounded trade permission in your wallet…" });
+      const { signature, issuedAt } = await signPlanPermission(wallet, owner, preview.permission);
+      setState({ step: "busy", label: "Authorize the PlanAccount delegation…" });
+      const authorization = await signDelegation(wallet, owner, preview.permission.template);
+      if (standing) {
+        setState({ step: "busy", label: "Starting the standing run on BNB Chain…" });
+        const started = await agent.startStanding({
+          ...plan,
+          days,
+          runId,
+          door: "plan_account",
+          auditNoDataAccepted: true,
+          owner,
+          issuedAt,
+          permission: preview.permission,
+          permissionSignature: signature,
+          authorization
+        });
+        setState({ step: "standing-done", id: String(started.id), owner });
+      } else {
+        setState({ step: "busy", label: "Locking it on BNB Chain…" });
+        const locked = await agent.lockSigned({
+          plan: { ...plan, door: "plan_account", auditNoDataAccepted: true },
+          owner,
+          issuedAt,
+          permission: preview.permission,
+          permissionSignature: signature,
+          authorization
+        });
+        setState({
+          step: "done",
+          id: locked.id,
+          planId: locked.planId,
+          tx: locked.freeze.txHash,
+          owner
+        });
+      }
     } catch (error) {
       setState({
         step: "error",
@@ -713,8 +808,8 @@ function SignAndLock({ plan, preview }: { plan: Record<string, unknown>; preview
       <div className="locked" role="status">
         <p className="locked__title">Locked as plan #{state.planId}, in your name.</p>
         <p>
-          PlanBook now holds it under {state.owner.slice(0, 6)}…{state.owner.slice(-4)}. It cannot
-          be changed, and it will be graded at the open whatever happens.
+          PlanBook now holds it under {state.owner.slice(0, 6)}…{state.owner.slice(-4)}. The bounded
+          permission is recorded with it; the agent cannot use it for another plan.
         </p>
         <TxLink hash={state.tx}>lock transaction</TxLink>
         <Link to={`/runs/${state.id}`} className="arrowlink">
@@ -723,11 +818,25 @@ function SignAndLock({ plan, preview }: { plan: Record<string, unknown>; preview
       </div>
     );
   }
+  if (state.step === "standing-done") {
+    return (
+      <div className="locked" role="status">
+        <p className="locked__title">Standing run started in your name.</p>
+        <p>
+          PlanBook will receive one frozen copy before each close for {days} days. The same bounded
+          permission can be used once per window and expires with this run.
+        </p>
+        <Link to="/record" className="arrowlink">
+          Follow it in the public record
+        </Link>
+      </div>
+    );
+  }
   return (
     <>
       <p>
-        Your wallet will show the promise word for word. Signing is free and moves no funds; Redeye
-        pays the network fee to lock it.
+        Your wallet will show the exact token, amount, router and time bounds. Signing authorizes
+        one bounded swap; it moves no funds and Redeye pays the network fee to lock it.
       </p>
       {state.step === "choosing" ? (
         <div className="walletlist">

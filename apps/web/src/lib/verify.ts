@@ -319,7 +319,7 @@ export async function checkRun(
     detail: `${verdict.outcome}${verdict.openPrice ? `, open ${verdict.openPrice}` : ""}`
   });
 
-  if (run.plan.door === "agentic_wallet") {
+  if (run.plan.door === "agentic_wallet" || run.plan.door === "plan_account") {
     const reconciliation = run.reconciliation;
     if (!reconciliation) {
       push({

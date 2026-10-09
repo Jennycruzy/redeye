@@ -15,6 +15,11 @@ import {
   SIGNED_PLAN_DOMAIN,
   SIGNED_PLAN_MAX_AGE_S,
   SIGNED_PLAN_TYPES,
+  PLAN_PERMISSION_TYPES,
+  planPermissionDomain,
+  serializePlanPermission,
+  type PlanPermission,
+  type SerializedPlanPermission,
   validatePlan,
   verifyReceipt,
   type Decision,
@@ -43,6 +48,7 @@ import {
   type Address,
   type Hex
 } from "viem";
+import { recoverAuthorizationAddress } from "viem/experimental";
 import type { JobBook, JobKind, JobState } from "./job-chain.js";
 import type { ChainWrite, Outcome, PlanChain } from "./plan-chain.js";
 import type { PriceSnapshotOk } from "./price-service.js";
@@ -68,6 +74,10 @@ export interface PlanPreview {
   issues: Array<{ field: string; message: string }>;
   promise?: string;
   planHash?: Hex;
+  runId?: string;
+  runHash?: Hex;
+  /** Fields the owner will sign for the PlanAccount door (amounts are raw units). */
+  permission?: SerializedPlanPermission & { template: Address };
   window?: { kind: string; closeTs: number; openTs: number; lockBy: number };
 }
 
@@ -100,6 +110,50 @@ export interface Trader {
   swap(quote: NormalizedQuote, slippagePct: string): Promise<OrderResult>;
   waitForOrder(orderId: string): Promise<OrderResult>;
   findOrder(quote: NormalizedQuote, sinceMs: number, replyId?: string): Promise<OrderResult | null>;
+}
+
+/**
+ * The non-custodial PlanAccount door. It shares quote/order lookup semantics with
+ * Agentic Wallet, but the final swap is relayed through the owner's account and
+ * requires the permission captured at lock time.
+ */
+export interface PermissionTrader {
+  address(): Promise<Address>;
+  context(
+    requiredQuotaUsd: string,
+    requiredUntilMs: number,
+    account?: Address
+  ): Promise<WalletContext>;
+  quote(request: QuoteRequest): Promise<NormalizedQuote>;
+  swap(
+    quote: NormalizedQuote,
+    slippagePct: string,
+    permission: StoredPermission
+  ): Promise<OrderResult>;
+  waitForOrder(orderId: string): Promise<OrderResult>;
+  findOrder(quote: NormalizedQuote, sinceMs: number, replyId?: string): Promise<OrderResult | null>;
+  /** Installs the EIP-7702 delegation if needed; returns its transaction when sent. */
+  ensureAccount(owner: Address, permission: StoredPermission): Promise<Hex | null>;
+}
+
+export interface StoredAuthorization {
+  contractAddress: Address;
+  chainId: number;
+  nonce: number;
+  yParity: number;
+  r: Hex;
+  s: Hex;
+}
+
+export interface StoredPermission {
+  owner: Address;
+  permission: SerializedPlanPermission;
+  signature: Hex;
+  authorization?: StoredAuthorization;
+  delegationTx?: Hex;
+  /** Unsigned per-copy context needed by a standing permission at execution. */
+  planHash?: Hex;
+  eventKey?: Hex;
 }
 
 /** The plan's ERC-8183 job. Each step is saved before the next, so a retry never opens a second job. */
@@ -151,6 +205,8 @@ export interface StoredPlan {
   input: Record<string, unknown>;
   /** Set when the owner signed the plan in their own wallet and the agent locked it for them. */
   signedBy?: { owner: Address; signature: Hex; issuedAt: number };
+  /** The bounded PlanAccount permission and optional EIP-7702 delegation signature. */
+  signedPermission?: StoredPermission;
   plan?: PlanContext;
   event?: EventRecord;
   planHash?: Hex;
@@ -199,9 +255,8 @@ export interface PlanRecordItem {
   /** The plan's own numbers (trigger, share of holding, limits), for drawing it. */
   params: PlanContext["params"];
   heldShares: string;
-  /** "agentic_wallet" when the plan may trade through the Agentic Wallet; "signed" when its
-   * owner signed it in their own wallet (a promise only, no trading). */
-  door: "agentic_wallet" | "signed" | null;
+  /** The execution door used by the plan, or signed for a promise-only lock. */
+  door: "agentic_wallet" | "plan_account" | "signed" | null;
   /** The decision written on chain once the trigger was hit or the window ended. */
   decisionTx: Hex | null;
   decidedAt: number | null;
@@ -244,6 +299,8 @@ export interface StoredStanding {
   owner: Address;
   run: StandingPlanRun;
   runHash: Hex;
+  /** One owner-signed permission reused once per frozen window when this is a wallet run. */
+  signedPermission?: StoredPermission;
   /** Keyed by the night's event key. */
   nights: Record<string, StandingNight>;
   lastError?: { at: string; message: string };
@@ -286,6 +343,10 @@ export interface PlanServiceOptions {
   reconcileWindow?(plans: StoredPlan[], event: EventRecord): Promise<ReceiptReconciliation>;
   /** Null until a wallet is connected; plans that may trade are then refused. */
   trader?: Trader | null;
+  /** The user's own wallet/account path; null until a relayer is configured. */
+  permissionTrader?: PermissionTrader | null;
+  /** Immutable PlanAccount template and approved swap router used by permissions. */
+  planAccount?: { template: Address; router: Address; maxPriceDeviationBps?: bigint };
   /** Null or absent when no job buyer is configured; plans then lock without a job. */
   jobs?: JobBook | null;
   /** How many plans in total get a team job as well; 0 or absent turns team jobs off. */
@@ -347,6 +408,104 @@ function ageSeconds(fetchedAt: string, atMs: number): number {
 }
 
 const USDT_ADDRESS: Address = "0x55d398326f99059fF775485246999027B3197955";
+
+const ZERO_HASH: Hex = `0x${"00".repeat(32)}`;
+
+function jsonObject(value: unknown, field: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new PlanError(400, "PERMISSION_INVALID", `${field} must be an object.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function hex32(value: unknown, field: string): Hex {
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(value)) {
+    throw new PlanError(400, "PERMISSION_INVALID", `${field} must be a 32-byte hex value.`);
+  }
+  return value as Hex;
+}
+
+function addressField(value: unknown, field: string): Address {
+  if (typeof value !== "string" || !isAddress(value)) {
+    throw new PlanError(400, "PERMISSION_INVALID", `${field} must be an address.`);
+  }
+  return getAddress(value);
+}
+
+function uintField(value: unknown, field: string): bigint {
+  if (typeof value !== "string" && typeof value !== "number" && typeof value !== "bigint") {
+    throw new PlanError(400, "PERMISSION_INVALID", `${field} must be an integer.`);
+  }
+  try {
+    const parsed = BigInt(value);
+    if (parsed < 0n) throw new Error("negative");
+    return parsed;
+  } catch {
+    throw new PlanError(400, "PERMISSION_INVALID", `${field} must be a non-negative integer.`);
+  }
+}
+
+function permissionFromBody(value: unknown): PlanPermission {
+  const body = jsonObject(value, "permission");
+  return {
+    planHash: hex32(body.planHash, "permission.planHash"),
+    standingRunHash: hex32(body.standingRunHash ?? ZERO_HASH, "permission.standingRunHash"),
+    agent: addressField(body.agent, "permission.agent"),
+    tokenIn: addressField(body.tokenIn, "permission.tokenIn"),
+    tokenOut: addressField(body.tokenOut, "permission.tokenOut"),
+    maxAmount: uintField(body.maxAmount, "permission.maxAmount"),
+    router: addressField(body.router, "permission.router"),
+    notBefore: uintField(body.notBefore, "permission.notBefore"),
+    notAfter: uintField(body.notAfter, "permission.notAfter"),
+    maxPriceDeviationBps: uintField(body.maxPriceDeviationBps, "permission.maxPriceDeviationBps")
+  };
+}
+
+function permissionsEqual(actual: PlanPermission, expected: PlanPermission): boolean {
+  const a = serializePlanPermission(actual);
+  const e = serializePlanPermission(expected);
+  return (
+    a.planHash.toLowerCase() === e.planHash.toLowerCase() &&
+    a.standingRunHash.toLowerCase() === e.standingRunHash.toLowerCase() &&
+    a.agent.toLowerCase() === e.agent.toLowerCase() &&
+    a.tokenIn.toLowerCase() === e.tokenIn.toLowerCase() &&
+    a.tokenOut.toLowerCase() === e.tokenOut.toLowerCase() &&
+    a.maxAmount === e.maxAmount &&
+    a.router.toLowerCase() === e.router.toLowerCase() &&
+    a.notBefore === e.notBefore &&
+    a.notAfter === e.notAfter &&
+    a.maxPriceDeviationBps === e.maxPriceDeviationBps
+  );
+}
+
+function authorizationFromBody(value: unknown): StoredAuthorization | undefined {
+  if (value === undefined || value === null) return undefined;
+  const body = jsonObject(value, "authorization");
+  const yParity = uintField(body.yParity, "authorization.yParity");
+  if (yParity > 1n) {
+    throw new PlanError(400, "PERMISSION_INVALID", "authorization.yParity must be 0 or 1.");
+  }
+  const chainId = uintField(body.chainId, "authorization.chainId");
+  const nonce = uintField(body.nonce, "authorization.nonce");
+  if (chainId > 4_294_967_295n || nonce > 4_294_967_295n) {
+    throw new PlanError(
+      400,
+      "PERMISSION_INVALID",
+      "authorization chainId and nonce are too large."
+    );
+  }
+  return {
+    contractAddress: addressField(
+      body.contractAddress ?? body.address,
+      "authorization.contractAddress"
+    ),
+    chainId: Number(chainId),
+    nonce: Number(nonce),
+    yParity: Number(yParity),
+    r: hex32(body.r, "authorization.r"),
+    s: hex32(body.s, "authorization.s")
+  };
+}
 
 /** USD per real share actually achieved, from the amounts that moved on chain. */
 function actionPricePerShare(trade: StoredTrade): string {
@@ -427,6 +586,59 @@ export class PlanService {
     this.newId = options.newId ?? randomUUID;
   }
 
+  /** Builds the exact bounded permission the wallet signs for this frozen plan. */
+  private async permissionForPlan(
+    plan: PlanContext,
+    event: EventRecord,
+    planHash: Hex,
+    standingRunHash = ZERO_HASH
+  ): Promise<PlanPermission> {
+    const account = this.options.planAccount;
+    if (!account) {
+      throw new PlanError(
+        503,
+        "PLAN_ACCOUNT_NOT_CONFIGURED",
+        "The PlanAccount template and approved swap router are not configured."
+      );
+    }
+    if (event.lockTs === null || event.openTs === null) {
+      throw new PlanError(400, "PERMISSION_INVALID", "The plan window has no lock or open time.");
+    }
+    const listed = await this.options.listedToken(plan.ticker);
+    if (listed === null) {
+      throw new PlanError(400, "TOKEN_NOT_LISTED", `${plan.ticker} has no listed token.`);
+    }
+    const multiplier = new Decimal(listed.multiplier);
+    const rawScale = new Decimal(10).pow(18);
+    // The permission amount is expressed in raw token units. Buy plans spend
+    // USDT (18 decimals); sells convert real shares back through the listed
+    // token multiplier before applying the same scale.
+    let maxAmount = new Decimal(0);
+    if (plan.kind === "buy_dip") {
+      maxAmount = new Decimal(plan.params.maxUsd ?? "0").mul(rawScale);
+    } else if (plan.kind === "guard" || plan.kind === "sell_rise") {
+      maxAmount = new Decimal(plan.heldShares)
+        .mul(plan.params.sellPct ?? "0")
+        .div(100)
+        .div(multiplier)
+        .mul(rawScale);
+    }
+    const impact = new Decimal(plan.params.maxPriceImpactPct ?? "1");
+    const bps = account.maxPriceDeviationBps ?? BigInt(impact.mul(100).ceil().toFixed(0));
+    return {
+      planHash,
+      standingRunHash,
+      agent: this.requireConfiguredChain().agentAddress,
+      tokenIn: (plan.kind === "buy_dip" ? USDT_ADDRESS : plan.tokenAddress) as Address,
+      tokenOut: (plan.kind === "buy_dip" ? plan.tokenAddress : USDT_ADDRESS) as Address,
+      maxAmount: BigInt(maxAmount.floor().toFixed(0)),
+      router: account.router,
+      notBefore: BigInt(Math.floor(event.lockTs / 1000)),
+      notAfter: BigInt(Math.floor(event.openTs / 1000)),
+      maxPriceDeviationBps: bps
+    };
+  }
+
   /**
    * Checks a plan against tonight's window without saving or locking anything, and says
    * what it would promise. Used by the MCP draft tool.
@@ -435,7 +647,37 @@ export class PlanService {
     const atMs = this.now();
     let plan: PlanContext;
     try {
-      plan = await this.planFromInput(input, null);
+      if (input.door === "plan_account" && !this.options.permissionTrader) {
+        return {
+          valid: false,
+          issues: [
+            {
+              field: "PLAN_ACCOUNT_NOT_CONFIGURED",
+              message: "The PlanAccount relayer is not enabled on this agent."
+            }
+          ]
+        };
+      }
+      // A browser asks for the signed-door preview before it has connected the
+      // owner's wallet. Do not read the relayer's balance as a proxy for the
+      // owner; the lock endpoint repeats the holdings check after the address
+      // and signature arrive.
+      const accountPreview =
+        input.door === "plan_account" &&
+        (typeof input.owner !== "string" || !isAddress(input.owner));
+      if (accountPreview) {
+        const draft = { ...input };
+        delete draft.door;
+        delete draft.auditNoDataAccepted;
+        const base = await this.planFromInput(draft, null);
+        plan = {
+          ...base,
+          door: "plan_account",
+          auditNoDataAccepted: input.auditNoDataAccepted === true
+        };
+      } else {
+        plan = await this.planFromInput(input, null);
+      }
     } catch (error) {
       if (!(error instanceof PlanError)) throw error;
       return { valid: false, issues: [{ field: error.code, message: error.message }] };
@@ -448,13 +690,136 @@ export class PlanService {
     if (atMs >= lockBy) {
       issues.push({ field: "lockTs", message: "Tonight's lock time has passed." });
     }
+    const planHash = hashPlan(plan);
+    const permission =
+      this.options.planAccount === undefined || plan.kind === "hold"
+        ? undefined
+        : serializePlanPermission(await this.permissionForPlan(plan, event, planHash));
     return {
       valid: issues.length === 0,
       issues,
       promise: describePlan(plan),
-      planHash: hashPlan(plan),
+      planHash,
+      ...(permission === undefined
+        ? {}
+        : { permission: { ...permission, template: this.options.planAccount!.template } }),
       window: { kind: window.kind, closeTs: window.closeTs, openTs: window.openTs, lockBy }
     };
+  }
+
+  /**
+   * Previews a standing run, including the single permission that covers every
+   * future copy. The returned runId is supplied back to startStanding so the
+   * owner signs the same standingRunHash that PlanBook will publish.
+   */
+  async previewStanding(input: Record<string, unknown>): Promise<PlanPreview> {
+    const atMs = this.now();
+    try {
+      const days = Number(input.days);
+      if (!Number.isInteger(days) || days < 1 || days > 30) {
+        return {
+          valid: false,
+          issues: [{ field: "days", message: "must be a whole number from 1 to 30." }]
+        };
+      }
+      if (input.door === "plan_account" && !this.options.permissionTrader) {
+        return {
+          valid: false,
+          issues: [
+            {
+              field: "PLAN_ACCOUNT_NOT_CONFIGURED",
+              message: "The PlanAccount relayer is not enabled on this agent."
+            }
+          ]
+        };
+      }
+      const runId =
+        typeof input.runId === "string" && input.runId.trim().length > 0
+          ? input.runId.trim()
+          : this.newId();
+      const accountPreview =
+        input.door === "plan_account" &&
+        (typeof input.owner !== "string" || !isAddress(input.owner));
+      const draft = accountPreview ? { ...input } : input;
+      if (accountPreview) {
+        delete draft.door;
+        delete draft.auditNoDataAccepted;
+      }
+      let plan = await this.planFromInput(
+        draft,
+        runId,
+        accountPreview
+          ? undefined
+          : typeof input.owner === "string" && isAddress(input.owner)
+            ? getAddress(input.owner)
+            : undefined
+      );
+      if (accountPreview) {
+        plan = {
+          ...plan,
+          door: "plan_account",
+          auditNoDataAccepted: input.auditNoDataAccepted === true
+        };
+      }
+      const run = createStandingRun({
+        runId,
+        template: plan,
+        startAtMs: atMs,
+        untilTs: atMs + days * 86_400_000
+      });
+      const copies = expandStandingPlan(run).filter((copy) => copy.lockByMs > atMs);
+      const [first] = copies;
+      if (first === undefined) {
+        return {
+          valid: false,
+          issues: [{ field: "days", message: "the run covers no market close." }]
+        };
+      }
+      const issues = validatePlan(plan, eventContext(first.event)).issues;
+      if (atMs >= planLockDeadlineMs(eventContext(first.event))) {
+        issues.push({ field: "lockTs", message: "Tonight's lock time has passed." });
+      }
+      const runHash = hashCanonical({
+        runId: run.runId,
+        template: run.template,
+        startAtMs: run.startAtMs,
+        untilTs: run.untilTs
+      });
+      const planHash = hashPlan(plan);
+      const last = copies[copies.length - 1]!;
+      const permission =
+        this.options.planAccount === undefined ||
+        (plan.kind === "hold" && plan.door !== "plan_account")
+          ? undefined
+          : serializePlanPermission(
+              await this.permissionForPlan(
+                plan,
+                { ...first.event, openTs: last.event.openTs },
+                ZERO_HASH,
+                runHash
+              )
+            );
+      return {
+        valid: issues.length === 0,
+        issues,
+        promise: describePlan(plan),
+        planHash,
+        runId,
+        runHash,
+        ...(permission === undefined
+          ? {}
+          : { permission: { ...permission, template: this.options.planAccount!.template } }),
+        window: {
+          kind: first.window.kind,
+          closeTs: first.window.closeTs,
+          openTs: first.window.openTs,
+          lockBy: planLockDeadlineMs(eventContext(first.event))
+        }
+      };
+    } catch (error) {
+      if (!(error instanceof PlanError)) throw error;
+      return { valid: false, issues: [{ field: error.code, message: error.message }] };
+    }
   }
 
   async lock(id: string): Promise<StoredPlan> {
@@ -477,14 +842,20 @@ export class PlanService {
     }
     const validation = validatePlan(plan, context);
     if (!validation.valid) throw invalid(validation.issues);
+    if (plan.door === "plan_account") {
+      throw new PlanError(
+        400,
+        "PERMISSION_REQUIRED",
+        "A PlanAccount plan must include the owner's signed permission; use the wallet lock flow."
+      );
+    }
     return this.freeze(chain, stored, plan, event);
   }
 
   /**
-   * Locks a plan its owner signed in their own wallet. The agent rebuilds the plan, its
-   * sentence and fingerprint from the input, checks that the signature over exactly those
-   * recovers the owner, then locks it in PlanBook under the owner's address and pays the
-   * gas. These plans are promises only: no trading door, no paid job, a daily cap.
+   * Locks a plan signed by an external wallet. The legacy no-door form remains a
+   * public promise; `door: plan_account` carries the bounded PlanPermission that
+   * authorizes one later trade through the owner's account.
    */
   async lockSigned(body: Record<string, unknown>): Promise<StoredPlan> {
     const chain = this.requireConfiguredChain();
@@ -493,21 +864,20 @@ export class PlanService {
       throw new PlanError(400, "PLAN_INVALID", "Send the plan as an object.");
     }
     const planInput = { ...(input as Record<string, unknown>) };
-    if (planInput.door !== undefined && planInput.door !== null) {
-      throw new PlanError(
-        400,
-        "PLAN_INVALID",
-        "A signed plan is a promise only; it has no trading door."
-      );
+    const accountDoor = planInput.door === "plan_account";
+    if (planInput.door !== undefined && planInput.door !== null && !accountDoor) {
+      throw new PlanError(400, "PLAN_INVALID", "The wallet lock door must be plan_account.");
     }
-    delete planInput.door;
-    delete planInput.auditNoDataAccepted;
+    if (!accountDoor) {
+      delete planInput.door;
+      delete planInput.auditNoDataAccepted;
+    }
     if (typeof body.owner !== "string" || !isAddress(body.owner)) {
       throw new PlanError(400, "OWNER_INVALID", "owner must be a wallet address.");
     }
     const owner = getAddress(body.owner);
     const issuedAt = Number(body.issuedAt);
-    const signature = body.signature;
+    const signature = accountDoor ? (body.permissionSignature ?? body.signature) : body.signature;
     if (typeof signature !== "string" || !/^0x[0-9a-fA-F]+$/.test(signature)) {
       throw new PlanError(400, "SIGNATURE_INVALID", "signature must be a hex string.");
     }
@@ -522,7 +892,7 @@ export class PlanService {
       );
     }
 
-    const plan = await this.planFromInput(planInput, null);
+    const plan = await this.planFromInput(planInput, null, owner);
     const window = lockableWindow(atMs);
     const event = createWindowRecord(window.kind, plan.ticker, window.closeTs, window.openTs);
     const context = eventContext(event);
@@ -536,37 +906,130 @@ export class PlanService {
     const validation = validatePlan(plan, context);
     if (!validation.valid) throw invalid(validation.issues);
 
-    const message = signedPlanMessage({
-      promise: describePlan(plan),
-      owner,
-      ticker: plan.ticker,
-      planHash: hashPlan(plan),
-      windowCloseMs: window.closeTs,
-      issuedAtS: issuedAt
-    });
+    const planHash = hashPlan(plan);
+    let signedPermission: StoredPermission | undefined;
     let signer: Address;
-    try {
-      signer = await recoverTypedDataAddress({
-        domain: SIGNED_PLAN_DOMAIN,
-        types: SIGNED_PLAN_TYPES,
-        primaryType: "Plan",
-        message,
-        signature: signature as Hex
+    if (accountDoor) {
+      if (!this.options.permissionTrader || !this.options.planAccount) {
+        throw new PlanError(
+          503,
+          "PLAN_ACCOUNT_NOT_CONFIGURED",
+          "The PlanAccount relayer is not configured on this agent."
+        );
+      }
+      const permission = permissionFromBody(body.permission);
+      const expected = await this.permissionForPlan(plan, event, planHash);
+      const actual = serializePlanPermission(permission);
+      if (!permissionsEqual(permission, expected)) {
+        throw new PlanError(
+          400,
+          "PERMISSION_MISMATCH",
+          "The signed permission does not match this frozen plan's token, amount, router or window."
+        );
+      }
+      try {
+        signer = await recoverTypedDataAddress({
+          domain: planPermissionDomain(owner),
+          types: PLAN_PERMISSION_TYPES,
+          primaryType: "PlanPermission",
+          message: permission,
+          signature: signature as Hex
+        });
+      } catch {
+        throw new PlanError(
+          400,
+          "SIGNATURE_INVALID",
+          "The permission signature could not be read."
+        );
+      }
+      const authorization = authorizationFromBody(body.authorization);
+      if (authorization !== undefined) {
+        if (
+          authorization.contractAddress.toLowerCase() !==
+            this.options.planAccount.template.toLowerCase() ||
+          authorization.chainId !== 56
+        ) {
+          throw new PlanError(
+            400,
+            "AUTHORIZATION_MISMATCH",
+            "The delegation must target Redeye's PlanAccount template on BNB Smart Chain."
+          );
+        }
+        try {
+          const recoverSignedAuthorization = recoverAuthorizationAddress as unknown as (input: {
+            authorization: {
+              address: Address;
+              chainId: number;
+              nonce: number;
+              yParity: number;
+              r: Hex;
+              s: Hex;
+            };
+          }) => Promise<Address>;
+          const recovered = await recoverSignedAuthorization({
+            authorization: {
+              address: authorization.contractAddress,
+              chainId: authorization.chainId,
+              nonce: authorization.nonce,
+              yParity: authorization.yParity,
+              r: authorization.r,
+              s: authorization.s
+            }
+          });
+          if (recovered.toLowerCase() !== owner.toLowerCase()) {
+            throw new Error("wrong owner");
+          }
+        } catch {
+          throw new PlanError(
+            403,
+            "AUTHORIZATION_MISMATCH",
+            "The EIP-7702 delegation signature does not match this wallet."
+          );
+        }
+      }
+      signedPermission = {
+        owner,
+        permission: actual,
+        signature: signature as Hex,
+        ...(authorization === undefined ? {} : { authorization })
+      };
+    } else {
+      const message = signedPlanMessage({
+        promise: describePlan(plan),
+        owner,
+        ticker: plan.ticker,
+        planHash,
+        windowCloseMs: window.closeTs,
+        issuedAtS: issuedAt
       });
-    } catch {
-      throw new PlanError(400, "SIGNATURE_INVALID", "The signature could not be read.");
+      try {
+        signer = await recoverTypedDataAddress({
+          domain: SIGNED_PLAN_DOMAIN,
+          types: SIGNED_PLAN_TYPES,
+          primaryType: "Plan",
+          message,
+          signature: signature as Hex
+        });
+      } catch {
+        throw new PlanError(400, "SIGNATURE_INVALID", "The signature could not be read.");
+      }
     }
     if (signer.toLowerCase() !== owner.toLowerCase()) {
       throw new PlanError(
         403,
         "SIGNATURE_MISMATCH",
-        "The signature does not match this plan and address. Sign the plan shown, from this wallet."
+        accountDoor
+          ? "The permission signature does not match this wallet."
+          : "The signature does not match this plan and address. Sign the plan shown, from this wallet."
       );
     }
 
     const cap = this.options.signedDailyCap ?? 20;
     const recent = (await this.options.store.listPlans()).filter(
-      (p) => p.signedBy && p.freeze && atMs - p.freeze.blockTs * 1000 < 86_400_000
+      (p) =>
+        (p.signedBy !== undefined || p.signedPermission !== undefined) &&
+        p.freeze !== undefined &&
+        atMs - p.freeze.blockTs * 1000 < 86_400_000
     ).length;
     if (recent >= cap) {
       throw new PlanError(
@@ -576,16 +1039,35 @@ export class PlanService {
       );
     }
 
+    if (accountDoor) {
+      const delegationTx = await this.options.permissionTrader!.ensureAccount(
+        owner,
+        signedPermission!
+      );
+      if (delegationTx !== null) {
+        signedPermission = { ...signedPermission!, delegationTx };
+      }
+    }
+
     const signed: StoredPlan = {
       v: 1,
       id: this.newId(),
       status: "draft",
       createdAt: new Date(atMs).toISOString(),
       input: planInput,
-      signedBy: { owner, signature: signature as Hex, issuedAt }
+      signedBy: { owner, signature: signature as Hex, issuedAt },
+      ...(signedPermission === undefined ? {} : { signedPermission })
     };
     await this.options.store.savePlan(signed);
-    return this.freeze(chain, signed, plan, event, undefined, { owner, jobs: false });
+    return this.freeze(
+      chain,
+      signed,
+      plan,
+      event,
+      undefined,
+      // Promise-only locks do not open a paid job; executable permissions do.
+      { owner, jobs: accountDoor }
+    );
   }
 
   /**
@@ -599,8 +1081,26 @@ export class PlanService {
       throw new PlanError(400, "PLAN_INVALID", "days must be a whole number from 1 to 30.");
     }
     const atMs = this.now();
-    const id = this.newId();
-    const template = await this.planFromInput(input, id);
+    const id =
+      typeof input.runId === "string" && input.runId.trim().length > 0
+        ? input.runId.trim()
+        : this.newId();
+    const accountDoor = input.door === "plan_account";
+    let owner = chain.agentAddress;
+    if (accountDoor) {
+      if (!this.options.permissionTrader || !this.options.planAccount) {
+        throw new PlanError(
+          503,
+          "PLAN_ACCOUNT_NOT_CONFIGURED",
+          "The PlanAccount relayer is not configured on this agent."
+        );
+      }
+      if (typeof input.owner !== "string" || !isAddress(input.owner)) {
+        throw new PlanError(400, "OWNER_INVALID", "owner must be a wallet address.");
+      }
+      owner = getAddress(input.owner);
+    }
+    const template = await this.planFromInput(input, id, accountDoor ? owner : undefined);
     let run: StandingPlanRun;
     try {
       run = createStandingRun({
@@ -616,25 +1116,132 @@ export class PlanService {
         error instanceof Error ? error.message : String(error)
       );
     }
-    const [first] = expandStandingPlan(run).filter((copy) => copy.lockByMs > atMs);
+    const copies = expandStandingPlan(run).filter((copy) => copy.lockByMs > atMs);
+    const [first] = copies;
     if (first === undefined) {
       throw new PlanError(400, "PLAN_INVALID", "The run covers no market close.");
     }
     const validation = validatePlan(template, eventContext(first.event));
     if (!validation.valid) throw invalid(validation.issues);
+    const runHash = hashCanonical({
+      runId: run.runId,
+      template: run.template,
+      startAtMs: run.startAtMs,
+      untilTs: run.untilTs
+    });
+    let signedPermission: StoredPermission | undefined;
+    if (accountDoor) {
+      const issuedAt = Number(input.issuedAt);
+      const age = Math.floor(atMs / 1000) - issuedAt;
+      if (!Number.isInteger(issuedAt) || age < -60 || age > SIGNED_PLAN_MAX_AGE_S) {
+        throw new PlanError(
+          400,
+          "SIGNATURE_EXPIRED",
+          "The standing permission is too old; sign the run again."
+        );
+      }
+      const signature = input.permissionSignature ?? input.signature;
+      if (typeof signature !== "string" || !/^0x[0-9a-fA-F]+$/.test(signature)) {
+        throw new PlanError(400, "SIGNATURE_INVALID", "permissionSignature must be a hex string.");
+      }
+      const permission = permissionFromBody(input.permission);
+      const last = copies[copies.length - 1]!;
+      const permissionWindow = { ...first.event, openTs: last.event.openTs };
+      const expected = await this.permissionForPlan(template, permissionWindow, ZERO_HASH, runHash);
+      if (!permissionsEqual(permission, expected)) {
+        throw new PlanError(
+          400,
+          "PERMISSION_MISMATCH",
+          "The standing permission does not match this run's token, amount, router or bounds."
+        );
+      }
+      let signer: Address;
+      try {
+        signer = await recoverTypedDataAddress({
+          domain: planPermissionDomain(owner),
+          types: PLAN_PERMISSION_TYPES,
+          primaryType: "PlanPermission",
+          message: permission,
+          signature: signature as Hex
+        });
+      } catch {
+        throw new PlanError(
+          400,
+          "SIGNATURE_INVALID",
+          "The standing permission signature could not be read."
+        );
+      }
+      if (signer.toLowerCase() !== owner.toLowerCase()) {
+        throw new PlanError(
+          403,
+          "SIGNATURE_MISMATCH",
+          "The standing permission does not match this wallet."
+        );
+      }
+      const authorization = authorizationFromBody(input.authorization);
+      if (authorization !== undefined) {
+        if (
+          authorization.contractAddress.toLowerCase() !==
+            this.options.planAccount!.template.toLowerCase() ||
+          authorization.chainId !== 56
+        ) {
+          throw new PlanError(
+            400,
+            "AUTHORIZATION_MISMATCH",
+            "The delegation must target Redeye's PlanAccount template on BNB Smart Chain."
+          );
+        }
+        try {
+          const recoverSignedAuthorization = recoverAuthorizationAddress as unknown as (input: {
+            authorization: {
+              address: Address;
+              chainId: number;
+              nonce: number;
+              yParity: number;
+              r: Hex;
+              s: Hex;
+            };
+          }) => Promise<Address>;
+          const recovered = await recoverSignedAuthorization({
+            authorization: {
+              address: authorization.contractAddress,
+              chainId: authorization.chainId,
+              nonce: authorization.nonce,
+              yParity: authorization.yParity,
+              r: authorization.r,
+              s: authorization.s
+            }
+          });
+          if (recovered.toLowerCase() !== owner.toLowerCase()) throw new Error("wrong owner");
+        } catch {
+          throw new PlanError(
+            403,
+            "AUTHORIZATION_MISMATCH",
+            "The EIP-7702 delegation signature does not match this wallet."
+          );
+        }
+      }
+      signedPermission = {
+        owner,
+        permission: serializePlanPermission(permission),
+        signature: signature as Hex,
+        ...(authorization === undefined ? {} : { authorization })
+      };
+      const delegationTx = await this.options.permissionTrader!.ensureAccount(
+        owner,
+        signedPermission
+      );
+      if (delegationTx !== null) signedPermission = { ...signedPermission, delegationTx };
+    }
     const standing: StoredStanding = {
       v: 1,
       id,
       status: "active",
       createdAt: new Date(atMs).toISOString(),
-      owner: chain.agentAddress,
+      owner,
       run,
-      runHash: hashCanonical({
-        runId: run.runId,
-        template: run.template,
-        startAtMs: run.startAtMs,
-        untilTs: run.untilTs
-      }),
+      runHash,
+      ...(signedPermission === undefined ? {} : { signedPermission }),
       nights: {}
     };
     await this.options.store.saveStanding(standing);
@@ -758,7 +1365,9 @@ export class PlanService {
       if (!group.some((plan) => plan.status === "decided")) continue;
 
       try {
-        const tradingPlans = group.filter((plan) => plan.plan?.door === "agentic_wallet");
+        const tradingPlans = group.filter(
+          (plan) => plan.plan?.door === "agentic_wallet" || plan.plan?.door === "plan_account"
+        );
         if (tradingPlans.length > 0 && !this.options.reconcileWindow) {
           throw new Error(
             "Transfer reconciliation is not configured; the trading result was not published."
@@ -773,7 +1382,9 @@ export class PlanService {
           await this.publishResult(
             plan,
             this.now(),
-            plan.plan?.door === "agentic_wallet" ? reconciliation : undefined
+            plan.plan?.door === "agentic_wallet" || plan.plan?.door === "plan_account"
+              ? reconciliation
+              : undefined
           );
         }
       } catch (error) {
@@ -866,14 +1477,18 @@ export class PlanService {
         id: `${standing.id}-${copy.sequence}`,
         status: "draft",
         createdAt: new Date(atMs).toISOString(),
-        input: { standingRunId: standing.id, sequence: copy.sequence }
+        input: { standingRunId: standing.id, sequence: copy.sequence },
+        ...(standing.signedPermission === undefined
+          ? {}
+          : { signedPermission: standing.signedPermission })
       };
       const locked = await this.freeze(
         this.requireConfiguredChain(),
         draft,
         copy.plan,
         copy.event,
-        standing.runHash
+        standing.runHash,
+        { owner: standing.owner, jobs: true }
       );
       nights[key] = {
         sequence: copy.sequence,
@@ -933,7 +1548,8 @@ export class PlanService {
 
   private async planFromInput(
     input: Record<string, unknown>,
-    standingRunId: string | null
+    standingRunId: string | null,
+    walletOverride?: Address
   ): Promise<PlanContext> {
     const ticker = text(input.ticker, "ticker").toUpperCase();
     const kind = text(input.kind, "kind") as PlanKind;
@@ -961,20 +1577,28 @@ export class PlanService {
       params: paramsFrom(input)
     };
     if (input.door === undefined || input.door === null) return plan;
-    if (input.door !== "agentic_wallet") {
-      throw new PlanError(400, "PLAN_INVALID", "door must be agentic_wallet when set.");
-    }
-    if (!this.options.trader) {
+    if (input.door !== "agentic_wallet" && input.door !== "plan_account") {
       throw new PlanError(
-        503,
-        "WALLET_NOT_CONNECTED",
-        "No Agentic Wallet is connected, so this plan could not trade."
+        400,
+        "PLAN_INVALID",
+        "door must be agentic_wallet or plan_account when set."
       );
     }
-    await this.requireHoldings(plan, token.multiplier);
+    const wallet =
+      input.door === "agentic_wallet" ? this.options.trader : this.options.permissionTrader;
+    if (!wallet) {
+      throw new PlanError(
+        503,
+        input.door === "plan_account" ? "PLAN_ACCOUNT_NOT_CONFIGURED" : "WALLET_NOT_CONNECTED",
+        input.door === "plan_account"
+          ? "The PlanAccount relayer is not configured, so this plan could not trade."
+          : "No Agentic Wallet is connected, so this plan could not trade."
+      );
+    }
+    await this.requireHoldings(plan, token.multiplier, walletOverride ?? (await wallet.address()));
     return {
       ...plan,
-      door: "agentic_wallet",
+      door: input.door,
       auditNoDataAccepted: input.auditNoDataAccepted === true
     };
   }
@@ -983,9 +1607,12 @@ export class PlanService {
    * A plan that may trade must be backed by what the wallet holds now: the shares it
    * names, or for Buy the dip the USDT it would spend. Read from the chain, not the wallet.
    */
-  private async requireHoldings(plan: PlanContext, multiplier: string): Promise<void> {
+  private async requireHoldings(
+    plan: PlanContext,
+    multiplier: string,
+    wallet: Address
+  ): Promise<void> {
     const chain = this.requireConfiguredChain();
-    const wallet = await this.options.trader!.address();
     if (plan.kind === "buy_dip") {
       const usdt = new Decimal(await chain.balance(USDT_ADDRESS, wallet));
       const needed = new Decimal(plan.params.maxUsd ?? "0");
@@ -1051,7 +1678,17 @@ export class PlanService {
       planHash,
       owner,
       planId: freeze.planId,
-      freeze
+      freeze,
+      ...(withJob.signedPermission !== undefined &&
+      withJob.signedPermission.permission.standingRunHash.toLowerCase() !== ZERO_HASH
+        ? {
+            signedPermission: {
+              ...withJob.signedPermission,
+              planHash,
+              eventKey: event.eventKey as Hex
+            }
+          }
+        : {})
     };
     await this.options.store.savePlan(locked);
     await this.options.store.saveRunEvent(stored.id, "locked", {
@@ -1299,7 +1936,7 @@ export class PlanService {
       // EXECUTION_DISABLED means the trigger and price checks passed; a plan that may
       // trade is now checked again with a real quote and the wallet's limits.
       if (!atOpen && plan.door !== undefined && decision.refusal?.code === "EXECUTION_DISABLED") {
-        const armed = await this.tradeInput(plan, input);
+        const armed = await this.tradeInput(plan, input, stored);
         if (armed !== null) {
           input = armed;
           decision = decide(armed);
@@ -1318,8 +1955,13 @@ export class PlanService {
   }
 
   /** The decision input with a checked quote and the wallet's state, or null without a wallet. */
-  private async tradeInput(plan: PlanContext, input: DecisionInput): Promise<DecisionInput | null> {
-    const trader = this.options.trader;
+  private async tradeInput(
+    plan: PlanContext,
+    input: DecisionInput,
+    stored?: StoredPlan
+  ): Promise<DecisionInput | null> {
+    const trader =
+      plan.door === "plan_account" ? this.options.permissionTrader : this.options.trader;
     if (!trader) return null;
     const token = await this.options.listedToken(plan.ticker);
     if (token === null) return null;
@@ -1337,12 +1979,15 @@ export class PlanService {
         .toString();
       orderUsd = new Decimal(amount);
     }
+    const account =
+      plan.door === "plan_account" ? stored?.signedPermission?.owner : await trader.address();
     const quote = await trader.quote({
       side,
       tokenAddress: plan.tokenAddress,
       multiplier: token.multiplier,
       amount,
-      displayedPricePerShare: input.prices.T
+      displayedPricePerShare: input.prices.T,
+      ...(account === undefined ? {} : { account })
     });
     const checked = checkQuote({
       ticker: plan.ticker,
@@ -1357,7 +2002,11 @@ export class PlanService {
       checkedAtMs: this.now(),
       displayedPricePerShare: input.prices.T
     });
-    const wallet = await trader.context(orderUsd.toDecimalPlaces(2).toString(), this.now());
+    const wallet = await trader.context(
+      orderUsd.toDecimalPlaces(2).toString(),
+      this.now(),
+      account
+    );
     return {
       ...input,
       executionEnabled: true,
@@ -1383,7 +2032,8 @@ export class PlanService {
    * chain before this runs, so the promise always comes before the trade.
    */
   private async trade(stored: StoredPlan): Promise<StoredPlan> {
-    const trader = this.options.trader;
+    const accountDoor = stored.plan?.door === "plan_account";
+    const trader = accountDoor ? this.options.permissionTrader : this.options.trader;
     const decision = stored.decision;
     if (!trader || decision === undefined)
       throw new Error("No wallet is connected for this trade.");
@@ -1394,7 +2044,7 @@ export class PlanService {
     let trade = stored.trade;
     if (trade === undefined) {
       trade = {
-        wallet: await trader.address(),
+        wallet: stored.signedPermission?.owner ?? (await trader.address()),
         quote,
         check,
         submittedAt: this.now(),
@@ -1404,7 +2054,10 @@ export class PlanService {
       };
       await this.options.store.savePlan({ ...stored, trade });
       const slippage = stored.plan?.params.maxPriceImpactPct ?? "1";
-      trade = { ...trade, order: await trader.swap(quote, slippage) };
+      const order = accountDoor
+        ? await this.options.permissionTrader!.swap(quote, slippage, this.requirePermission(stored))
+        : await this.options.trader!.swap(quote, slippage);
+      trade = { ...trade, order };
     } else if (trade.order === null) {
       const found = await trader.findOrder(quote, trade.submittedAt);
       // Saved as sent, but the wallet has no such order: the swap never left the agent.
@@ -1438,6 +2091,13 @@ export class PlanService {
       received: trade.received
     });
     return next;
+  }
+
+  private requirePermission(stored: StoredPlan): StoredPermission {
+    if (stored.signedPermission === undefined) {
+      throw new Error(`Plan ${stored.id} has no signed PlanAccount permission.`);
+    }
+    return stored.signedPermission;
   }
 
   private async decisionInput(
@@ -1602,6 +2262,9 @@ export class PlanService {
       planHash,
       freezeTx: freeze.txHash,
       freezeBlockTs: freeze.blockTs * 1000,
+      ...(stored.signedPermission?.delegationTx === undefined
+        ? {}
+        : { permissionTx: stored.signedPermission.delegationTx }),
       decisions: [
         {
           at: decision.at,

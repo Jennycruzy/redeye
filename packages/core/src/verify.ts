@@ -39,6 +39,13 @@ export function verifyReceipt(receipt: ReceiptBundle): ReceiptVerification {
   } catch (error) {
     errors.push(error instanceof Error ? error.message : String(error));
   }
+  if (receipt.permissionTx !== undefined) {
+    try {
+      transactionHash(receipt.permissionTx, "permissionTx");
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
 
   const decisionHashes = receipt.decisions.map((entry, index) => {
     const hash = hashDecision(entry.input, entry.decision);
@@ -64,7 +71,10 @@ export function verifyReceipt(receipt: ReceiptBundle): ReceiptVerification {
   if (receipt.verdict.outcome === "kept" && hasTradeDecision && receipt.fills.length === 0) {
     errors.push("a kept trade receipt must include at least one confirmed fill.");
   }
-  const needsReconciliation = receipt.plan.door === "agentic_wallet" || receipt.fills.length > 0;
+  const needsReconciliation =
+    receipt.plan.door === "agentic_wallet" ||
+    receipt.plan.door === "plan_account" ||
+    receipt.fills.length > 0;
   const reconciliation = receipt.reconciliation;
   if (needsReconciliation && reconciliation === undefined) {
     errors.push("a trading receipt must include transfer reconciliation evidence.");

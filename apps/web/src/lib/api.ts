@@ -1,4 +1,6 @@
 /** Typed reads from the Redeye agent. Every number the site shows comes through here. */
+import type { SerializedPlanPermission } from "@redeye/core";
+import type { Address } from "viem";
 
 export interface PricePoint {
   value: string;
@@ -73,7 +75,7 @@ export interface RecordItem {
   teamJobState: string | null;
   params?: PlanParams;
   heldShares?: string;
-  door?: "agentic_wallet" | "signed" | null;
+  door?: "agentic_wallet" | "plan_account" | "signed" | null;
   decisionTx?: string | null;
   decidedAt?: number | null;
   action?: string | null;
@@ -133,6 +135,9 @@ export interface PlanPreview {
   issues: Array<{ field: string; message: string }>;
   promise: string;
   planHash: string;
+  runId?: string;
+  runHash?: string;
+  permission?: SerializedPlanPermission & { template: Address };
   window: { kind: string; closeTs: number; openTs: number; lockBy: number };
 }
 
@@ -217,14 +222,34 @@ export const agent = {
     plan: Record<string, unknown>;
     owner: string;
     issuedAt: number;
-    signature: string;
+    signature?: string;
+    permission?: SerializedPlanPermission & { template: Address };
+    permissionSignature?: string;
+    authorization?: {
+      contractAddress: string;
+      chainId: number;
+      nonce: number;
+      yParity: number;
+      r: string;
+      s: string;
+    };
   }) =>
     request<{ id: string; planId: number; freeze: { txHash: string } }>("/signed-plans", {
       method: "POST",
       body: JSON.stringify(body)
     }),
   preview: (plan: Record<string, unknown>) =>
-    request<PlanPreview>("/preview", { method: "POST", body: JSON.stringify(plan) })
+    request<PlanPreview>("/preview", { method: "POST", body: JSON.stringify(plan) }),
+  previewStanding: (plan: Record<string, unknown>) =>
+    request<PlanPreview>("/preview-standing", {
+      method: "POST",
+      body: JSON.stringify(plan)
+    }),
+  startStanding: (body: Record<string, unknown>) =>
+    request<Record<string, unknown>>("/standing", {
+      method: "POST",
+      body: JSON.stringify(body)
+    })
 };
 
 export const AGENT_BASE = BASE;

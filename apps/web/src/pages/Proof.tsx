@@ -55,7 +55,11 @@ const REAL = [
   ["x402 sales of the 24/7 price", "Live", "First settled sale on 8 Oct"],
   ["MCP and A2A doors for other agents", "Live", "Read-only; a plan check saves nothing"],
   ["ERC-8004 identity", "Live", "Agent #368521 on BNB Chain's identity registry"],
-  ["Wallet door through PlanAccount", "Contract live", "Signing page in progress"],
+  [
+    "Wallet door through PlanAccount",
+    "Code wired",
+    "A new template deployment and a wallet with EIP-7702 signing are still required for live use"
+  ],
   ["Telegram and Face ID for newcomers", "In progress", "Not live yet"]
 ] as const;
 

@@ -4,6 +4,7 @@ import { loadEnvFile } from "node:process";
 import type { Address, Hex } from "viem";
 import { fetchRwaList, parseRwaList, storeRawRecord } from "@redeye/clients";
 import { AgenticWallet, createBawRunner, walletStatus } from "./agentic-wallet.js";
+import { PANCAKE_SMART_ROUTER_BSC, PlanAccountTrader } from "./plan-account.js";
 import { buildIdentityCard, identityConfigFromEnv } from "./identity.js";
 import { B402Client } from "@bnb-chain/b402/server";
 import { createJobBook } from "./job-chain.js";
@@ -70,6 +71,7 @@ const windowService = new WindowService({
 });
 const planBookAddress = process.env.PLANBOOK_ADDRESS?.trim();
 const agentKey = process.env.AGENT_PRIVATE_KEY?.trim();
+const asKey = (key: string) => (key.startsWith("0x") ? key : `0x${key}`) as Hex;
 const planChain =
   planBookAddress && agentKey
     ? createPlanChain({
@@ -82,6 +84,37 @@ const planChain =
 // are then refused at lock time instead of failing later.
 const trader =
   process.env.EXECUTION_ENABLED === "true" ? new AgenticWallet(createBawRunner()) : null;
+const planAccountTemplate = process.env.PLANACCOUNT_ADDRESS?.trim();
+const planAccountRouter = (process.env.PLAN_ACCOUNT_ROUTER_ADDRESS?.trim() ||
+  PANCAKE_SMART_ROUTER_BSC) as Address;
+const planAccount =
+  planAccountTemplate && agentKey
+    ? { template: planAccountTemplate as Address, router: planAccountRouter }
+    : null;
+const tokenPoolCache = new Map<string, Address | null>();
+const permissionTrader =
+  process.env.EXECUTION_ENABLED === "true" && planAccount && agentKey
+    ? new PlanAccountTrader({
+        rpcUrl: process.env.BSC_RPC_URL_LIVE ?? "https://bsc-dataseed.bnbchain.org",
+        privateKey: asKey(agentKey),
+        template: planAccount.template,
+        router: planAccount.router,
+        poolForToken: async (token) => {
+          const key = token.toLowerCase();
+          if (tokenPoolCache.has(key)) return tokenPoolCache.get(key)!;
+          let found: Address | null = null;
+          for (const ticker of Object.keys(poolMap)) {
+            const listed = await listedBstock(rawRoot, ticker);
+            if (listed?.address.toLowerCase() === key) {
+              found = (poolMap[ticker]?.address as Address | undefined) ?? null;
+              break;
+            }
+          }
+          tokenPoolCache.set(key, found);
+          return found;
+        }
+      })
+    : null;
 let rwaTokenAddresses: Promise<string[]> | null = null;
 const allBscRwaTokenAddresses = (): Promise<string[]> => {
   if (rwaTokenAddresses !== null) return rwaTokenAddresses;
@@ -102,7 +135,6 @@ const allBscRwaTokenAddresses = (): Promise<string[]> => {
 };
 // Each locked plan becomes an ERC-8183 job only when a separate team buyer wallet is set.
 const buyerKey = process.env.JOB_BUYER_PRIVATE_KEY?.trim();
-const asKey = (key: string) => (key.startsWith("0x") ? key : `0x${key}`) as Hex;
 const jobs =
   buyerKey && agentKey && planChain
     ? createJobBook({
@@ -116,13 +148,15 @@ const planService = new PlanService({
   store,
   chain: planChain,
   trader,
+  permissionTrader,
+  ...(planAccount === null ? {} : { planAccount }),
   jobs,
   teamJobLimit: Number(process.env.TEAM_JOB_LIMIT ?? "0"),
   signedDailyCap: Number(process.env.SIGNED_PLAN_DAILY_CAP ?? "20"),
   latestPrice: (ticker) => store.latestPrice(ticker),
   listedToken: (ticker) => listedBstock(rawRoot, ticker),
   officialOpen: (ticker, date) => nasdaqOfficialOpen(rawRoot, ticker, date),
-  ...(trader && planChain
+  ...(planChain && (trader || permissionTrader)
     ? {
         reconcileWindow: async (plans, event) =>
           reconcilePlanWindow(plans, event, {
@@ -131,7 +165,7 @@ const planService = new PlanService({
               process.env.BSC_RPC_URL_ARCHIVE?.trim() ||
               process.env.BSC_RPC_URL_LIVE?.trim() ||
               "https://bsc-dataseed.bnbchain.org",
-            walletAddress: await trader.address(),
+            walletAddress: trader ? await trader.address() : planChain.agentAddress,
             stockTokenAddresses: await allBscRwaTokenAddresses()
           })
       }
@@ -249,6 +283,7 @@ const server = startAgentServer(
     a2a,
     night,
     preview: (input) => planService.preview(input),
+    previewStanding: (input) => planService.previewStanding(input),
     lockSigned: (body) => planService.lockSigned(body),
     mcp: createMcpHandler(readSources, AGENT_VERSION)
   },
