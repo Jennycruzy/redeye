@@ -132,6 +132,12 @@ export interface PermissionTrader {
   ): Promise<OrderResult>;
   waitForOrder(orderId: string): Promise<OrderResult>;
   findOrder(quote: NormalizedQuote, sinceMs: number, replyId?: string): Promise<OrderResult | null>;
+  /** Returns null for an EOA/EIP-7702 account, or ERC-1271 validity for a deployed account. */
+  verifyPermission?(
+    owner: Address,
+    permission: PlanPermission,
+    signature: Hex
+  ): Promise<boolean | null>;
   /** Installs the EIP-7702 delegation if needed; returns its transaction when sent. */
   ensureAccount(owner: Address, permission: StoredPermission): Promise<Hex | null>;
 }
@@ -639,6 +645,45 @@ export class PlanService {
     };
   }
 
+  /** Checks a standalone ERC-1271 PlanAccount before falling back to EIP-712 EOA recovery. */
+  private async permissionSigner(
+    owner: Address,
+    permission: PlanPermission,
+    signature: Hex,
+    mismatchMessage: string
+  ): Promise<Address> {
+    const verifyContract = this.options.permissionTrader?.verifyPermission;
+    if (verifyContract !== undefined) {
+      const contractResult = await verifyContract(owner, permission, signature);
+      if (contractResult !== null) {
+        if (!contractResult) {
+          throw new PlanError(
+            400,
+            "SIGNATURE_INVALID",
+            "The passkey assertion did not authorize this permission."
+          );
+        }
+        return owner;
+      }
+    }
+    let signer: Address;
+    try {
+      signer = await recoverTypedDataAddress({
+        domain: planPermissionDomain(owner),
+        types: PLAN_PERMISSION_TYPES,
+        primaryType: "PlanPermission",
+        message: permission,
+        signature
+      });
+    } catch {
+      throw new PlanError(400, "SIGNATURE_INVALID", "The permission signature could not be read.");
+    }
+    if (signer.toLowerCase() !== owner.toLowerCase()) {
+      throw new PlanError(403, "SIGNATURE_MISMATCH", mismatchMessage);
+    }
+    return signer;
+  }
+
   /**
    * Checks a plan against tonight's window without saving or locking anything, and says
    * what it would promise. Used by the MCP draft tool.
@@ -933,21 +978,12 @@ export class PlanService {
           "The signed permission does not match this frozen plan's token, amount, router or window."
         );
       }
-      try {
-        signer = await recoverTypedDataAddress({
-          domain: planPermissionDomain(owner),
-          types: PLAN_PERMISSION_TYPES,
-          primaryType: "PlanPermission",
-          message: permission,
-          signature: signature as Hex
-        });
-      } catch {
-        throw new PlanError(
-          400,
-          "SIGNATURE_INVALID",
-          "The permission signature could not be read."
-        );
-      }
+      signer = await this.permissionSigner(
+        owner,
+        permission,
+        signature as Hex,
+        "The permission signature does not match this wallet."
+      );
       const authorization = authorizationFromBody(body.authorization);
       if (authorization !== undefined) {
         if (
@@ -1020,13 +1056,11 @@ export class PlanService {
         throw new PlanError(400, "SIGNATURE_INVALID", "The signature could not be read.");
       }
     }
-    if (signer.toLowerCase() !== owner.toLowerCase()) {
+    if (!accountDoor && signer.toLowerCase() !== owner.toLowerCase()) {
       throw new PlanError(
         403,
         "SIGNATURE_MISMATCH",
-        accountDoor
-          ? "The permission signature does not match this wallet."
-          : "The signature does not match this plan and address. Sign the plan shown, from this wallet."
+        "The signature does not match this plan and address. Sign the plan shown, from this wallet."
       );
     }
 
@@ -1161,29 +1195,12 @@ export class PlanService {
           "The standing permission does not match this run's token, amount, router or bounds."
         );
       }
-      let signer: Address;
-      try {
-        signer = await recoverTypedDataAddress({
-          domain: planPermissionDomain(owner),
-          types: PLAN_PERMISSION_TYPES,
-          primaryType: "PlanPermission",
-          message: permission,
-          signature: signature as Hex
-        });
-      } catch {
-        throw new PlanError(
-          400,
-          "SIGNATURE_INVALID",
-          "The standing permission signature could not be read."
-        );
-      }
-      if (signer.toLowerCase() !== owner.toLowerCase()) {
-        throw new PlanError(
-          403,
-          "SIGNATURE_MISMATCH",
-          "The standing permission does not match this wallet."
-        );
-      }
+      await this.permissionSigner(
+        owner,
+        permission,
+        signature as Hex,
+        "The standing permission does not match this wallet."
+      );
       const authorization = authorizationFromBody(input.authorization);
       if (authorization !== undefined) {
         if (

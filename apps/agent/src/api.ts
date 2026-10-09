@@ -1,5 +1,6 @@
 import type { AgentApiConfig, AgentRequest, AgentResponse, AgentStore } from "./types.js";
 import { StoreError } from "./sqlite-store.js";
+import { verifyTelegramInitData } from "./telegram.js";
 
 function json(status: number, body: unknown, config: AgentApiConfig): AgentResponse {
   return {
@@ -66,6 +67,59 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
           },
           config
         );
+      if (
+        request.method === "POST" &&
+        root === "passkey" &&
+        (id === "preview" || id === "create") &&
+        parts.length === 2
+      ) {
+        const callback = id === "preview" ? config.passkeyPreview : config.passkeyCreate;
+        if (callback === undefined)
+          return error(
+            404,
+            "PASSKEY_NOT_AVAILABLE",
+            id === "preview"
+              ? "Passkey account preview is not configured on this agent."
+              : "Passkey account creation is not configured on this agent.",
+            config
+          );
+        if (config.telegramBotToken === undefined || config.telegramBotToken.trim().length === 0)
+          return error(
+            503,
+            "PASSKEY_NOT_CONFIGURED",
+            "Telegram verification is not configured on this agent.",
+            config
+          );
+        if (
+          typeof request.body !== "object" ||
+          request.body === null ||
+          Array.isArray(request.body)
+        )
+          return error(
+            400,
+            "PASSKEY_INVALID",
+            "Send the passkey request as a JSON object.",
+            config
+          );
+        const body = request.body as Record<string, unknown>;
+        if (typeof body.telegramInitData !== "string" || body.telegramInitData.length === 0)
+          return error(
+            400,
+            "TELEGRAM_INIT_DATA_REQUIRED",
+            "Telegram initData is required.",
+            config
+          );
+        const identity = verifyTelegramInitData(
+          body.telegramInitData,
+          config.telegramBotToken,
+          config.telegramInitDataMaxAgeSeconds === undefined
+            ? {}
+            : { maxAgeSeconds: config.telegramInitDataMaxAgeSeconds }
+        );
+        const input = { ...body };
+        delete input.telegramInitData;
+        return json(200, await callback(input, identity), config);
+      }
       if (
         request.method === "GET" &&
         ((root === ".well-known" && id === "agent-registration.json" && parts.length === 2) ||

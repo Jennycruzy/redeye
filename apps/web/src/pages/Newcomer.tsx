@@ -1,12 +1,17 @@
 import { useState } from "react";
-import { agent, type PasskeyStatus } from "../lib/api";
+import { agent, type PasskeyAccountResult, type PasskeyStatus } from "../lib/api";
 import { useAgent } from "../lib/hooks";
-import { registerPasskey, telegramInitData, type RegisteredPasskey } from "../lib/passkey";
+import {
+  registerPasskey,
+  savePasskeyAccount,
+  telegramInitData,
+  type RegisteredPasskey
+} from "../lib/passkey";
 
 type State =
   | { step: "idle" }
   | { step: "busy" }
-  | { step: "ready"; passkey: RegisteredPasskey }
+  | { step: "ready"; passkey: RegisteredPasskey; account: PasskeyAccountResult }
   | { step: "error"; message: string };
 
 export default function Newcomer() {
@@ -18,7 +23,18 @@ export default function Newcomer() {
     setState({ step: "busy" });
     try {
       const passkey = await registerPasskey(status.value.rpId);
-      setState({ step: "ready", passkey });
+      const initData = telegramInitData();
+      if (initData === null) throw new Error("Open Redeye from Telegram to finish onboarding.");
+      const request = { ...passkey, telegramInitData: initData };
+      await agent.passkeyPreview(request);
+      const account = await agent.passkeyCreate(request);
+      savePasskeyAccount({
+        ...passkey,
+        account: account.account as `0x${string}`,
+        owner: account.owner as `0x${string}`,
+        rpId: status.value.rpId
+      });
+      setState({ step: "ready", passkey, account });
     } catch (error) {
       setState({
         step: "error",
@@ -49,9 +65,11 @@ export default function Newcomer() {
         <div className="locked" role="status">
           <p className="locked__title">Passkey created on this device.</p>
           <p>
-            Credential {state.passkey.credentialId.slice(0, 10)}… is ready. On-chain deployment
-            remains disabled until Telegram verification and the sponsor are configured.
+            Credential {state.passkey.credentialId.slice(0, 10)}… is bound to Telegram. Your
+            PlanAccount is {state.account.state === "existing" ? "already live" : "now live"} at{" "}
+            <code>{state.account.account}</code>.
           </p>
+          {state.account.txHash && <p>Deployment: {state.account.txHash}</p>}
         </div>
       ) : (
         <button

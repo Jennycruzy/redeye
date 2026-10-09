@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { TelegramIdentity } from "./telegram.js";
 export interface AgentStore {
   health(): Promise<unknown>;
   study(): Promise<unknown>;
@@ -41,6 +42,14 @@ export interface AgentApiConfig {
   previewStanding?: (input: Record<string, unknown>) => Promise<unknown>;
   /** Public readiness only; account creation stays off until Telegram verification is configured. */
   passkeyStatus?: () => unknown;
+  /** Predicts a deterministic passkey account after Telegram initData is verified. */
+  passkeyPreview?: (input: Record<string, unknown>, identity: TelegramIdentity) => Promise<unknown>;
+  /** Creates a sponsored passkey account after Telegram initData is verified. */
+  passkeyCreate?: (input: Record<string, unknown>, identity: TelegramIdentity) => Promise<unknown>;
+  /** Bot token used only inside the server-side Telegram HMAC verifier. */
+  telegramBotToken?: string;
+  /** Maximum accepted age for Telegram initData; defaults to one hour. */
+  telegramInitDataMaxAgeSeconds?: number;
   /** MCP over streamable HTTP at /mcp; absent when not set up. */
   mcp?: (request: Request, parsedBody: unknown) => Promise<Response>;
   /** x402 sales under /x402/; absent when the seller is not set up. */

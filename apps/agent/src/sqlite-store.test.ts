@@ -76,6 +76,17 @@ describe("SQLite agent store boundary", () => {
       items: [{ eventKey: "0xwindow" }]
     });
   });
+
+  it("keeps sponsored passkey claims durable and bounded per UTC day", () => {
+    const store = new SqliteAgentStore(new FakeDatabase());
+    expect(store.claimPasskeySponsor("42", "2026-10-09", "0xaccount-a", 2)).toBe(true);
+    expect(store.claimPasskeySponsor("42", "2026-10-09", "0xaccount-b", 2)).toBe(false);
+    expect(store.claimPasskeySponsor("43", "2026-10-09", "0xaccount-c", 2)).toBe(true);
+    expect(store.claimPasskeySponsor("44", "2026-10-09", "0xaccount-d", 2)).toBe(false);
+    store.releasePasskeySponsor("42", "2026-10-09", "0xaccount-a");
+    expect(store.claimPasskeySponsor("44", "2026-10-09", "0xaccount-d", 2)).toBe(true);
+    expect(store.claimPasskeySponsor("42", "2026-10-10", "0xaccount-a", 2)).toBe(true);
+  });
 });
 
 async function expectStoreFailure(operation: () => Promise<unknown>, code: string): Promise<void> {

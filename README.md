@@ -6,7 +6,10 @@ Status: PlanBook is live on BNB Smart Chain and the bounded PlanAccount path is
 implemented in the contract, agent and web signer. The current PlanAccount template
 is deployed and exact-source verified on BNB Smart Chain. An isolated wallet has
 delegated to it and locked a bounded $2 plan on mainnet; browser-wallet authorization
-and the first triggered, reconciled PlanAccount swap remain release gates. The always-on agent locks off-hours plans, checks them every minute,
+and the first triggered, reconciled PlanAccount swap remain release gates. The Telegram
+passkey onboarding path is implemented behind explicit deployment and sponsor caps; the
+factory remains undeployed until a real phone assertion passes against BSC's P-256 verifier.
+The always-on agent locks off-hours plans, checks them every minute,
 can execute eligible plans through the connected Binance Agentic Wallet, and
 publishes their results at the open.
 
@@ -59,6 +62,10 @@ The current implementation establishes the first proof slice:
   reconciliation is included in the receipt fingerprint.
 - a wallet-signed PlanAccount relay path with EIP-7702 authorization capture,
   one permission per plan or standing run, and `permissionTx` receipt evidence;
+- a guarded Telegram Mini App passkey onboarding path: server-side initData HMAC
+  verification, deterministic factory preview, durable per-user/day sponsor limits,
+  fee-capped factory deployment, local credential handoff, and WebAuthn ERC-1271
+  permission signing into the existing PlanAccount lock route;
 - /data for the frozen weekend sample and enriched CSV, and /replay for
   trigger-only replays of the eight latest completed windows. Earnings-night
   data is not available yet and is kept separate from the weekend sample.
@@ -119,10 +126,11 @@ pnpm contract:test
 ```
 
 The contract test suite is offline and does not deploy or move funds. The first live
-plan-triggered wallet execution and newcomer Telegram flow are still pending. The
-signed-wallet code path is covered offline and its mainnet template is deployed and
-source-verified. Mainnet delegation and plan locking are confirmed; browser-provider
-EIP-7702 support and a triggered small-value mainnet swap remain release gates.
+plan-triggered wallet execution and the phone-backed Telegram flow are still release
+gates. The signed-wallet code path is covered offline and its mainnet template is
+deployed and source-verified. Mainnet delegation and plan locking are confirmed;
+browser-provider EIP-7702 support, factory deployment after a real phone assertion,
+and a triggered small-value mainnet swap remain release gates.
 
 The PlanAccount path also has an opt-in BSC fork test against the live Pancake
 SmartRouter, QuoterV2, USDT and INTCB pool. Run it with

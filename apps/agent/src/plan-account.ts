@@ -3,6 +3,7 @@ import {
   createWalletClient,
   encodeFunctionData,
   formatUnits,
+  hashTypedData,
   http,
   parseAbi,
   parseUnits,
@@ -11,7 +12,13 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { bsc } from "viem/chains";
-import type { NormalizedQuote, WalletContext } from "@redeye/core";
+import {
+  PLAN_PERMISSION_TYPES,
+  planPermissionDomain,
+  type NormalizedQuote,
+  type PlanPermission,
+  type WalletContext
+} from "@redeye/core";
 import Decimal from "decimal.js";
 import type { PermissionTrader, StoredAuthorization, StoredPermission } from "./plan-service.js";
 import { type OrderResult, type QuoteRequest } from "./agentic-wallet.js";
@@ -31,7 +38,12 @@ const ROUTER_ABI = parseAbi([
 const PLAN_ACCOUNT_ABI = parseAbi([
   "function executeSwap((bytes32 planHash,bytes32 standingRunHash,address agent,address tokenIn,address tokenOut,uint256 maxAmount,address router,uint64 notBefore,uint64 notAfter,uint256 maxPriceDeviationBps) permission,bytes signature,(bytes32 planHash,bytes32 eventKey,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 referenceAmountOut,uint256 value,bytes data) swap) payable returns (bytes)"
 ]);
+const PLAN_ACCOUNT_OWNER_ABI = parseAbi(["function accountOwner() view returns (address)"]);
+const PASSKEY_OWNER_ABI = parseAbi([
+  "function isValidSignature(bytes32 digest,bytes signature) view returns (bytes4)"
+]);
 const ZERO_HASH: Hex = `0x${"00".repeat(32)}`;
+const ERC1271_MAGIC = "0x1626ba7e";
 
 function decimal(value: string, field: string): Decimal {
   const parsed = new Decimal(value);
@@ -117,16 +129,49 @@ export class PlanAccountTrader implements PermissionTrader {
   ): Promise<WalletContext> {
     const owner = account ?? this.account.address;
     const code = await this.reader.getCode({ address: owner });
-    const delegated =
-      code?.toLowerCase() === `0xef0100${this.options.template.slice(2).toLowerCase()}`;
+    const lower = code?.toLowerCase() ?? "0x";
+    const delegated = lower === `0xef0100${this.options.template.slice(2).toLowerCase()}`;
+    const standalone = lower !== "0x" && !lower.startsWith("0xef0100");
     return {
-      connected: delegated,
+      connected: delegated || standalone,
       tokenAllowed: true,
       quotaLeftUsd: requiredQuotaUsd,
       requiredQuotaUsd,
       sessionExpiresAtMs: delegated ? requiredUntilMs + 1 : this.now(),
       requiredUntilMs
     };
+  }
+
+  async verifyPermission(
+    owner: Address,
+    permission: PlanPermission,
+    signature: Hex
+  ): Promise<boolean | null> {
+    const code = await this.reader.getCode({ address: owner });
+    const lower = code?.toLowerCase() ?? "0x";
+    if (lower === "0x" || lower.startsWith("0xef0100")) return null;
+    try {
+      const signer = await this.reader.readContract({
+        address: owner,
+        abi: PLAN_ACCOUNT_OWNER_ABI,
+        functionName: "accountOwner"
+      });
+      const digest = hashTypedData({
+        domain: planPermissionDomain(owner),
+        types: PLAN_PERMISSION_TYPES,
+        primaryType: "PlanPermission",
+        message: permission
+      });
+      const result = await this.reader.readContract({
+        address: signer,
+        abi: PASSKEY_OWNER_ABI,
+        functionName: "isValidSignature",
+        args: [digest, signature]
+      });
+      return result.toLowerCase() === ERC1271_MAGIC;
+    } catch {
+      return false;
+    }
   }
 
   async quote(request: QuoteRequest): Promise<NormalizedQuote> {
@@ -211,6 +256,9 @@ export class PlanAccountTrader implements PermissionTrader {
     const code = await this.reader.getCode({ address: owner });
     const expected = `0xef0100${this.options.template.slice(2).toLowerCase()}`;
     if (code?.toLowerCase() === expected) return null;
+    if (code !== undefined && code !== "0x" && !code.toLowerCase().startsWith("0xef0100")) {
+      return null;
+    }
     const authorization = permission.authorization;
     if (!authorization) {
       throw new Error(

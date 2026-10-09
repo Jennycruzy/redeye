@@ -4,5 +4,7 @@ export * from "./sqlite-store.js";
 export * from "./server.js";
 export * from "./plan-chain.js";
 export * from "./plan-service.js";
+export * from "./passkey-account.js";
+export * from "./telegram.js";
 export * from "./types.js";
 export * from "./window-service.js";

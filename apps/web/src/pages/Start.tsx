@@ -15,6 +15,11 @@ import {
   windowName
 } from "../lib/format";
 import { useAgent, useNow } from "../lib/hooks";
+import {
+  loadPasskeyAccount,
+  signPasskeyPermission,
+  type StoredPasskeyAccount
+} from "../lib/passkey";
 import { Link, useLocation } from "../lib/router";
 import {
   connect,
@@ -200,6 +205,12 @@ const DOORS = [
     name: "New to crypto",
     state: "In progress",
     body: "Start in Telegram, make an account protected by Face ID, no seed phrase and no gas to buy. Redeye pays the network fee."
+  },
+  {
+    id: "passkey",
+    name: "Face ID PlanAccount",
+    state: "Live",
+    body: "Your saved passkey account signs one bounded permission with Face ID. Redeye relays only the frozen plan; it cannot use the account for another trade."
   }
 ];
 
@@ -214,7 +225,8 @@ export default function Start() {
   const [share, setShare] = useState(DEFAULTS.guard.share);
   const [amount, setAmount] = useState(DEFAULTS.guard.usd);
   const [held, setHeld] = useState("1");
-  const [door, setDoor] = useState("signed");
+  const [passkeyAccount] = useState<StoredPasskeyAccount | null>(() => loadPasskeyAccount());
+  const [door, setDoor] = useState(passkeyAccount === null ? "signed" : "passkey");
   const [standing, setStanding] = useState(false);
   const [days, setDays] = useState(5);
   const [standingRunId] = useState(
@@ -252,15 +264,23 @@ export default function Start() {
             door: "plan_account",
             auditNoDataAccepted: true
           }
-        : door === "agentic"
+        : door === "passkey" && passkeyAccount !== null
           ? {
               ...plan,
               ...(standing ? { days, runId: standingRunId } : {}),
-              door: "agentic_wallet",
+              door: "plan_account",
+              owner: passkeyAccount.account,
               auditNoDataAccepted: true
             }
-          : { ...plan, ...(standing ? { days, runId: standingRunId } : {}) },
-    [days, door, plan, standing, standingRunId]
+          : door === "agentic"
+            ? {
+                ...plan,
+                ...(standing ? { days, runId: standingRunId } : {}),
+                door: "agentic_wallet",
+                auditNoDataAccepted: true
+              }
+            : { ...plan, ...(standing ? { days, runId: standingRunId } : {}) },
+    [days, door, passkeyAccount, plan, standing, standingRunId]
   );
   const debounced = useDebounced(previewPlan, 250);
 
@@ -566,7 +586,7 @@ export default function Start() {
                 plan you locked.
               </p>
               <div className="doors" role="radiogroup" aria-label="Door">
-                {DOORS.map((d) => (
+                {DOORS.filter((d) => d.id !== "passkey" || passkeyAccount !== null).map((d) => (
                   <button
                     key={d.id}
                     type="button"
@@ -648,7 +668,16 @@ export default function Start() {
                   </p>
                 </div>
                 <div className="lockbox__how">
-                  {door === "signed" ? (
+                  {door === "passkey" && passkeyAccount !== null ? (
+                    <SignAndLock
+                      plan={plan}
+                      preview={preview}
+                      standing={standing}
+                      days={days}
+                      runId={standingRunId}
+                      passkeyAccount={passkeyAccount}
+                    />
+                  ) : door === "signed" ? (
                     <SignAndLock
                       plan={plan}
                       preview={preview}
@@ -705,13 +734,15 @@ function SignAndLock({
   preview,
   standing,
   days,
-  runId
+  runId,
+  passkeyAccount
 }: {
   plan: Record<string, unknown>;
   preview: PlanPreview;
   standing: boolean;
   days: number;
   runId: string;
+  passkeyAccount?: StoredPasskeyAccount;
 }) {
   const [state, setState] = useState<SignState>({ step: "idle" });
 
@@ -795,6 +826,52 @@ function SignAndLock({
     }
   };
 
+  const lockWithPasskey = async (account: StoredPasskeyAccount) => {
+    try {
+      if (preview.permission === undefined) {
+        throw new Error("The agent has not returned the bounded PlanAccount permission yet.");
+      }
+      setState({ step: "busy", label: "Check the bounded permission with Face ID…" });
+      const { signature, issuedAt } = await signPasskeyPermission(account, preview.permission);
+      if (standing) {
+        setState({ step: "busy", label: "Starting the standing run on BNB Chain…" });
+        const started = await agent.startStanding({
+          ...plan,
+          days,
+          runId,
+          door: "plan_account",
+          owner: account.account,
+          issuedAt,
+          permission: preview.permission,
+          permissionSignature: signature,
+          auditNoDataAccepted: true
+        });
+        setState({ step: "standing-done", id: String(started.id), owner: account.account });
+      } else {
+        setState({ step: "busy", label: "Locking it on BNB Chain…" });
+        const locked = await agent.lockSigned({
+          plan: { ...plan, door: "plan_account", auditNoDataAccepted: true },
+          owner: account.account,
+          issuedAt,
+          permission: preview.permission,
+          permissionSignature: signature
+        });
+        setState({
+          step: "done",
+          id: locked.id,
+          planId: locked.planId,
+          tx: locked.freeze.txHash,
+          owner: account.account
+        });
+      }
+    } catch (error) {
+      setState({
+        step: "error",
+        message: error instanceof Error ? error.message : "Passkey locking failed."
+      });
+    }
+  };
+
   const start = async () => {
     setState({ step: "busy", label: "Looking for a wallet in this browser…" });
     const wallets = await discoverWallets();
@@ -842,10 +919,20 @@ function SignAndLock({
   return (
     <>
       <p>
-        Your wallet will show the exact token, amount, router and time bounds. Signing authorizes
-        one bounded swap; it moves no funds and Redeye pays the network fee to lock it.
+        {passkeyAccount
+          ? "Face ID will approve the exact token, amount, router and time bounds. The assertion moves no funds; Redeye pays the network fee to lock it."
+          : "Your wallet will show the exact token, amount, router and time bounds. Signing authorizes one bounded swap; it moves no funds and Redeye pays the network fee to lock it."}
       </p>
-      {state.step === "choosing" ? (
+      {passkeyAccount !== undefined ? (
+        <button
+          className="button button--primary"
+          type="button"
+          onClick={() => void lockWithPasskey(passkeyAccount)}
+          disabled={state.step === "busy" || !preview.valid}
+        >
+          {state.step === "busy" ? state.label : "Confirm with Face ID and lock it"}
+        </button>
+      ) : state.step === "choosing" ? (
         <div className="walletlist">
           {state.wallets.map((w) => (
             <button

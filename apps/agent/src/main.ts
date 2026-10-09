@@ -14,6 +14,7 @@ import { createPlanChain } from "./plan-chain.js";
 import { reconcilePlanWindow } from "./chain-reconciliation.js";
 import { PlanService } from "./plan-service.js";
 import { createNightService } from "./night.js";
+import { createPasskeyAccountPreview, createPasskeyAccountService } from "./passkey-account.js";
 import { listedBstock, nasdaqCloseOn, nasdaqOfficialOpen, xyzCandles } from "./plan-sources.js";
 import { loadPoolMap, PriceService } from "./price-service.js";
 import { createSqliteAgentStore } from "./sqlite-store.js";
@@ -91,6 +92,37 @@ const planAccount =
   planAccountTemplate && agentKey
     ? { template: planAccountTemplate as Address, router: planAccountRouter }
     : null;
+const passkeyFactoryAddress = process.env.PASSKEY_FACTORY_ADDRESS?.trim();
+const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
+const passkeyFactoryPreview =
+  passkeyFactoryAddress && planBookAddress
+    ? createPasskeyAccountPreview({
+        rpcUrl: process.env.BSC_RPC_URL_LIVE ?? "https://bsc-dataseed.bnbchain.org",
+        factory: passkeyFactoryAddress as Address,
+        planBook: planBookAddress as Address
+      })
+    : null;
+const passkeyDailyLimit = Number(process.env.PASSKEY_SPONSOR_DAILY_LIMIT ?? "0");
+const maxFeeText = process.env.PASSKEY_SPONSOR_MAX_FEE_WEI?.trim() ?? "";
+const passkeyMaxFeeWei = /^[0-9]+$/.test(maxFeeText) ? BigInt(maxFeeText) : 0n;
+const passkeyService =
+  passkeyFactoryAddress &&
+  planBookAddress &&
+  agentKey &&
+  telegramBotToken &&
+  passkeyDailyLimit > 0 &&
+  passkeyMaxFeeWei > 0n
+    ? createPasskeyAccountService({
+        rpcUrl: process.env.BSC_RPC_URL_LIVE ?? "https://bsc-dataseed.bnbchain.org",
+        factory: passkeyFactoryAddress as Address,
+        planBook: planBookAddress as Address,
+        sponsorKey: asKey(agentKey),
+        dailyLimit: passkeyDailyLimit,
+        maxFeeWei: passkeyMaxFeeWei,
+        ledger: store
+      })
+    : null;
+const passkeyPreview = passkeyService?.preview ?? passkeyFactoryPreview;
 const tokenPoolCache = new Map<string, Address | null>();
 const permissionTrader =
   process.env.EXECUTION_ENABLED === "true" && planAccount && agentKey
@@ -288,16 +320,29 @@ const server = startAgentServer(
       const rpId = process.env.PASSKEY_RP_ID?.trim() ?? "";
       const factory = process.env.PASSKEY_FACTORY_ADDRESS?.trim() ?? "";
       const telegram = process.env.TELEGRAM_BOT_TOKEN?.trim() ?? "";
-      const available = rpId.length > 0 && factory.length > 0 && telegram.length > 0;
+      const available =
+        rpId.length > 0 &&
+        factory.length > 0 &&
+        telegram.length > 0 &&
+        passkeyPreview !== null &&
+        passkeyService !== null;
       return {
         available,
         rpId,
         factory: factory || null,
         reason: available
           ? null
-          : "RP ID, factory deployment and Telegram verification must all be configured."
+          : "RP ID, factory deployment, PlanBook binding, Telegram verification, sponsor key and explicit fee/daily caps must all be configured."
       };
     },
+    ...(passkeyPreview && telegramBotToken
+      ? {
+          passkeyPreview,
+          telegramBotToken,
+          telegramInitDataMaxAgeSeconds: Number(process.env.TELEGRAM_INIT_DATA_MAX_AGE_S ?? "3600")
+        }
+      : {}),
+    ...(passkeyService && telegramBotToken ? { passkeyCreate: passkeyService.create } : {}),
     lockSigned: (body) => planService.lockSigned(body),
     mcp: createMcpHandler(readSources, AGENT_VERSION)
   },

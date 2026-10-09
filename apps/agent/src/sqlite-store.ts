@@ -118,6 +118,40 @@ export class SqliteAgentStore implements AgentStore, PlanStore {
   }
 
   /**
+   * Atomically reserves one sponsored passkey deployment for a Telegram user
+   * and UTC day. This is deliberately synchronous: node:sqlite calls do not
+   * yield, so two HTTP requests cannot both pass the check in this process.
+   */
+  claimPasskeySponsor(userId: string, day: string, account: string, dailyLimit: number): boolean {
+    const kind = "passkey-sponsor";
+    const key = `${day}:${userId}`;
+    if (this.one(kind, key) !== null) return false;
+    const row = this.database
+      .prepare("SELECT COUNT(*) AS count FROM documents WHERE kind = ? AND document_key LIKE ?")
+      .get(kind, `${day}:%`);
+    const count = typeof row?.count === "number" ? row.count : Number(row?.count ?? 0);
+    if (!Number.isInteger(dailyLimit) || dailyLimit < 1 || count >= dailyLimit) return false;
+    this.put(kind, key, { userId, day, account, state: "pending" });
+    return true;
+  }
+
+  releasePasskeySponsor(userId: string, day: string, account: string): void {
+    const kind = "passkey-sponsor";
+    const key = `${day}:${userId}`;
+    const current = this.one(kind, key);
+    if (
+      typeof current === "object" &&
+      current !== null &&
+      !Array.isArray(current) &&
+      (current as Record<string, unknown>).account === account
+    ) {
+      this.database
+        .prepare("DELETE FROM documents WHERE kind = ? AND document_key = ?")
+        .run(kind, key);
+    }
+  }
+
+  /**
    * Durable replay guard for x402 settlements. Each update reads and writes in one
    * synchronous step, with nothing awaited in between, so no other request in this
    * process can interleave: the atomic read-modify-write B402 requires.

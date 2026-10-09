@@ -16,6 +16,7 @@
     "plan-account:live": "node scripts/live-plan-account.mjs",
     "plan-account:deploy": "node scripts/deploy-plan-account.mjs",
     "plan-account:delegate": "node scripts/delegate-plan-account.mjs",
+    "passkey:deploy": "node scripts/deploy-passkey-factory.mjs",
     "study:offhours": "node scripts/study/offhours.mjs",
     "study:offhours:test": "node --test scripts/study/offhours.test.mjs",
     "packages:build": "pnpm --filter @redeye/shared build && pnpm --filter @redeye/clients build && pnpm --filter @redeye/core build",

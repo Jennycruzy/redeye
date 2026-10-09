@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createAgentApi } from "./api.js";
 import type { AgentRequest, AgentStore } from "./types.js";
@@ -40,6 +41,20 @@ function store(): AgentStore {
 }
 
 const config = { ownerToken: "owner-secret", siteOrigin: "https://redeye.example" };
+
+function telegramFixture(token: string): string {
+  const values = new URLSearchParams({
+    auth_date: String(Math.floor(Date.now() / 1000)),
+    user: JSON.stringify({ id: 7, first_name: "Fixture" })
+  });
+  const check = [...values.entries()]
+    .sort(([left], [right]) => (left < right ? -1 : 1))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+  const secret = createHmac("sha256", "WebAppData").update(token).digest();
+  values.set("hash", createHmac("sha256", secret).update(check).digest("hex"));
+  return values.toString();
+}
 
 describe("agent HTTP boundary", () => {
   it("routes read-only resources without an owner token", async () => {
@@ -102,6 +117,49 @@ describe("agent HTTP boundary", () => {
       status: 200,
       body: { valid: true, standing: true, input: { ticker: "NVDA", days: 3 } }
     });
+  });
+
+  it("verifies Telegram before forwarding passkey preview or creation", async () => {
+    const token = "123456:fixture-token";
+    const api = createAgentApi(store(), {
+      ...config,
+      telegramBotToken: token,
+      passkeyPreview: async (input, identity) => ({ input, identity }),
+      passkeyCreate: async (input, identity) => ({ created: true, input, identity })
+    });
+    const initData = telegramFixture(token);
+    const preview = await api(
+      request("/passkey/preview", {
+        method: "POST",
+        body: { telegramInitData: initData, credentialIdHash: "0x01" }
+      })
+    );
+    expect(preview.status).toBe(200);
+    expect(preview.body).toMatchObject({
+      input: { credentialIdHash: "0x01" },
+      identity: { userId: "7" }
+    });
+    const created = await api(
+      request("/passkey/create", {
+        method: "POST",
+        body: { telegramInitData: initData, credentialIdHash: "0x02" }
+      })
+    );
+    expect(created.status).toBe(200);
+    expect(created.body).toMatchObject({ created: true, identity: { userId: "7" } });
+    const tampered = await api(
+      request("/passkey/preview", {
+        method: "POST",
+        body: { telegramInitData: `${initData}x`, credentialIdHash: "0x03" }
+      })
+    );
+    expect(tampered.status).toBe(401);
+    expect(tampered.body).toMatchObject({ error: { code: "TELEGRAM_INIT_DATA_INVALID" } });
+    const missing = await api(
+      request("/passkey/preview", { method: "POST", body: { credentialIdHash: "0x04" } })
+    );
+    expect(missing.status).toBe(400);
+    expect(missing.body).toMatchObject({ error: { code: "TELEGRAM_INIT_DATA_REQUIRED" } });
   });
 
   it("rejects writes without the owner token", async () => {

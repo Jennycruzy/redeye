@@ -109,6 +109,24 @@ export interface PasskeyStatus {
   reason: string | null;
 }
 
+export interface PasskeyPreview {
+  state: "ready";
+  chainId: number;
+  factory: string;
+  planBook: string;
+  account: string;
+  owner: string;
+  credentialIdHash: string;
+  publicKeyX: string;
+  publicKeyY: string;
+}
+
+export interface PasskeyAccountResult extends Omit<PasskeyPreview, "state"> {
+  state: "created" | "existing";
+  txHash?: string;
+  estimatedFeeWei?: string;
+}
+
 export interface StudyWindow {
   n: number;
   closeError: number;
@@ -221,6 +239,22 @@ export const agent = {
   record: () => request<PlanRecord>("/record"),
   health: () => request<Health>("/health"),
   passkey: () => request<PasskeyStatus>("/passkey"),
+  passkeyPreview: (body: {
+    telegramInitData: string;
+    credentialIdHash: string;
+    publicKeyX: string;
+    publicKeyY: string;
+  }) => request<PasskeyPreview>("/passkey/preview", { method: "POST", body: JSON.stringify(body) }),
+  passkeyCreate: (body: {
+    telegramInitData: string;
+    credentialIdHash: string;
+    publicKeyX: string;
+    publicKeyY: string;
+  }) =>
+    request<PasskeyAccountResult>("/passkey/create", {
+      method: "POST",
+      body: JSON.stringify(body)
+    }),
   study: () => request<Study>("/study"),
   wallet: () => request<WalletStatus>("/wallet"),
   run: (id: string) => request<Record<string, unknown>>(`/runs/${id}`),
