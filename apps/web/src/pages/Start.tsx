@@ -204,13 +204,13 @@ const DOORS = [
     id: "newcomer",
     name: "New to crypto",
     state: "In progress",
-    body: "Start in Telegram, make an account protected by Face ID, no seed phrase and no gas to buy. Redeye pays the network fee."
+    body: "Start in Telegram, make an account protected by a device passkey, no seed phrase and no gas to buy. Redeye pays the network fee."
   },
   {
     id: "passkey",
-    name: "Face ID PlanAccount",
+    name: "Passkey PlanAccount",
     state: "Live",
-    body: "Your saved passkey account signs one bounded permission with Face ID. Redeye relays only the frozen plan; it cannot use the account for another trade."
+    body: "Your saved passkey account signs one bounded permission with your fingerprint, Face ID or device screen lock. Redeye relays only the frozen plan; it cannot use the account for another trade."
   }
 ];
 
@@ -831,7 +831,7 @@ function SignAndLock({
       if (preview.permission === undefined) {
         throw new Error("The agent has not returned the bounded PlanAccount permission yet.");
       }
-      setState({ step: "busy", label: "Check the bounded permission with Face ID…" });
+      setState({ step: "busy", label: "Check the bounded permission with your passkey…" });
       const { signature, issuedAt } = await signPasskeyPermission(account, preview.permission);
       if (standing) {
         setState({ step: "busy", label: "Starting the standing run on BNB Chain…" });
@@ -920,7 +920,7 @@ function SignAndLock({
     <>
       <p>
         {passkeyAccount
-          ? "Face ID will approve the exact token, amount, router and time bounds. The assertion moves no funds; Redeye pays the network fee to lock it."
+          ? "Your device passkey will approve the exact token, amount, router and time bounds. The assertion moves no funds; Redeye pays the network fee to lock it."
           : "Your wallet will show the exact token, amount, router and time bounds. Signing authorizes one bounded swap; it moves no funds and Redeye pays the network fee to lock it."}
       </p>
       {passkeyAccount !== undefined ? (
@@ -930,7 +930,7 @@ function SignAndLock({
           onClick={() => void lockWithPasskey(passkeyAccount)}
           disabled={state.step === "busy" || !preview.valid}
         >
-          {state.step === "busy" ? state.label : "Confirm with Face ID and lock it"}
+          {state.step === "busy" ? state.label : "Confirm with passkey and lock it"}
         </button>
       ) : state.step === "choosing" ? (
         <div className="walletlist">

@@ -131,7 +131,9 @@ export async function registerPasskey(rpId: string): Promise<RegisteredPasskey> 
     throw new Error("This browser does not support passkeys.");
   }
   const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-  if (!available) throw new Error("Face ID, Touch ID or a device passkey is not available.");
+  if (!available) {
+    throw new Error("A device passkey, fingerprint, Face ID or screen lock is not available.");
+  }
   const userId = crypto.getRandomValues(new Uint8Array(32));
   const created = await navigator.credentials.create({
     publicKey: {

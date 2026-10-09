@@ -7,8 +7,8 @@ implemented in the contract, agent and web signer. The current PlanAccount templ
 is deployed and exact-source verified on BNB Smart Chain. An isolated wallet has
 delegated to it and locked a bounded $2 plan on mainnet; browser-wallet authorization
 and the first triggered, reconciled PlanAccount swap remain release gates. The Telegram
-passkey onboarding path is implemented behind explicit deployment and sponsor caps; the
-factory remains undeployed until a real phone assertion passes against BSC's P-256 verifier.
+passkey onboarding path is live behind explicit sponsor caps, with its factory deployed
+on BNB Smart Chain; the first real phone registration and signed plan remain release gates.
 The always-on agent locks off-hours plans, checks them every minute,
 can execute eligible plans through the connected Binance Agentic Wallet, and
 publishes their results at the open.
@@ -129,7 +129,7 @@ The contract test suite is offline and does not deploy or move funds. The first 
 plan-triggered wallet execution and the phone-backed Telegram flow are still release
 gates. The signed-wallet code path is covered offline and its mainnet template is
 deployed and source-verified. Mainnet delegation and plan locking are confirmed;
-browser-provider EIP-7702 support, factory deployment after a real phone assertion,
+browser-provider EIP-7702 support, the first phone-backed passkey account and signed plan,
 and a triggered small-value mainnet swap remain release gates.
 
 The PlanAccount path also has an opt-in BSC fork test against the live Pancake

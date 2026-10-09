@@ -45,10 +45,10 @@ export default function Newcomer() {
   return (
     <main className="wrap section">
       <p className="eyebrow">New to crypto</p>
-      <h1 className="display">Your face is the key. There is no seed phrase.</h1>
+      <h1 className="display">Your device is the key. There is no seed phrase.</h1>
       <p className="lede">
-        Redeye creates a dedicated PlanAccount on BNB Chain. Face ID or your device passkey signs
-        bounded plans; Redeye sponsors the account-creation fee.
+        Redeye creates a dedicated PlanAccount on BNB Chain. Face ID, fingerprint or your device
+        screen lock signs bounded plans; Redeye sponsors the account-creation fee.
       </p>
       {!insideTelegram && (
         <p className="problem">
@@ -83,7 +83,7 @@ export default function Newcomer() {
           }
           onClick={() => void create()}
         >
-          {state.step === "busy" ? "Creating passkey…" : "Create with Face ID"}
+          {state.step === "busy" ? "Creating passkey…" : "Create with device passkey"}
         </button>
       )}
       {state.step === "error" && <p className="problem">{state.message}</p>}

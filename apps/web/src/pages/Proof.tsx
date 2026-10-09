@@ -61,9 +61,9 @@ const REAL = [
     "Plan #8 delegated and locked a bounded $2 permission on mainnet; a triggered swap and browser-wallet authorization remain"
   ],
   [
-    "Telegram and Face ID for newcomers",
-    "Built · gated",
-    "Factory and sponsor stay off until a real phone assertion passes"
+    "Telegram and device passkeys for newcomers",
+    "Live · phone validation pending",
+    "Factory deployed and sponsor caps active; the first real Android or iPhone passkey account remains the release gate"
   ]
 ] as const;
 
