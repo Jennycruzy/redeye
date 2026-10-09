@@ -3,23 +3,23 @@ Redeye is the agent for when Wall Street is closed. It prices your stock from th
 Redeye reads the last US close, a source-labelled 24/7 equity price, and the token's own BNB Smart Chain price. It turns a plain plan into deterministic checks, publishes the plan fingerprint before the window starts, and keeps the result visible.
 
 Status: PlanBook is live on BNB Smart Chain and the bounded PlanAccount path is
-implemented in the contract, agent and web signer. The existing PlanAccount address
-was deployed before this permission revision, so a new template deployment and a
-wallet provider that exposes EIP-7702 signing are still required before that door is
-called live. The always-on agent locks off-hours plans, checks them every minute,
+implemented in the contract, agent and web signer. The current PlanAccount template
+is deployed and exact-source verified on BNB Smart Chain; a wallet provider that
+exposes EIP-7702 signing and a first small-value end-to-end trade are still required
+before that door is called live. The always-on agent locks off-hours plans, checks them every minute,
 can execute eligible plans through the connected Binance Agentic Wallet, and
 publishes their results at the open.
 
 ## On chain
 
-| What                                                                                      | Address or transaction                                                                                                                            |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PlanBook                                                                                  | [`0xC7B860d561f2208c725ac9a873bf4eA5205e9057`](https://bscscan.com/address/0xC7B860d561f2208c725ac9a873bf4eA5205e9057)                            |
-| PlanAccount template (previous deployment; redeploy required for current permission code) | [`0x141B2a28895c12FD17209eC621496f0F9f1F1048`](https://bscscan.com/address/0x141B2a28895c12FD17209eC621496f0F9f1F1048)                            |
-| Agent                                                                                     | [`0xe201bbf3C736a5d188797974a7e4B9464f707eA8`](https://bscscan.com/address/0xe201bbf3C736a5d188797974a7e4B9464f707eA8)                            |
-| First x402 sale: NVDA 24/7 price, 0.002 U, settled by the agent                           | [settle](https://bscscan.com/tx/0x7dd090f39dfa8ba765a50c3dddc547418a9ac8e1d25244e97737cbf072e79a78) (team buyer wallet, labelled as our own test) |
-| PlanJobHook (team jobs)                                                                   | [`0x42a7F449e4950524c13deBC96a0549100b516594`](https://bscscan.com/address/0x42a7F449e4950524c13deBC96a0549100b516594)                            |
-| Plan 1: Guard on NVDA, 7 Oct overnight window                                             | [lock](https://bscscan.com/tx/0x759ead4af86268d4015ab4074a58f2dc866ff8ee96dd077f85a5cd6ad2902092), 5 h 27 min before the close                    |
+| What                                                            | Address or transaction                                                                                                                            |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PlanBook                                                        | [`0xC7B860d561f2208c725ac9a873bf4eA5205e9057`](https://bscscan.com/address/0xC7B860d561f2208c725ac9a873bf4eA5205e9057)                            |
+| PlanAccount template (bounded permission revision)              | [`0xC9Af0c92c31614E7b5e9f27a4F2001d97F219844`](https://bscscan.com/address/0xC9Af0c92c31614E7b5e9f27a4F2001d97F219844)                            |
+| Agent                                                           | [`0xe201bbf3C736a5d188797974a7e4B9464f707eA8`](https://bscscan.com/address/0xe201bbf3C736a5d188797974a7e4B9464f707eA8)                            |
+| First x402 sale: NVDA 24/7 price, 0.002 U, settled by the agent | [settle](https://bscscan.com/tx/0x7dd090f39dfa8ba765a50c3dddc547418a9ac8e1d25244e97737cbf072e79a78) (team buyer wallet, labelled as our own test) |
+| PlanJobHook (team jobs)                                         | [`0x42a7F449e4950524c13deBC96a0549100b516594`](https://bscscan.com/address/0x42a7F449e4950524c13deBC96a0549100b516594)                            |
+| Plan 1: Guard on NVDA, 7 Oct overnight window                   | [lock](https://bscscan.com/tx/0x759ead4af86268d4015ab4074a58f2dc866ff8ee96dd077f85a5cd6ad2902092), 5 h 27 min before the close                    |
 
 ## Start here
 
@@ -75,8 +75,9 @@ The signed-wallet path uses a direct Pancake V3 quote/simulation adapter because
 the installed `baw` CLI exposes no Trading API transaction-data endpoint. The
 adapter is restricted on chain to Pancake `exactInputSingle`, binds the owner as
 recipient, and fails closed when the quote, router or EIP-7702 provider is not
-available. The deployed template above predates these checks; do not enable the
-wallet door until the replacement template is deployed and source-verified.
+available. The deployed and source-verified template above includes these checks;
+do not call the wallet door live until EIP-7702 wallet support and the first
+small-value end-to-end trade are confirmed.
 
 ## Agent identity
 
@@ -119,8 +120,8 @@ pnpm contract:test
 
 The contract test suite is offline and does not deploy or move funds. The first live
 plan-triggered wallet execution and newcomer Telegram flow are still pending. The
-signed-wallet code path is covered offline, but its mainnet template redeployment,
-wallet-provider EIP-7702 support and a real small-value fork/mainnet swap remain
+signed-wallet code path is covered offline and its mainnet template is deployed and
+source-verified, but wallet-provider EIP-7702 support and a real small-value mainnet swap remain
 release gates.
 
 The agent process requires Node 22, `OWNER_API_TOKEN` and `WEB_ORIGIN`. Build it

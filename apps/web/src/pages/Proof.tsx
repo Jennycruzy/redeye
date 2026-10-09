@@ -13,7 +13,7 @@ const CONTRACTS = [
   },
   {
     name: "PlanAccount",
-    address: "0x141B2a28895c12FD17209eC621496f0F9f1F1048",
+    address: "0xC9Af0c92c31614E7b5e9f27a4F2001d97F219844",
     what: "Per-plan permission for wallets: the agent may make exactly one matching trade."
   },
   {
@@ -58,7 +58,7 @@ const REAL = [
   [
     "Wallet door through PlanAccount",
     "Code wired",
-    "A new template deployment and a wallet with EIP-7702 signing are still required for live use"
+    "Template deployed and source-verified; an EIP-7702-capable wallet and a first small-value trade are still required"
   ],
   ["Telegram and Face ID for newcomers", "In progress", "Not live yet"]
 ] as const;
