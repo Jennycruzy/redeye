@@ -61,6 +61,7 @@ The study command reads only the stored raw study records. It does not fetch net
 data.
 
 The public record contains mainnet-locked plans and one completed no-trade verdict.
-Six weekend plans are currently locked. No plan-triggered production trade has been
-claimed yet; that claim requires a confirmed fill and a passing reconciliation.
-Replay receipts and simulations remain labeled `REPLAY` or `SIMULATED`.
+Seven weekend plans are currently locked, including PlanAccount plan #8 with a
+confirmed EIP-7702 delegation and freeze transaction. No plan-triggered production
+trade has been claimed yet; that claim requires a confirmed fill and a passing
+reconciliation. Replay receipts and simulations remain labeled `REPLAY` or `SIMULATED`.

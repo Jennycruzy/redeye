@@ -57,8 +57,8 @@ const REAL = [
   ["ERC-8004 identity", "Live", "Agent #368521 on BNB Chain's identity registry"],
   [
     "Wallet door through PlanAccount",
-    "Code wired",
-    "Template deployed and source-verified; an EIP-7702-capable wallet and a first small-value trade are still required"
+    "Live lock",
+    "Plan #8 delegated and locked a bounded $2 permission on mainnet; a triggered swap and browser-wallet authorization remain"
   ],
   ["Telegram and Face ID for newcomers", "In progress", "Not live yet"]
 ] as const;

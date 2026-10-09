@@ -4,9 +4,9 @@ Redeye reads the last US close, a source-labelled 24/7 equity price, and the tok
 
 Status: PlanBook is live on BNB Smart Chain and the bounded PlanAccount path is
 implemented in the contract, agent and web signer. The current PlanAccount template
-is deployed and exact-source verified on BNB Smart Chain; a wallet provider that
-exposes EIP-7702 signing and a first small-value end-to-end trade are still required
-before that door is called live. The always-on agent locks off-hours plans, checks them every minute,
+is deployed and exact-source verified on BNB Smart Chain. An isolated wallet has
+delegated to it and locked a bounded $2 plan on mainnet; browser-wallet authorization
+and the first triggered, reconciled PlanAccount swap remain release gates. The always-on agent locks off-hours plans, checks them every minute,
 can execute eligible plans through the connected Binance Agentic Wallet, and
 publishes their results at the open.
 
@@ -121,8 +121,8 @@ pnpm contract:test
 The contract test suite is offline and does not deploy or move funds. The first live
 plan-triggered wallet execution and newcomer Telegram flow are still pending. The
 signed-wallet code path is covered offline and its mainnet template is deployed and
-source-verified, but wallet-provider EIP-7702 support and a real small-value mainnet swap remain
-release gates.
+source-verified. Mainnet delegation and plan locking are confirmed; browser-provider
+EIP-7702 support and a triggered small-value mainnet swap remain release gates.
 
 The PlanAccount path also has an opt-in BSC fork test against the live Pancake
 SmartRouter, QuoterV2, USDT and INTCB pool. Run it with
