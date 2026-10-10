@@ -70,6 +70,7 @@ describe.skipIf(MODE !== "preview" && MODE !== "pay")("live B402 sale (REDEYE_B4
         onSettlementUnknown: (event) => console.log(JSON.stringify({ settlementUnknown: event }))
       },
       payTo: AGENT,
+      publicUrl: API,
       content: {
         // The real public price snapshot, read from the live agent's free endpoint.
         price: async (ticker) => {

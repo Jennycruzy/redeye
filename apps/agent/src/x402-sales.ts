@@ -99,6 +99,8 @@ export type X402Settlement =
     };
 
 export interface X402SellerOptions {
+  /** Public base URL of the agent, used as the paid resource's address. */
+  publicUrl?: string;
   /** Null keeps paid routes off. */
   settlement: X402Settlement | null;
   payTo: Address;
@@ -137,12 +139,12 @@ function reply(status: number, body: unknown, extra?: Record<string, string>): A
   return { status, headers: headers(extra), body };
 }
 
-function adapter(request: AgentRequest): HTTPAdapter {
+function adapter(request: AgentRequest, base: string): HTTPAdapter {
   return {
     getHeader: (name) => request.headers.get(name) ?? undefined,
     getMethod: () => request.method,
     getPath: () => request.pathname,
-    getUrl: () => `https://redeye.local${request.pathname}`,
+    getUrl: () => `${base}${request.pathname}`,
     getAcceptHeader: () => request.headers.get("accept") ?? "application/json",
     getUserAgent: () => request.headers.get("user-agent") ?? "",
     getQueryParams: () => Object.fromEntries(request.query.entries())
@@ -155,6 +157,7 @@ function adapter(request: AgentRequest): HTTPAdapter {
  * ticker; the payment is settled before the answer is sent.
  */
 export async function createX402Seller(options: X402SellerOptions): Promise<X402Seller> {
+  const publicBase = (options.publicUrl ?? "https://api.theredeyed-agent.site").replace(/\/$/, "");
   let http: x402HTTPResourceServer | null = null;
   let reason: string | null = null;
   const settlement = options.settlement;
@@ -230,7 +233,7 @@ export async function createX402Seller(options: X402SellerOptions): Promise<X402
         return reply(404, { error: { code: "NOTHING_TO_SELL", reason: `No ${kind} for ${id}.` } });
       }
       const context = {
-        adapter: adapter(request),
+        adapter: adapter(request, publicBase),
         path: request.pathname,
         method: request.method
       };

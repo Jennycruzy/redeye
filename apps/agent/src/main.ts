@@ -321,6 +321,9 @@ const x402 = planChain
   ? await createX402Seller({
       settlement: x402Settlement(),
       payTo: planChain.agentAddress,
+      ...(process.env.PUBLIC_AGENT_URL?.trim()
+        ? { publicUrl: process.env.PUBLIC_AGENT_URL.trim() }
+        : {}),
       content: storeContent(store, Number(process.env.PRICE_MAX_AGE_S ?? "120") * 1000)
     })
   : null;
