@@ -24,6 +24,20 @@ publishes their results at the open.
 | PlanJobHook (team jobs)                                         | [`0x42a7F449e4950524c13deBC96a0549100b516594`](https://bscscan.com/address/0x42a7F449e4950524c13deBC96a0549100b516594)                            |
 | Plan 1: Guard on NVDA, 7 Oct overnight window                   | [lock](https://bscscan.com/tx/0x759ead4af86268d4015ab4074a58f2dc866ff8ee96dd077f85a5cd6ad2902092), 5 h 27 min before the close                    |
 
+## Binance Web3 API
+
+Redeye signs its own requests to five Binance Web3 API modules (`packages/clients/src/web3api.ts`, HMAC-SHA256 per the authentication page, a fresh nonce per attempt, one clock-skew retry). Every trade is checked by them first (`apps/agent/src/binance-gate.ts`); a module that does not answer makes the trade wait, it never trades unchecked.
+
+| Module      | Endpoints                                                | What it does in Redeye                                                                                                                                                | Refusal                                                          |
+| ----------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| RWA Data    | `GET /dex/market/rwa/tokens`                             | Token status, shares per token and price before each trade, and the bStock list every 10 minutes                                                                      | `ASSET_PAUSED`, `MULTIPLIER_MISMATCH`, `BINANCE_API_UNAVAILABLE` |
+| Market      | `POST /dex/market/price`                                 | Binance's token price, stored next to the pool price                                                                                                                  | evidence                                                         |
+| Trading     | `GET /dex/aggregator/quote`                              | Binance's own quote for the same token, side and size, compared with the Agentic Wallet quote                                                                         | `QUOTE_DEVIATION_EXCEEDED` (waits and retries)                   |
+| Transaction | `POST /dex/pre-transaction/simulate`                     | Dry run of the exact PlanAccount transaction; predicted balance changes must stay inside the signed bounds, and the transaction sent must have the same calldata hash | `SIM_FAILED`                                                     |
+| Wallet      | `GET /dex/post-transaction/transaction-detail-by-txhash` | After each fill, Binance's record of what the wallet sent and received, compared with the chain reconciliation                                                        | evidence (stored on the run)                                     |
+
+What Binance returned is part of the hashed decision input, so it is on the record behind each on-chain decision. Live counts: `curl -s https://api.theredeyed-agent.site/binance`. Read-only check of all five modules: `node scripts/web3-probe.mjs` (needs `BINANCE_WEB3_API_KEY` and `BINANCE_WEB3_API_SECRET`). What we found along the way, including where the docs and the live answers differ, is in `docs/dx-log.md`.
+
 ## Start here
 
 ```sh

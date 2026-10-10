@@ -187,7 +187,7 @@ const STEPS = [
   },
   {
     title: "Graded at the 9:30 open",
-    body: "If the trigger is hit, the agent trades inside your limits through your Binance Agentic Wallet. At the open it publishes what it promised, what it did and the official price: kept, refused or broken."
+    body: "If the trigger is hit, Binance's own data, quote and checks come first, then the agent trades inside your limits through your Binance Agentic Wallet. At the open it publishes what it promised, what it did and the official price: kept, refused or broken."
   }
 ];
 

@@ -36,6 +36,35 @@ const CONTRACTS = [
 
 const FIRST_TRADE = "0x3014f7996e59458934dcd500232fd2674904d183df376daac9c8171770f0e87a";
 
+/** The Binance Web3 API modules Redeye calls, signed with its own key, and what each one does. */
+const BINANCE_MODULES = [
+  [
+    "rwa",
+    "RWA data",
+    "Every 10 minutes and before each trade: the token's status, shares per token and price. A paused token is refused."
+  ],
+  [
+    "market",
+    "Market",
+    "Binance's price for the token, kept next to the pool price before each trade."
+  ],
+  [
+    "trading",
+    "Trading",
+    "Binance's own quote for the same trade. If it is more than 1.5% from the wallet's, the trade waits."
+  ],
+  [
+    "transaction",
+    "Transaction",
+    "A dry run of the exact transaction for trades from your own wallet. If it fails, nothing is sent."
+  ],
+  [
+    "wallet",
+    "Wallet",
+    "After each trade, Binance's record of what the wallet sent and received, compared with the chain's."
+  ]
+] as const;
+
 /** What is live and what is not, stated plainly. */
 const REAL = [
   [
@@ -45,6 +74,11 @@ const REAL = [
   ],
   ["Plans locked on BNB Chain before the close", "Live", "Every plan since 7 Oct is in the record"],
   ["Decisions and results written on chain", "Live", "Check them yourself with Check it"],
+  [
+    "Every trade checked by Binance's Web3 API first",
+    "Live",
+    "Five modules, signed with Redeye's own key; live counts below"
+  ],
   [
     "Trading through the Binance Agentic Wallet",
     "Live",
@@ -72,6 +106,7 @@ const REAL = [
 
 export default function Proof() {
   const health = useAgent(() => agent.health(), [], 30_000);
+  const binance = useAgent(() => agent.binance(), [], 60_000);
 
   return (
     <div className="wrap page">
@@ -143,6 +178,53 @@ export default function Proof() {
           </Link>
         </li>
       </ol>
+
+      <section className="section--tight" id="binance">
+        <h2 className="h2">Built on the Binance Web3 API</h2>
+        <p className="muted">
+          Redeye signs its own calls to five Binance Web3 API modules. If one doesn't answer, the
+          trade waits instead of going ahead unchecked.
+        </p>
+        <div className="board">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Module</th>
+                <th scope="col">What it does for your plan</th>
+                <th scope="col" className="num hide-sm">
+                  Calls since restart
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {BINANCE_MODULES.map(([key, name, what]) => {
+                const live = binance.status === "ready" ? binance.value.modules[key] : undefined;
+                return (
+                  <tr key={key}>
+                    <td>{name}</td>
+                    <td className="muted">{what}</td>
+                    <td className="num hide-sm">
+                      {live
+                        ? `${live.ok}/${live.calls} ok${live.medianLatencyMs === null ? "" : ` · ${live.medianLatencyMs} ms`}`
+                        : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="fine">
+          RWA data runs every 10 minutes. Market, Trading and Transaction run when a trigger is hit,
+          just before the trade. Wallet runs after each trade.
+        </p>
+        {binance.status === "ready" && binance.value.bstocks.checkedAt && (
+          <p className="fine">
+            Binance lists {binance.value.bstocks.count} stock tokens on BNB Chain right now, last
+            checked {new Date(binance.value.bstocks.checkedAt).toLocaleTimeString()}.
+          </p>
+        )}
+      </section>
 
       <section className="section--tight">
         <h2 className="h2">What is live and what is not</h2>

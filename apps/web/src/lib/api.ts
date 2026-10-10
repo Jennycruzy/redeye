@@ -231,6 +231,38 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+export interface BinanceModuleStatus {
+  calls: number;
+  ok: number;
+  medianLatencyMs: number | null;
+  last: {
+    at: string;
+    path: string;
+    httpStatus: number | null;
+    code: number | null;
+    ok: boolean;
+  } | null;
+}
+
+export interface BinanceStatus {
+  state: string;
+  lastError: string | null;
+  since: string | null;
+  modules: Record<string, BinanceModuleStatus>;
+  bstocks: { checkedAt: string | null; count: number };
+}
+
+/** What the Binance Web3 API returned around one trade, as stored on the run. */
+export interface RunBinance {
+  evidence?: {
+    rwa: { reasonCode: string | null; tokenToShareRatio: string | null } | null;
+    marketPrice: string | null;
+    quote: { vendor: string; deviationPct: string; limitPct: string } | null;
+    simulation: { kind: string; passed: boolean; detail: string } | null;
+  };
+  fill?: { matchesChain: boolean; detail: string; txStatus: string | null };
+}
+
 export const agent = {
   prices: (tickers?: string[]) =>
     request<Prices>(tickers ? `/prices?tickers=${tickers.join(",")}` : "/prices"),
@@ -258,6 +290,7 @@ export const agent = {
   study: () => request<Study>("/study"),
   wallet: () => request<WalletStatus>("/wallet"),
   run: (id: string) => request<Record<string, unknown>>(`/runs/${id}`),
+  binance: () => request<BinanceStatus>("/binance"),
   runEvents: (id: string) => request<{ state: string; items: RunEvent[] }>(`/runs/${id}/events`),
   receipt: (id: string) => request<Record<string, unknown>>(`/runs/${id}/receipt`),
   lockSigned: (body: {

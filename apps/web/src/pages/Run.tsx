@@ -3,7 +3,7 @@ import { OutcomeBadge, Problem, Skeleton, TxLink } from "../components/bits";
 import { NightStrip, type StripCheck, type StripMark } from "../components/NightStrip";
 import { stockName } from "../components/PriceBoard";
 import { PromiseCard } from "../components/PromiseCard";
-import { agent, type RunEvent } from "../lib/api";
+import { agent, type RunBinance, type RunEvent } from "../lib/api";
 import {
   changePct,
   kindName,
@@ -94,7 +94,14 @@ function Log({
               : "",
         tx: (event.txHash as string | null | undefined) ?? undefined
       });
-    } else
+    } else if (event.step === "binance-wallet")
+      lines.push({
+        at,
+        title: event.matchesChain ? "Checked by Binance" : "Binance disagrees with the chain",
+        body: String(event.reason ?? ""),
+        tx: (event.txHash as string | undefined) ?? undefined
+      });
+    else
       lines.push({
         at,
         title: event.step.replace(/_/g, " "),
@@ -138,10 +145,69 @@ function Log({
   );
 }
 
+/** The run's Binance Web3 API checks, read from the stored run, in plain words. */
+function binanceOf(run: Record<string, unknown> | null): RunBinance | null {
+  const decision = run?.decision as { input?: { binance?: RunBinance["evidence"] } } | undefined;
+  const trade = run?.trade as { binanceCheck?: RunBinance["fill"] } | undefined;
+  const evidence = decision?.input?.binance;
+  const fill = trade?.binanceCheck;
+  if (!evidence && !fill) return null;
+  return { ...(evidence ? { evidence } : {}), ...(fill ? { fill } : {}) };
+}
+
+function BinanceChecks({ checks }: { checks: RunBinance }) {
+  const rows: Array<{ module: string; ok: boolean; text: string }> = [];
+  const e = checks.evidence;
+  if (e?.rwa)
+    rows.push({
+      module: "RWA data",
+      ok: e.rwa.reasonCode !== "ASSET_PAUSED",
+      text: `Binance listed the token as ${e.rwa.reasonCode ?? "unknown"}, ${e.rwa.tokenToShareRatio ?? "?"} shares per token.`
+    });
+  if (e?.quote)
+    rows.push({
+      module: "Trading",
+      ok: Number(e.quote.deviationPct) <= Number(e.quote.limitPct),
+      text: `Binance's own quote was within ${e.quote.deviationPct}% of the wallet's (limit ${e.quote.limitPct}%).`
+    });
+  if (e?.simulation?.kind === "exact")
+    rows.push({
+      module: "Transaction",
+      ok: e.simulation.passed,
+      text: `Dry run of the exact transaction: ${e.simulation.detail}.`
+    });
+  if (checks.fill)
+    rows.push({ module: "Wallet", ok: checks.fill.matchesChain, text: checks.fill.detail });
+  return (
+    <section className="section--tight">
+      <h2 className="h2">Checked by Binance</h2>
+      <p className="muted">
+        Before and after the trade, Redeye asked Binance's own Web3 API. Each answer is stored with
+        the run.
+      </p>
+      <ol className="checks">
+        {rows.map((row) => (
+          <li key={row.module} className={`checks__item checks__item--${row.ok ? "pass" : "fail"}`}>
+            <span className="checks__mark" aria-hidden="true">
+              {row.ok ? "✓" : "✕"}
+            </span>
+            <span>
+              <strong>{row.module}</strong>
+              <span className="checks__detail">{row.text}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
 export default function Run({ id }: { id: string }) {
   const now = useNow(1000);
   const record = useAgent(() => agent.record(), [], 30_000);
   const events = useAgent(() => agent.runEvents(id), [id], 60_000);
+  const stored = useAgent(() => agent.run(id), [id], 60_000);
+  const binance = binanceOf(stored.status === "ready" ? stored.value : null);
   const item = record.status === "ready" ? record.value.items.find((i) => i.id === id) : undefined;
   const trace = useAgent(
     () => (item ? agent.night(item.ticker, item.closeTs) : Promise.reject(new Error("waiting"))),
@@ -243,6 +309,8 @@ export default function Run({ id }: { id: string }) {
       </section>
 
       <PromiseCard item={item} now={now} />
+
+      {binance && <BinanceChecks checks={binance} />}
 
       <section className="section--tight">
         <h2 className="h2">What the agent logged</h2>
