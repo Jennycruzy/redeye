@@ -35,10 +35,25 @@ describe.skipIf(MODE !== "preview" && MODE !== "pay")("live B402 sale (REDEYE_B4
       secret: process.env.BINANCE_WEB3_API_SECRET ?? "",
       onCall: (call) => console.log(JSON.stringify({ b402Call: call }))
     });
+    // Print every answer Binance gives, in full, so a live run leaves its own evidence.
+    const inner = web3B402Transport(client);
+    const transport: typeof inner = {
+      supported: inner.supported,
+      verify: async (request) => {
+        const answer = await inner.verify(request);
+        console.log(JSON.stringify({ verifyAnswer: answer }));
+        return answer;
+      },
+      settle: async (request) => {
+        const answer = await inner.settle(request);
+        console.log(JSON.stringify({ settleAnswer: answer }));
+        return answer;
+      }
+    };
     const seller = await createX402Seller({
       settlement: {
         kind: "b402-web3",
-        transport: web3B402Transport(client),
+        transport,
         replayStore: new SqliteAgentStore(new FakeDatabase()).replayStore(),
         onSettlementUnknown: (event) => console.log(JSON.stringify({ settlementUnknown: event }))
       },
