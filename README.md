@@ -5,8 +5,9 @@ Redeye reads the last US close, a source-labelled 24/7 equity price, and the tok
 Status, 10 Oct 2026: live on BNB Smart Chain at [theredeyed-agent.site](https://theredeyed-agent.site).
 
 - **First plan-triggered trade.** Plan #6 promised to sell 0.0605 CRCL if its 24/7 price rose 1% over the weekend. At 02:41 UTC on 10 Oct it did: the decision went on chain, the Binance Agentic Wallet sold for 5.156 USDT, and the fill was recorded on PlanBook. Binance's Wallet API and the chain agree on the amount to the last digit.
-- **Every trade is checked by the Binance Web3 API first** (five modules, signed with our own key; see below).
-- Plans #2 to #8 are watching the weekend window; results publish at Monday's open.
+- **Trades are checked by the Binance Web3 API, signed with our own key** (five modules; which ones run depends on the route, see below).
+- **Spot only.** The 24/7 price from Hyperliquid's `xyz` market is a reference signal only; Redeye never opens a position there. Every trade is a spot bStock trade on BNB Smart Chain mainnet.
+- Plans #2 to #5, #7 and #8 are watching the weekend window, graded at Monday's open (13:30 UTC); plan #9 (Monday night) and #10 are locked. Results publish at the next open.
 - **Plan #10 was signed by the Binance Agentic Wallet itself** through the Redeye skill (`skills/redeye`, `lock --yes`): the wallet signed the plan (EIP-712, Developer mode), and PlanBook stores it under the wallet's own address `0xDA11…aae2`. A Hold on NVDA for the Monday-night window; no money moves, graded at Tuesday's open.
 - Two ways to trade: the Binance Agentic Wallet, and your own wallet through PlanAccount (one bounded, owner-signed trade; plan #8 is locked this way). A phone passkey account for newcomers, created from Telegram, is deployed and tested; the first real phone account is still to be made.
 
@@ -26,7 +27,10 @@ Status, 10 Oct 2026: live on BNB Smart Chain at [theredeyed-agent.site](https://
 
 ## Binance Web3 API
 
-Redeye signs its own requests to five Binance Web3 API modules (`packages/clients/src/web3api.ts`, HMAC-SHA256 per the authentication page, a fresh nonce per attempt, one clock-skew retry). Every trade is checked by them first (`apps/agent/src/binance-gate.ts`); a module that does not answer makes the trade wait, it never trades unchecked.
+Redeye signs its own requests to five Binance Web3 API modules (`packages/clients/src/web3api.ts`, HMAC-SHA256 per the authentication page, a fresh nonce per attempt, one clock-skew retry). Which modules run depends on the route (`apps/agent/src/binance-gate.ts`). A required module that does not answer makes the trade wait; it never trades unchecked.
+
+- **Agentic Wallet route:** RWA Data, Market and Trading before the trade; the Agentic Wallet trades; Wallet API and BNB Chain transfers after it. No Transaction dry run here: the Agentic Wallet builds its own transaction and does not expose it (see `docs/dx-log.md`). Plan #6 went this way.
+- **Own-wallet and passkey route (PlanAccount):** RWA Data, Market, Trading and a Transaction dry run of the exact transaction before the trade; the account trades; Wallet API and BNB Chain transfers after it. No trade has gone this way yet.
 
 | Module      | Endpoints                                                | What it does in Redeye                                                                                                                                                | Refusal                                                          |
 | ----------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |

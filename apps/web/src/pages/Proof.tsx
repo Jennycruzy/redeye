@@ -75,9 +75,9 @@ const REAL = [
   ["Plans locked on BNB Chain before the close", "Live", "Every plan since 7 Oct is in the record"],
   ["Decisions and results written on chain", "Live", "Check them yourself with Check it"],
   [
-    "Every trade checked by Binance's Web3 API first",
+    "Trades checked by Binance's Web3 API",
     "Live",
-    "Five modules, signed with Redeye's own key; live counts below"
+    "Five modules, signed with Redeye's own key; which ones run depends on the route, see below"
   ],
   [
     "Trading through the Binance Agentic Wallet",
@@ -86,7 +86,7 @@ const REAL = [
   ],
   [
     "Trading from your own wallet, one trade at a time",
-    "Live",
+    "Locked, no trade yet",
     "Plan #8 is locked with a $2 limit; its trigger has not been hit yet"
   ],
   [
@@ -94,7 +94,11 @@ const REAL = [
     "Testing",
     "Account creation is live; the first real phone account is still being confirmed"
   ],
-  ["Paid price feed for other agents (x402)", "Live", "First paid sale on 8 Oct"],
+  [
+    "Paid price feed for other agents (x402)",
+    "Live",
+    "First paid sale on 8 Oct, by our own test wallet"
+  ],
   ["On-chain agent identity (ERC-8004)", "Live", "Redeye is agent #368521"],
   [
     "A job record for each plan (ERC-8183)",
@@ -182,8 +186,10 @@ export default function Proof() {
       <section className="section--tight" id="binance">
         <h2 className="h2">Built on the Binance Web3 API</h2>
         <p className="muted">
-          Redeye signs its own calls to five Binance Web3 API modules. If one doesn't answer, the
-          trade waits instead of going ahead unchecked.
+          Redeye signs its own calls to five Binance Web3 API modules. Agentic Wallet trades are
+          checked by RWA Data, Market and Trading first, then by Wallet after the trade; trades from
+          your own wallet also get a Transaction dry run of the exact transaction. If a required
+          module doesn't answer, the trade waits instead of going ahead unchecked.
         </p>
         <div className="board">
           <table>

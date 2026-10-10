@@ -185,7 +185,7 @@ const DOORS = [
   {
     id: "signed",
     name: "Sign it with your wallet",
-    state: "Live",
+    state: "Locking live, no trade yet",
     body: "Your wallet gives Redeye permission for one trade only: this stock, this amount, this window. Your money stays in your wallet, and BNB Chain blocks anything else."
   },
   {
@@ -203,7 +203,7 @@ const DOORS = [
   {
     id: "passkey",
     name: "Your passkey account",
-    state: "Live",
+    state: "No trade yet",
     body: "Your fingerprint, face or screen lock approves one trade for this plan only. Redeye cannot use your account for anything else."
   }
 ];
@@ -690,9 +690,18 @@ export default function Start() {
                   ) : (
                     <>
                       <p>
-                        This door is not open yet. Your plan is ready: copy it, and see the plans
-                        running through the Agentic Wallet now in the record.
+                        Open the Redeye bot in Telegram and tap <strong>Redeye Agent</strong>. It
+                        makes you an account approved by your phone's fingerprint, face or screen
+                        lock. Then come back here and lock this plan with it.
                       </p>
+                      <a
+                        className="button button--primary"
+                        href="https://t.me/redeyed_bot"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open the Redeye bot
+                      </a>
                       <CopyPlan plan={previewPlan} />
                     </>
                   )}
