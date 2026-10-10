@@ -65,6 +65,10 @@ export interface PublishedRun {
   verdict?: ReceiptVerdict & { verdictHash: Hex };
   verdictChain?: { txHash: Hex };
   reconciliation?: ReceiptReconciliation;
+  trade?: {
+    wallet: Hex;
+    order: { status: string; txHash: Hex | null } | null;
+  };
 }
 
 function sameTransfer(
@@ -254,7 +258,7 @@ export async function checkRun(
 
   const recomputed = hashPlan(run.plan);
   push({
-    label: "Plan fingerprint matches the published plan",
+    label: "The plan matches what Redeye published",
     state: recomputed === run.planHash ? "pass" : "fail",
     detail: `Recomputed ${recomputed.slice(0, 14)}… from the plan text; published ${run.planHash.slice(0, 14)}…`
   });
@@ -266,9 +270,9 @@ export async function checkRun(
     args: [BigInt(run.planId)]
   });
   push({
-    label: `PlanBook holds the same fingerprint for plan #${run.planId}`,
+    label: `BNB Chain holds the same plan #${run.planId}`,
     state: onChain.planHash === recomputed ? "pass" : "fail",
-    detail: `PlanBook ${onChain.planHash.slice(0, 14)}… for ${onChain.ticker}`
+    detail: `On chain ${onChain.planHash.slice(0, 14)}… for ${onChain.ticker}`
   });
 
   const lockTx = await client.getTransactionReceipt({ hash: run.freeze.txHash });
@@ -294,13 +298,27 @@ export async function checkRun(
   const decisionHash = hashDecision(run.decision.input, run.decision.decision);
   const decisionEvent = await eventIn(run.decision.chain.txHash, "DecisionRecorded", run.planId);
   push({
-    label: "Decision fingerprint matches the chain",
+    label: "The decision matches what is on chain",
     state:
       decisionEvent?.decisionHash === decisionHash && decisionHash === run.decision.decisionHash
         ? "pass"
         : "fail",
     detail: `Recomputed ${decisionHash.slice(0, 14)}… from the prices and rules the agent saw`
   });
+
+  const fill = run.trade?.order;
+  if (fill?.status === "FINISHED" && fill.txHash) {
+    const swap = await client.getTransactionReceipt({ hash: fill.txHash });
+    push({
+      label: "The trade is on chain",
+      state:
+        swap.status === "success" &&
+        [swap.from, swap.to].some((a) => a?.toLowerCase() === run.trade!.wallet.toLowerCase())
+          ? "pass"
+          : "fail",
+      detail: `Made by the plan's wallet ${run.trade!.wallet.slice(0, 6)}…${run.trade!.wallet.slice(-4)} in block ${swap.blockNumber}`
+    });
+  }
 
   if (!run.verdict || !run.verdictChain) {
     push({
@@ -314,7 +332,7 @@ export async function checkRun(
   const verdictHash = hashVerdict(verdict);
   const verdictEvent = await eventIn(run.verdictChain.txHash, "VerdictRecorded", run.planId);
   push({
-    label: "Result fingerprint matches the chain",
+    label: "The result matches what is on chain",
     state: verdictEvent?.verdictHash === verdictHash && verdictHash === published ? "pass" : "fail",
     detail: `${verdict.outcome}${verdict.openPrice ? `, open ${verdict.openPrice}` : ""}`
   });
@@ -323,7 +341,7 @@ export async function checkRun(
     const reconciliation = run.reconciliation;
     if (!reconciliation) {
       push({
-        label: "Wallet transfers match recorded fills",
+        label: "Wallet transfers match the recorded trades",
         state: "fail",
         detail: "The agent did not publish transfer reconciliation for this trading plan."
       });
@@ -335,7 +353,7 @@ export async function checkRun(
     const resultMatches = hashCanonical(recomputed) === hashCanonical(reconciliation.result);
     const hashMatches = publishedHash === run.verdict.reconciliationHash;
     push({
-      label: "Wallet transfers match recorded fills",
+      label: "Wallet transfers match the recorded trades",
       state: resultMatches && hashMatches && recomputed.valid ? "pass" : "fail",
       detail:
         resultMatches && hashMatches
