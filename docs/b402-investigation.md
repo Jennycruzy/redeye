@@ -9,6 +9,7 @@ How Redeye got Binance B402 (Binance's x402 facilitator) working, what failed al
 - One real payment was settled by Binance's facilitator on BNB Chain: 0.002 U from the Binance Agentic Wallet to Redeye's agent wallet, [tx `0xdba0391f…836c`](https://bscscan.com/tx/0xdba0391fe87c1d09a4fce2b3d4f6f13690ab4b341590e6b07636ea5fda19836c).
 - Most settles were refused with `errorReason: "invalid_transaction_state"` while `/verify` passed. Root cause: the Agentic Wallet signs EIP-3009 payments with `validAfter` equal to the signing second, U accepts the transfer only in a block whose time is past `validAfter`, and we called `/settle` within a second of signing. A dry run of the exact transfer reverted "Authorization not yet valid" right after signing and would have succeeded 4 seconds later.
 - Fix: wait until the chain's latest block time is past `validAfter` before calling `/settle` (`apps/agent/src/b402-web3.ts`).
+- With the fix, a complete sale went through at 21:07: the Agentic Wallet paid 0.002 U, Binance settled it ([tx `0x967e6176…3173`](https://bscscan.com/tx/0x967e61768d815efc4642a5ba2ba0e8e7ffdfebcdff76e2ec9593ef951a663173)), and Redeye delivered the NVDA price.
 
 ## Timeline
 
@@ -24,7 +25,8 @@ How Redeye got Binance B402 (Binance's x402 facilitator) working, what failed al
 | 10 Oct 20:18       | Agentic Wallet swapped 0.1 USDT for 0.099988 U ([tx](https://bscscan.com/tx/0xbc7d56e15b1f832edaf437d434e87f1a792e0570d5ed3873c3ccb7e4625f8783)) so it could pay by EIP-3009.                                                                                                                                              |
 | 10 Oct 20:19–20:45 | Five signed payments (table below): all verified, one settled.                                                                                                                                                                                                                                                             |
 | 10 Oct 21:03       | No-settle dry run found the cause.                                                                                                                                                                                                                                                                                         |
-| 10 Oct 21:10       | Fix built and tested.                                                                                                                                                                                                                                                                                                      |
+| 10 Oct 21:05       | Fix built and tested.                                                                                                                                                                                                                                                                                                      |
+| 10 Oct 21:07       | Full sale with the fix: settled, data delivered.                                                                                                                                                                                                                                                                           |
 
 ## What `/supported` offers
 
@@ -43,13 +45,14 @@ Permit2 spenders: `0x3038f7ac3b4D1a3fe886BdCB5cD01e9f6BDd8633` (exact), `0x8c819
 
 Same route each time: Redeye's seller (in its own process, never the live agent) fetched `/supported`, issued a 402 for 0.002 U by `eip3009` to the agent wallet, the Agentic Wallet ran `baw x402-payment preview` (READY_TO_SIGN, `needApproveFirst: false`) and `sign`, then Redeye called `/verify` and `/settle`.
 
-| Signed    | Payment id / nonce                                                              | `/verify`    | `/settle`                                                        | On chain                                                                                                         |
-| --------- | ------------------------------------------------------------------------------- | ------------ | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| ~20:19:07 | not recorded                                                                    | not recorded | not recorded                                                     | no transfer seen; outcome unknown                                                                                |
-| 20:19:33  | nonce `0xb81a4de0…81fe00` (from the tx)                                         | not recorded | not recorded                                                     | **settled 20:19:34**, tx `0xdba0391f…836c`, sent by `0x34F7…0899`, 86,301 gas paid by Binance; nonce marked used |
-| 20:31     | `6be1e862…`                                                                     | isValid true | `success: false`, `transaction: ""`, `invalid_transaction_state` | nothing                                                                                                          |
-| 20:36:38  | `dc2ea922…`, nonce `0x3fc0783f…3bf1`, validAfter 1791664598, validBefore +120 s | isValid true | refused at +0.6 s and again at +6.6 s, same reason               | nothing; nonce unused                                                                                            |
-| 20:44:57  | `11d7644b…`, nonce `0x6c3d60ce…1c62`                                            | isValid true | refused at +0.3 s and +6.5 s, same reason                        | nothing; nonce unused                                                                                            |
+| Signed                  | Payment id / nonce                                                              | `/verify`    | `/settle`                                                        | On chain                                                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------- | ------------ | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| ~20:19:07               | not recorded                                                                    | not recorded | not recorded                                                     | no transfer seen; outcome unknown                                                                                |
+| 20:19:33                | nonce `0xb81a4de0…81fe00` (from the tx)                                         | not recorded | not recorded                                                     | **settled 20:19:34**, tx `0xdba0391f…836c`, sent by `0x34F7…0899`, 86,301 gas paid by Binance; nonce marked used |
+| 20:31                   | `6be1e862…`                                                                     | isValid true | `success: false`, `transaction: ""`, `invalid_transaction_state` | nothing                                                                                                          |
+| 20:36:38                | `dc2ea922…`, nonce `0x3fc0783f…3bf1`, validAfter 1791664598, validBefore +120 s | isValid true | refused at +0.6 s and again at +6.6 s, same reason               | nothing; nonce unused                                                                                            |
+| 20:44:57                | `11d7644b…`, nonce `0x6c3d60ce…1c62`                                            | isValid true | refused at +0.3 s and +6.5 s, same reason                        | nothing; nonce unused                                                                                            |
+| 21:07:35 (with the fix) | nonce `0x566f9948…b37d`, validAfter 1791666454                                  | isValid true | `success: true`, 1.3 s                                           | **settled 21:07:35**, tx `0x967e6176…3173`; data delivered                                                       |
 
 The 20:19:33 run was started by mistake while checking balances; only one 0.002 U ever moved (Agentic Wallet 0.099988 → 0.097988 U). The first two runs' Binance answers were not recorded, because the harness then logged only call status; after that it logged every answer.
 
@@ -78,10 +81,17 @@ So: the Agentic Wallet sets `validAfter` to the second it signs. U (like other E
 
 `web3B402Transport` (`apps/agent/src/b402-web3.ts`) now reads `validAfter` from the EIP-3009 authorization and waits, polling the latest BNB Chain block every 0.5 s, until the block time is past it (at most 15 s) before calling `/settle`. Permit2 payments, which have no `validAfter`, settle at once. Tests in `apps/agent/src/b402-web3.test.ts`. A settle that comes back broadcast but not confirmed is checked again every 3 s for up to 45 s; a refusal with nothing broadcast is never resent.
 
+## Confirmed live
+
+21:07: the Agentic Wallet signed (validAfter 1791666454), `/verify` passed, and `/settle` answered `{success: true, transaction: 0x967e6176…3173, amount: "2000000000000000"}` in 1.3 s. On chain: block 126896979 (time 1791666455), status 1, sent by Binance's signer `0x34F7…0899`, 86,325 gas paid by Binance, 0.002 U from the Agentic Wallet to the agent wallet. Redeye's seller then answered HTTP 200 with the NVDA price snapshot and a `PAYMENT-RESPONSE` header.
+
+Caveat: in this run the wallet's `validAfter` was already a second old when we settled, so the block was past it immediately and the new wait did not need to hold. The 21:03 dry run is the direct evidence for the cause; the wait guards the case it found.
+
+Two payments in total were settled by Binance today (20:19:34 and 21:07:35); four were refused before broadcast; one is unknown.
+
 ## Status
 
-- Built, tested, pushed. Not active in the live agent, which still settles x402 sales with its own facilitator (`X402_SETTLEMENT=self`); switching to `b402-web3` is one setting plus a restart.
-- Confirming the fix live takes one more 0.002 U payment from the Agentic Wallet.
+Built, tested and pushed. The live agent still settles x402 sales with its own facilitator (`X402_SETTLEMENT=self`); switching to `b402-web3` is one setting plus a restart.
 
 ## What we would ask Binance for
 
