@@ -10,6 +10,9 @@ import {
 import type { NightTrace } from "../lib/api";
 import { changePct, localStamp, nyClock, pct, usd } from "../lib/format";
 
+/** How long the price line takes to draw; kept in step with --draw in app.css. */
+const DRAW_SECONDS = 1.4;
+
 export interface StripLine {
   value: number;
   label: string;
@@ -54,7 +57,9 @@ function hourTicks(closeTs: number, openTs: number, innerW: number): number[] {
     // Leave room for the "Close" and "Open" labels at both ends.
     const edge = (48 / Math.max(innerW, 1)) * span;
     const nearEdge = t - closeTs < edge || openTs - t < edge;
-    if ((hour * 3600e3) % step === 0 && !nearEdge) ticks.push(t);
+    // On narrow charts a label needs about 72px, so skip any that would touch the last.
+    const roomy = ticks.length === 0 || ((t - ticks[ticks.length - 1]!) / span) * innerW >= 72;
+    if ((hour * 3600e3) % step === 0 && !nearEdge && roomy) ticks.push(t);
   }
   return ticks;
 }
@@ -161,6 +166,13 @@ export function NightStrip({
     else return;
     event.preventDefault();
   };
+
+  // The line draws from the close to its last point once per window; later refreshes
+  // only extend it. Anything placed on the line appears as the drawing reaches it.
+  const drawKey = `${trace.source}-${closeTs}`;
+  const drawEnd = last ? last[0] : closeTs;
+  const drawDelay = (at: number) =>
+    `${(DRAW_SECONDS * Math.min(1, Math.max(0, (at - closeTs) / Math.max(1, drawEnd - closeTs)))).toFixed(2)}s`;
 
   const active = hover === null ? null : points[hover];
   const activeChange = active && close !== null ? changePct(active[1], close) : null;
@@ -280,13 +292,31 @@ export function NightStrip({
                 </text>
               </g>
             ))}
-          {area && <path className="strip__area" d={area} fill={`url(#${gradientId}-wash)`} />}
-          {path && <path className="strip__line" d={path} />}
+          {area && (
+            <path
+              key={`area-${drawKey}`}
+              className="strip__area"
+              d={area}
+              fill={`url(#${gradientId}-wash)`}
+            />
+          )}
+          {path && <path key={`line-${drawKey}`} className="strip__line" d={path} pathLength={1} />}
           {checks.map((c) => (
-            <circle key={c.at} className="strip__check" cx={x(c.at)} cy={y(c.price)} r={3.5} />
+            <circle
+              key={`${drawKey}-${c.at}`}
+              className="strip__check"
+              cx={x(c.at)}
+              cy={y(c.price)}
+              r={3.5}
+              style={{ animationDelay: drawDelay(c.at) }}
+            />
           ))}
           {marks.map((m) => (
-            <g key={`${m.tone}-${m.at}`}>
+            <g
+              key={`${drawKey}-${m.tone}-${m.at}`}
+              className="strip__marked"
+              style={{ animationDelay: drawDelay(m.at) }}
+            >
               <line
                 className={`strip__mark strip__mark--${m.tone}`}
                 x1={x(m.at)}
@@ -304,7 +334,7 @@ export function NightStrip({
             </g>
           ))}
           {last && (
-            <g>
+            <g key={`end-${drawKey}`} className="strip__end">
               {live && <circle className="strip__pulse" cx={x(last[0])} cy={y(last[1])} r={4} />}
               <circle className="strip__dot" cx={x(last[0])} cy={y(last[1])} r={4.5} />
             </g>

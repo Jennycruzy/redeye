@@ -84,7 +84,20 @@ export function PromiseCard({ item, now }: { item: RecordItem; now: number }) {
         </div>
         <OutcomeBadge item={item} />
       </header>
-      <ol className="moments">
+      <ol
+        className="moments"
+        style={{
+          ["--progress" as string]: item.outcome
+            ? 1
+            : nightOver
+              ? 0.67
+              : decided
+                ? 0.6
+                : now >= item.closeTs
+                  ? 0.5
+                  : 0.2
+        }}
+      >
         <li className="moment moment--done">
           <span className="moment__when">
             <When at={item.lockedAt ?? item.closeTs}>

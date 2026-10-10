@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useNow } from "../lib/hooks";
 import { Link, useLocation } from "../lib/router";
-import { MarketClock } from "./bits";
+import { MarketClock, marketState } from "./bits";
 
 const NAV = [
   { to: "/", label: "Tonight" },
@@ -12,10 +12,11 @@ const NAV = [
   { to: "/proof", label: "Proof" }
 ];
 
-function Wordmark() {
+function Wordmark({ awake = false }: { awake?: boolean }) {
   return (
     <Link to="/" className="wordmark" aria-label="Redeye, home">
-      <span className="wordmark__eye" aria-hidden="true" />
+      {/* The eye breathes while Wall Street is closed: that is when Redeye works. */}
+      <span className={`wordmark__eye${awake ? " wordmark__eye--awake" : ""}`} aria-hidden="true" />
       redeye
     </Link>
   );
@@ -87,7 +88,7 @@ export function Shell({ children }: { children: ReactNode }) {
       </a>
       <header className="topbar">
         <div className="topbar__inner">
-          <Wordmark />
+          <Wordmark awake={!marketState(now).open} />
           <nav className={`nav${menu ? " nav--open" : ""}`} aria-label="Main">
             {NAV.map((item) => (
               <Link

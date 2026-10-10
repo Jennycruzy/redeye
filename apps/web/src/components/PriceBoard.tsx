@@ -1,3 +1,4 @@
+import { Tick } from "../lib/motion";
 import type { PriceItem } from "../lib/api";
 import { changePct, num, pct, usd } from "../lib/format";
 import { Link } from "../lib/router";
@@ -102,7 +103,7 @@ export function PriceBoard({ items, marketOpen }: { items: PriceItem[]; marketOp
                   <span className="sub">{item.close?.date.slice(5).replace("-", "/")}</span>
                 </td>
                 <td className="num strong">
-                  {usd(real)} <Age seconds={item.real?.ageSeconds} />
+                  <Tick value={real}>{usd(real)}</Tick> <Age seconds={item.real?.ageSeconds} />
                 </td>
                 <td
                   className={`num move ${move === null ? "" : move >= 0 ? "move--up" : "move--down"}`}
@@ -110,7 +111,8 @@ export function PriceBoard({ items, marketOpen }: { items: PriceItem[]; marketOp
                   {pct(move)}
                 </td>
                 <td className="num">
-                  {usd(item.token?.value)} <Age seconds={item.token?.ageSeconds} />
+                  <Tick value={num(item.token?.value)}>{usd(item.token?.value)}</Tick>{" "}
+                  <Age seconds={item.token?.ageSeconds} />
                 </td>
                 <td className="num hide-sm">{pct(tokenGap)}</td>
               </tr>

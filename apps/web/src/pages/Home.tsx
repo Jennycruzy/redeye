@@ -7,6 +7,7 @@ import { agent, type RecordItem } from "../lib/api";
 import { changePct, duration, kindName, num, pct, plain, usd, windowName } from "../lib/format";
 import { useAgent, useNow } from "../lib/hooks";
 import { triggerLabel, triggerPrice } from "../lib/plans";
+import { Reveal, Tick } from "../lib/motion";
 import { Link } from "../lib/router";
 
 const HERO_TICKERS = ["NVDA", "TSLA", "GOOGL", "MSTR", "META"];
@@ -117,7 +118,9 @@ function Hero({ now, record }: { now: number; record: RecordItem[] }) {
           <div className="tonight__figure">
             <div>
               <p className="label">{market.open ? "Price now" : "24/7 price now"}</p>
-              <p className="figure">{realNow === null ? "—" : usd(realNow)}</p>
+              <p className="figure">
+                <Tick value={realNow}>{realNow === null ? "—" : usd(realNow)}</Tick>
+              </p>
             </div>
             <div className="tonight__delta">
               <p className="label">Since the {close === null ? "close" : `${usd(close)} close`}</p>
@@ -207,7 +210,7 @@ export default function Home() {
       <Hero now={now} record={items} />
 
       <section className="section">
-        <div className="wrap">
+        <Reveal className="wrap">
           <div className="section__head">
             <p className="eyebrow">The latest promise</p>
             <h2 className="title">
@@ -223,11 +226,11 @@ export default function Home() {
             </p>
           )}
           <Running items={others} now={now} />
-        </div>
+        </Reveal>
       </section>
 
       <section className="section section--sunk">
-        <div className="wrap">
+        <Reveal className="wrap">
           <div className="section__head section__head--row">
             <div>
               <p className="eyebrow">Right now</p>
@@ -256,11 +259,11 @@ export default function Home() {
             around the clock. Token: the stock token's price on BNB Chain, per real share. Ages in
             seconds.
           </p>
-        </div>
+        </Reveal>
       </section>
 
       <section className="section">
-        <div className="wrap">
+        <Reveal className="wrap">
           <div className="section__head">
             <p className="eyebrow">How it works</p>
             <h2 className="title">One promise a night, kept in public.</h2>
@@ -276,11 +279,11 @@ export default function Home() {
               </li>
             ))}
           </ol>
-        </div>
+        </Reveal>
       </section>
 
       <section className="section section--sunk">
-        <div className="wrap">
+        <Reveal className="wrap">
           <div className="section__head">
             <p className="eyebrow">The numbers behind it</p>
             <h2 className="title">Measured, not claimed.</h2>
@@ -319,11 +322,11 @@ export default function Home() {
               </p>
             </div>
           </dl>
-        </div>
+        </Reveal>
       </section>
 
       <section className="section">
-        <div className="wrap closing">
+        <Reveal className="wrap closing">
           <h2 className="display display--sm">
             Lock a plan <em>before</em> tonight's close.
           </h2>
@@ -340,7 +343,7 @@ export default function Home() {
               {stockName(lead.ticker)}.
             </p>
           )}
-        </div>
+        </Reveal>
       </section>
     </>
   );
