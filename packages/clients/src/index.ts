@@ -7,3 +7,4 @@ export * from "./nasdaq.js";
 export * from "./raw-store.js";
 export * from "./rpc.js";
 export * from "./rwa.js";
+export * from "./web3api.js";
