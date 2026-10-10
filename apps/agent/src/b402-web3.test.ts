@@ -55,6 +55,52 @@ const done: Settle = {
 };
 
 describe("web3B402Transport settle", () => {
+  it("waits for a block past the authorization's validAfter before settling", async () => {
+    const { client, asked } = fakeClient([done]);
+    const c = clock();
+    const times = [999, 1000, 1000, 1001];
+    const timed = {
+      ...request,
+      paymentPayload: { payload: { authorization: { validAfter: "1000" } } }
+    } as typeof request;
+    const result = await web3B402Transport(client, {
+      now: c.now,
+      sleep: c.sleep,
+      chainTime: async () => times.shift() ?? 1001
+    }).settle(timed);
+    expect(result).toEqual(done);
+    expect(asked).toHaveLength(1);
+    expect(c.sleeps).toEqual([500, 500, 500]);
+  });
+
+  it("settles anyway after the longest wait, so a stuck clock cannot hang a sale", async () => {
+    const { client, asked } = fakeClient([done]);
+    const c = clock();
+    const timed = {
+      ...request,
+      paymentPayload: { payload: { authorization: { validAfter: "1000" } } }
+    } as typeof request;
+    await web3B402Transport(client, {
+      now: c.now,
+      sleep: c.sleep,
+      chainTime: async () => 900,
+      maxValidAfterWaitMs: 2000
+    }).settle(timed);
+    expect(asked).toHaveLength(1);
+    expect(c.sleeps).toHaveLength(4);
+  });
+
+  it("does not wait when the payment has no validAfter (Permit2)", async () => {
+    const { client } = fakeClient([done]);
+    const c = clock();
+    await web3B402Transport(client, {
+      now: c.now,
+      sleep: c.sleep,
+      chainTime: async () => 0
+    }).settle(request);
+    expect(c.sleeps).toEqual([]);
+  });
+
   it("asks again while B402 reports a broadcast that has not confirmed, then returns it", async () => {
     const { client, asked } = fakeClient([pending, pending, done]);
     const c = clock();

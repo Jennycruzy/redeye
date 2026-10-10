@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { loadEnvFile } from "node:process";
-import type { Address, Hex } from "viem";
+import { createPublicClient, http, type Address, type Hex } from "viem";
 import { BinanceWeb3Client, fetchRwaList, parseRwaList, storeRawRecord } from "@redeye/clients";
 import { createBinanceFillCheck, createBinanceGate } from "./binance-gate.js";
 import { createBinanceStatus } from "./binance-status.js";
@@ -296,7 +296,13 @@ function x402Settlement(): X402Settlement | null {
       );
       return null;
     }
-    return { kind: "b402-web3", transport: web3B402Transport(binanceClient), ...b402Hooks };
+    const chain = createPublicClient({
+      transport: http(process.env.BSC_RPC_URL_LIVE ?? "https://bsc-dataseed.bnbchain.org")
+    });
+    const transport = web3B402Transport(binanceClient, {
+      chainTime: async () => Number((await chain.getBlock()).timestamp)
+    });
+    return { kind: "b402-web3", transport, ...b402Hooks };
   }
   if (route !== "b402-merchant" && route !== "b402") return null;
   try {
