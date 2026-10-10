@@ -27,6 +27,8 @@ export interface StoredPasskeyAccount extends RegisteredPasskey {
   rpId: string;
 }
 
+export type PasskeyRegistrationMode = "device" | "flexible";
+
 const STORAGE_KEY = "redeye-passkey-account";
 
 function bytes(value: ArrayBuffer): Uint8Array {
@@ -126,34 +128,80 @@ export function p256Coordinates(spki: ArrayBuffer): {
   };
 }
 
-export async function registerPasskey(rpId: string): Promise<RegisteredPasskey> {
+export function passkeyCreationOptions(
+  rpId: string,
+  userId: Uint8Array,
+  mode: PasskeyRegistrationMode
+): PublicKeyCredentialCreationOptions {
+  return {
+    challenge: crypto.getRandomValues(new Uint8Array(32)),
+    rp: { id: rpId, name: "Redeye" },
+    user: {
+      id: userId as unknown as BufferSource,
+      name: `redeye-${base64url(userId)}`,
+      displayName: "Redeye account"
+    },
+    pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+    authenticatorSelection: {
+      ...(mode === "device" ? { authenticatorAttachment: "platform" as const } : {}),
+      residentKey: "required",
+      requireResidentKey: true,
+      userVerification: "required"
+    },
+    attestation: "none",
+    timeout: 120_000
+  };
+}
+
+function passkeyError(error: unknown, mode: PasskeyRegistrationMode): Error {
+  if (error instanceof DOMException) {
+    if (error.name === "NotAllowedError") {
+      return new Error(
+        mode === "device"
+          ? "The device passkey prompt was cancelled or unavailable. Try ‘Another device or security key’ instead."
+          : "The passkey prompt was cancelled or timed out."
+      );
+    }
+    if (error.name === "SecurityError") {
+      return new Error(
+        "Passkeys require the official secure Redeye address. Reopen the Mini App from Telegram."
+      );
+    }
+    if (error.name === "InvalidStateError") {
+      return new Error("That passkey is already registered on this device.");
+    }
+    if (error.name === "NotSupportedError") {
+      return new Error("This browser cannot create the required P-256 passkey.");
+    }
+  }
+  return error instanceof Error ? error : new Error("Passkey creation failed.");
+}
+
+export async function registerPasskey(
+  rpId: string,
+  mode: PasskeyRegistrationMode = "device"
+): Promise<RegisteredPasskey> {
   if (!window.PublicKeyCredential || !navigator.credentials) {
     throw new Error("This browser does not support passkeys.");
   }
-  const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-  if (!available) {
-    throw new Error("A device passkey, fingerprint, Face ID or screen lock is not available.");
+  if (!window.isSecureContext) {
+    throw new Error("Passkeys require a secure HTTPS connection.");
   }
   const userId = crypto.getRandomValues(new Uint8Array(32));
-  const created = await navigator.credentials.create({
-    publicKey: {
-      challenge: crypto.getRandomValues(new Uint8Array(32)),
-      rp: { id: rpId, name: "Redeye" },
-      user: { id: userId, name: `redeye-${base64url(userId)}`, displayName: "Redeye account" },
-      pubKeyCredParams: [{ type: "public-key", alg: -7 }],
-      authenticatorSelection: {
-        authenticatorAttachment: "platform",
-        residentKey: "required",
-        requireResidentKey: true,
-        userVerification: "required"
-      },
-      attestation: "none",
-      timeout: 120_000
-    }
-  });
+  let created: Credential | null;
+  try {
+    created = await navigator.credentials.create({
+      publicKey: passkeyCreationOptions(rpId, userId, mode)
+    });
+  } catch (error) {
+    throw passkeyError(error, mode);
+  }
   if (!(created instanceof PublicKeyCredential)) throw new Error("Passkey creation was cancelled.");
   const response = created.response;
-  if (!(response instanceof AuthenticatorAttestationResponse)) {
+  if (
+    !(response instanceof AuthenticatorAttestationResponse) ||
+    typeof response.getPublicKey !== "function"
+  ) {
     throw new Error("The browser returned an invalid passkey registration.");
   }
   const spki = response.getPublicKey();

@@ -5,6 +5,7 @@ import {
   registerPasskey,
   savePasskeyAccount,
   telegramInitData,
+  type PasskeyRegistrationMode,
   type RegisteredPasskey
 } from "../lib/passkey";
 
@@ -18,11 +19,11 @@ export default function Newcomer() {
   const status = useAgent<PasskeyStatus>(() => agent.passkey(), [], 60_000);
   const [state, setState] = useState<State>({ step: "idle" });
   const insideTelegram = telegramInitData() !== null;
-  const create = async () => {
+  const create = async (mode: PasskeyRegistrationMode) => {
     if (status.status !== "ready" || !status.value.available) return;
     setState({ step: "busy" });
     try {
-      const passkey = await registerPasskey(status.value.rpId);
+      const passkey = await registerPasskey(status.value.rpId, mode);
       const initData = telegramInitData();
       if (initData === null) throw new Error("Open Redeye from Telegram to finish onboarding.");
       const request = { ...passkey, telegramInitData: initData };
@@ -72,19 +73,34 @@ export default function Newcomer() {
           {state.account.txHash && <p>Deployment: {state.account.txHash}</p>}
         </div>
       ) : (
-        <button
-          className="button button--primary"
-          type="button"
-          disabled={
-            !insideTelegram ||
-            status.status !== "ready" ||
-            !status.value.available ||
-            state.step === "busy"
-          }
-          onClick={() => void create()}
-        >
-          {state.step === "busy" ? "Creating passkey…" : "Create with device passkey"}
-        </button>
+        <div className="walletlist">
+          <button
+            className="button button--primary"
+            type="button"
+            disabled={
+              !insideTelegram ||
+              status.status !== "ready" ||
+              !status.value.available ||
+              state.step === "busy"
+            }
+            onClick={() => void create("device")}
+          >
+            {state.step === "busy" ? "Opening passkey prompt…" : "Use this phone or tablet"}
+          </button>
+          <button
+            className="button button--ghost"
+            type="button"
+            disabled={
+              !insideTelegram ||
+              status.status !== "ready" ||
+              !status.value.available ||
+              state.step === "busy"
+            }
+            onClick={() => void create("flexible")}
+          >
+            Use another device or security key
+          </button>
+        </div>
       )}
       {state.step === "error" && <p className="problem">{state.message}</p>}
     </main>

@@ -9,7 +9,7 @@ import {
   WalletUnsupported,
   type WalletChoice
 } from "./wallet";
-import { p256Coordinates } from "./passkey";
+import { p256Coordinates, passkeyCreationOptions } from "./passkey";
 
 const THU_CLOSE = Date.parse("2026-10-08T20:00:00Z");
 const FRI_OPEN = Date.parse("2026-10-09T13:30:00Z");
@@ -123,6 +123,17 @@ describe("PlanAccount wallet compatibility", () => {
 });
 
 describe("passkey registration", () => {
+  it("offers a platform path and a flexible cross-device path", () => {
+    const userId = new Uint8Array(32);
+    const device = passkeyCreationOptions("theredeyed-agent.site", userId, "device");
+    const flexible = passkeyCreationOptions("theredeyed-agent.site", userId, "flexible");
+    expect(device.authenticatorSelection?.authenticatorAttachment).toBe("platform");
+    expect(flexible.authenticatorSelection?.authenticatorAttachment).toBeUndefined();
+    expect(flexible.authenticatorSelection?.userVerification).toBe("required");
+    expect(flexible.authenticatorSelection?.residentKey).toBe("required");
+    expect(flexible.pubKeyCredParams).toEqual([{ type: "public-key", alg: -7 }]);
+  });
+
   it("extracts both P-256 coordinates from a browser SPKI key", () => {
     const prefix = new Uint8Array(26);
     const point = new Uint8Array(65);
