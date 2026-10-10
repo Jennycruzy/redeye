@@ -7,6 +7,7 @@ Status, 10 Oct 2026: live on BNB Smart Chain at [theredeyed-agent.site](https://
 - **First plan-triggered trade.** Plan #6 promised to sell 0.0605 CRCL if its 24/7 price rose 1% over the weekend. At 02:41 UTC on 10 Oct it did: the decision went on chain, the Binance Agentic Wallet sold for 5.156 USDT, and the fill was recorded on PlanBook. Binance's Wallet API and the chain agree on the amount to the last digit.
 - **Every trade is checked by the Binance Web3 API first** (five modules, signed with our own key; see below).
 - Plans #2 to #8 are watching the weekend window; results publish at Monday's open.
+- **Plan #10 was signed by the Binance Agentic Wallet itself** through the Redeye skill (`skills/redeye`, `lock --yes`): the wallet signed the plan (EIP-712, Developer mode), and PlanBook stores it under the wallet's own address `0xDA11…aae2`. A Hold on NVDA for the Monday-night window; no money moves, graded at Tuesday's open.
 - Two ways to trade: the Binance Agentic Wallet, and your own wallet through PlanAccount (one bounded, owner-signed trade; plan #8 is locked this way). A phone passkey account for newcomers, created from Telegram, is deployed and tested; the first real phone account is still to be made.
 
 ## On chain
@@ -20,6 +21,7 @@ Status, 10 Oct 2026: live on BNB Smart Chain at [theredeyed-agent.site](https://
 | PlanJobHook (team jobs)                                         | [`0x42a7F449e4950524c13deBC96a0549100b516594`](https://bscscan.com/address/0x42a7F449e4950524c13deBC96a0549100b516594)                                                                                                                                                                                                    |
 | Plan 1: Guard on NVDA, 7 Oct overnight window                   | [lock](https://bscscan.com/tx/0x759ead4af86268d4015ab4074a58f2dc866ff8ee96dd077f85a5cd6ad2902092), 5 h 27 min before the close                                                                                                                                                                                            |
 | Plan 6: first triggered trade, CRCL sell on +1%                 | [decision](https://bscscan.com/tx/0x4a25f64a1bb47ef302ef5dfb978bcf0ce27bd583f797217e954ef6687ab8a62a) · [sale](https://bscscan.com/tx/0x3014f7996e59458934dcd500232fd2674904d183df376daac9c8171770f0e87a) · [fill on PlanBook](https://bscscan.com/tx/0xcea26956f4a1053b9cf6f4feee049781addc82a4082b9ff0b4645d95243e683e) |
+| Plan 10: signed by the Agentic Wallet itself (Redeye skill)     | [lock](https://bscscan.com/tx/0x76a339440af84130637f97cc68420fa574011dbe0e709f1bb6e77ab19f4decb5), owner [`0xDA11FAba6da586c4EEE689b3387Af0b0fd00aae2`](https://bscscan.com/address/0xDA11FAba6da586c4EEE689b3387Af0b0fd00aae2)                                                                                           |
 | Passkey account factory (with owner-signed withdrawal)          | [`0x5065d3395d365d88870a5a6799c48e8f59f0e9e9`](https://bscscan.com/address/0x5065d3395d365d88870a5a6799c48e8f59f0e9e9)                                                                                                                                                                                                    |
 
 ## Binance Web3 API
@@ -109,6 +111,16 @@ The agent serves its ERC-8004 registration file at `/.well-known/agent-registrat
 ## A2A
 
 The agent card is served at `/.well-known/agent-card.json` (A2A protocol 1.0 and 0.3), with JSON-RPC at `/a2a`. Its skills are read-only: price, windows, record, run and plan check.
+
+## Agentic Wallet skill
+
+`skills/redeye` is a skill for the Binance Agentic Wallet. It answers "what's Nvidia worth right now", turns plain words into a plan, reads the promise back, and with `lock --yes` has the Agentic Wallet sign the plan (EIP-712, no gas) so PlanBook stores it in the wallet's own name; Redeye pays the network fee. Signing needs Developer mode on in the Binance App. First live run: plan #10, 10 Oct 2026.
+
+```sh
+cd skills/redeye
+node scripts/redeye.mjs price NVDA
+node scripts/redeye.mjs check '{"ticker":"NVDA","kind":"hold","heldShares":"0.0202","params":{}}'
+```
 
 ## Try it from a terminal
 

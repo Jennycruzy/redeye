@@ -30,7 +30,7 @@ const CONTRACTS = [
   {
     name: "Binance Agentic Wallet",
     address: "0xDA11FAba6da586c4EEE689b3387Af0b0fd00aae2",
-    what: "The team's own trading wallet. It made the first plan trade."
+    what: "The team's own trading wallet. It made the first plan trade, and signed plan #10 in its own name."
   }
 ];
 

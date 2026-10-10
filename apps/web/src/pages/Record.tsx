@@ -8,6 +8,7 @@ import { Link } from "../lib/router";
 
 /** The agent's own wallet; plans it owns are the team's and are labelled so. */
 const TEAM = "0xe201bbf3c736a5d188797974a7e4b9464f707ea8";
+const AGENTIC_WALLET = "0xda11faba6da586c4eee689b3387af0b0fd00aae2";
 
 const FILTERS = [
   { id: "all", label: "All" },
@@ -49,9 +50,11 @@ function Row({ item }: { item: RecordItem }) {
             ? "trades through the Agentic Wallet"
             : item.door === "plan_account"
               ? "trades from the owner's wallet, with a one-trade permission"
-              : item.door === "signed"
-                ? `signed in ${item.owner.slice(0, 6)}…${item.owner.slice(-4)}'s wallet · promise only`
-                : "promise only, no trading"}
+              : item.door === "signed" && item.owner.toLowerCase() === AGENTIC_WALLET
+                ? "signed by the Binance Agentic Wallet itself · promise only"
+                : item.door === "signed"
+                  ? `signed in ${item.owner.slice(0, 6)}…${item.owner.slice(-4)}'s wallet · promise only`
+                  : "promise only, no trading"}
         </span>
         {item.owner.toLowerCase() === TEAM && <span className="tag">team</span>}
         {item.standingRunId && <span className="tag">repeats nightly</span>}
