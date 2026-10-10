@@ -672,6 +672,62 @@ describe("deterministic decisions", () => {
     expect(result.size.shares).toBe("0.5");
   });
 
+  it("refuses, never throws, for every failed quote-check code at trigger time", () => {
+    const candidate = quote({ outputAmount: "104.8" });
+    const passed = checkQuote({
+      ticker: "NVDA",
+      quote: candidate,
+      expectedTokenAddress: tokenAddress,
+      expectedWrapper: "bStock",
+      usReferencePricePerShare: "100",
+      realPricePerShare: "105",
+      realPriceAgeSeconds: 10,
+      marketOpen: false,
+      maxPriceImpactPct: "1",
+      checkedAtMs: 1000
+    }).result;
+    const codes = [
+      "MULTIPLIER_MISMATCH",
+      "SIM_FAILED",
+      "NO_SIZE_LIQUIDITY",
+      "QUOTE_DEVIATION_EXCEEDED",
+      "BINANCE_API_UNAVAILABLE"
+    ] as const;
+    for (const code of codes) {
+      const result = decide(
+        decisionInput({
+          event: event({ kind: "overnight", lockTs: 1000, openTs: 10_000, releaseTs: null }),
+          plan: plan({
+            kind: "sell_rise",
+            params: {
+              maxPriceImpactPct: "1",
+              minPoolDepthUsd: "50000",
+              triggerRisePct: "4",
+              sellPct: "25",
+              maxGapToRealPricePct: "0.3"
+            }
+          }),
+          quotes: [candidate],
+          quoteChecks: [
+            { ...passed, passed: false, code, stage: "binance", reason: "dry run reverted" }
+          ],
+          atMs: 2000,
+          prices: {
+            C: "100",
+            P: "105",
+            T: "104.8",
+            sources: { C: "nasdaq", P: "hyperliquid:xyz:NVDA", T: "pool" },
+            ages: { C: 3600, P: 10, T: 5 }
+          }
+        })
+      );
+      expect(result.action).toBe("none");
+      expect(result.refusal?.code).toBe(code);
+      expect(result.reason).toBe(code);
+      expect(result.refusal?.sentence.length).toBeGreaterThan(0);
+    }
+  });
+
   it("records an unmet Sell the rise trigger as kept at the open", () => {
     const result = decide(
       decisionInput({

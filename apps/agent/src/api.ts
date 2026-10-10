@@ -223,6 +223,12 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
         return json(200, await store.history(id), config);
       if (request.method === "GET" && root === "record" && parts.length === 1)
         return json(200, await store.record(), config);
+      if (request.method === "GET" && root === "binance" && parts.length === 1)
+        return json(
+          200,
+          config.binanceStatus?.() ?? { state: "not_configured", modules: {} },
+          config
+        );
       if (request.method === "GET" && root === "wallet" && parts.length === 1)
         return json(200, await store.wallet(), config);
       if (request.method === "GET" && root === "plans" && id !== undefined && parts.length === 2)

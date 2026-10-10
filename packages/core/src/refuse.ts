@@ -28,7 +28,9 @@ export const refusalCodes = [
   "EXTRACT_UNVERIFIED",
   "FILING_NOT_FOUND",
   "WINDOW_CLOSED",
-  "EXECUTION_DISABLED"
+  "EXECUTION_DISABLED",
+  "BINANCE_API_UNAVAILABLE",
+  "QUOTE_DEVIATION_EXCEEDED"
 ] as const;
 
 export type RefusalCode = (typeof refusalCodes)[number];
@@ -91,6 +93,12 @@ export function refusal(code: RefusalCode, details: RefusalDetails): Refusal {
       break;
     case "SIM_FAILED":
       sentence = `The trade failed a dry run: ${required(details, "reason")}.`;
+      break;
+    case "BINANCE_API_UNAVAILABLE":
+      sentence = "Binance's Web3 API didn't answer, so the agent is waiting before it trades.";
+      break;
+    case "QUOTE_DEVIATION_EXCEEDED":
+      sentence = `Binance's own quote and the wallet's quote disagree (${required(details, "actualPrice")} vs ${required(details, "referencePrice")} per share); no trade while they differ.`;
       break;
     case "ORDER_FAILED":
       sentence = `The trade was sent but didn't go through: ${required(details, "reason")}.`;

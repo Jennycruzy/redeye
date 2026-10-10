@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  type BinanceEvidence,
   checkQuote,
   createStandingRun,
   createWindowRecord,
@@ -38,6 +39,7 @@ import {
   type WalletContext
 } from "@redeye/core";
 import Decimal from "decimal.js";
+import { applyBinanceEvidence, type BinanceGate } from "./binance-gate.js";
 import type { OrderResult, QuoteRequest } from "./agentic-wallet.js";
 import {
   getAddress,
@@ -67,7 +69,13 @@ const PLAN_LIMIT_CODES: ReadonlySet<RefusalCode> = new Set([
   "IMPACT_TOO_HIGH"
 ]);
 /** Refusals that may clear on the next check, so they never end a plan during the window. */
-const TRANSIENT_CODES: ReadonlySet<RefusalCode> = new Set(["REAL_PRICE_UNAVAILABLE"]);
+const TRANSIENT_CODES: ReadonlySet<RefusalCode> = new Set([
+  "REAL_PRICE_UNAVAILABLE",
+  // A Binance module that did not answer, or two quotes that disagree, may clear on
+  // the next check; the plan waits instead of trading without the check.
+  "BINANCE_API_UNAVAILABLE",
+  "QUOTE_DEVIATION_EXCEEDED"
+]);
 
 export interface PlanPreview {
   valid: boolean;
@@ -351,6 +359,8 @@ export interface PlanServiceOptions {
   trader?: Trader | null;
   /** The user's own wallet/account path; null until a relayer is configured. */
   permissionTrader?: PermissionTrader | null;
+  /** Signed Binance Web3 API checks run before every trade, when configured. */
+  binance?: BinanceGate;
   /** Immutable PlanAccount template and approved swap router used by permissions. */
   planAccount?: { template: Address; router: Address; maxPriceDeviationBps?: bigint };
   /** Null or absent when no job buyer is configured; plans then lock without a job. */
@@ -2030,13 +2040,33 @@ export class PlanService {
       this.now(),
       account
     );
+    // The signed Binance Web3 API checks the same trade: the token's status and
+    // share ratio, its market price, and Binance's own quote for this size.
+    let quoteCheck = checked.result;
+    let status = input.status;
+    let binance: BinanceEvidence | undefined;
+    if (this.options.binance && account !== undefined) {
+      binance = await this.options.binance({
+        tokenAddress: plan.tokenAddress,
+        side,
+        inputAmount: quote.inputAmount,
+        walletOutputAmount: quote.outputAmount,
+        account
+      });
+      if (binance.rwa !== null) {
+        status = { reasonCode: binance.rwa.reasonCode, reasonMsg: binance.rwa.reasonMsg };
+      }
+      quoteCheck = applyBinanceEvidence(quoteCheck, binance, String(token.multiplier), side);
+    }
     return {
       ...input,
       executionEnabled: true,
       wallet,
+      status,
       quotes: [quote],
       // Only the overall result: an earlier stage can pass while a later one fails.
-      quoteChecks: [checked.result]
+      quoteChecks: [quoteCheck],
+      ...(binance === undefined ? {} : { binance })
     };
   }
 

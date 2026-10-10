@@ -42,6 +42,8 @@ export interface AgentApiConfig {
   previewStanding?: (input: Record<string, unknown>) => Promise<unknown>;
   /** Public readiness only; account creation stays off until Telegram verification is configured. */
   passkeyStatus?: () => unknown;
+  /** Signed Binance Web3 API use: per-module call counts and the latest RWA status. */
+  binanceStatus?: () => unknown;
   /** Predicts a deterministic passkey account after Telegram initData is verified. */
   passkeyPreview?: (input: Record<string, unknown>, identity: TelegramIdentity) => Promise<unknown>;
   /** Creates a sponsored passkey account after Telegram initData is verified. */

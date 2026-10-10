@@ -139,19 +139,33 @@ export class BinanceWeb3Client {
     module: Web3Module,
     path: string,
     query: Record<string, string | number | boolean | undefined> = {}
-  ) {
+  ): Promise<Web3Result<T>> {
     return this.request<T>(module, "GET", `${path}${web3Query(query)}`, undefined);
   }
 
-  post<T>(module: Web3Module, path: string, body: unknown) {
+  post<T>(module: Web3Module, path: string, body: unknown): Promise<Web3Result<T>> {
     return this.request<T>(module, "POST", path, body);
+  }
+
+  /** The same client, also reporting each call to `listener` (one trade's own calls). */
+  withRecorder(listener: (call: Web3CallRecord) => void): Pick<BinanceWeb3Client, "get" | "post"> {
+    return {
+      get: <T>(
+        module: Web3Module,
+        path: string,
+        query: Record<string, string | number | boolean | undefined> = {}
+      ) => this.request<T>(module, "GET", `${path}${web3Query(query)}`, undefined, listener),
+      post: <T>(module: Web3Module, path: string, body: unknown) =>
+        this.request<T>(module, "POST", path, body, listener)
+    } as Pick<BinanceWeb3Client, "get" | "post">;
   }
 
   private async request<T>(
     module: Web3Module,
     method: "GET" | "POST",
     pathAndQuery: string,
-    payload: unknown
+    payload: unknown,
+    listener?: (call: Web3CallRecord) => void
   ): Promise<Web3Result<T>> {
     const body = payload === undefined ? "" : JSON.stringify(payload);
     const requestPath = `${PATH_PREFIX}${pathAndQuery}`;
@@ -200,6 +214,7 @@ export class BinanceWeb3Client {
         call.latencyMs = this.options.now() - started;
         call.message = caught instanceof Error ? caught.message : String(caught);
         this.options.onCall?.(call);
+        listener?.(call);
         if (attempt < this.options.maxAttempts) {
           await this.options.sleep(500 * attempt);
           continue;
@@ -234,6 +249,7 @@ export class BinanceWeb3Client {
       // The gateway wraps answers: a non-zero code is a failure even on HTTP 200.
       call.ok = response.ok && call.code === 0 && envelope?.success !== false;
       this.options.onCall?.(call);
+      listener?.(call);
       if (call.ok) return { data: envelope!.data as T, serverTime, call };
 
       if (call.code === WEB3_CODE.staleOrReplayed && !skewRetried && serverTime !== null) {

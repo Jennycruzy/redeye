@@ -52,13 +52,14 @@ function tokenBelowRealGapPct(input: DecisionInput, real: Decimal): Decimal {
 function refused(
   code: RefusalCode,
   input: DecisionInput,
-  details: Record<string, string> = {}
+  details: Record<string, string> = {},
+  reasonIsCode = false
 ): Decision {
   return {
     action: "none",
     size: {},
     wrapper: null,
-    reason: details.reason ?? code,
+    reason: reasonIsCode ? code : (details.reason ?? code),
     refusal: refusal(code, { ticker: input.plan.ticker, ...details })
   };
 }
@@ -141,13 +142,26 @@ function quoteFor(
     const failed = input.quoteChecks.find((candidate) => candidate.code !== null);
     if (failed) {
       const code = failed.code ?? "QUOTE_REJECTED";
-      return refused(code, input, {
-        actualPrice: failed.impliedPricePerShare ?? "unknown",
-        referencePrice: failed.referencePricePerShare ?? "unknown",
-        impactPct:
-          input.quotes.find((quote) => quote.id === failed.quoteId)?.priceImpactPct ?? "unknown",
-        limitPct: input.plan.params.maxPriceImpactPct
-      });
+      // Every refusal sentence finds the fields it needs; a missing one would throw
+      // at the moment the agent must decide.
+      return refused(
+        code,
+        input,
+        {
+          reason: failed.reason,
+          actualPrice: failed.impliedPricePerShare ?? "unknown",
+          referencePrice: failed.referencePricePerShare ?? "unknown",
+          impactPct:
+            input.quotes.find((quote) => quote.id === failed.quoteId)?.priceImpactPct ?? "unknown",
+          limitPct: input.plan.params.maxPriceImpactPct,
+          multiplierA: failed.multiplierA ?? "unknown",
+          multiplierB: failed.multiplierB ?? "unknown",
+          displayedGapPct: failed.deviationPct ?? "unknown",
+          orderUsd: "unknown",
+          sizedPricePerShare: failed.sizedPricePerShare ?? "unknown"
+        },
+        true
+      );
     }
     return refused("QUOTE_REJECTED", input, { actualPrice: "missing", referencePrice: "missing" });
   }

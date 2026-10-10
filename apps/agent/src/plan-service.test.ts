@@ -1,3 +1,5 @@
+import type { BinanceEvidence } from "@redeye/core";
+import type { BinanceGate } from "./binance-gate.js";
 import { describe, expect, it } from "vitest";
 import {
   createWindowRecord,
@@ -441,6 +443,7 @@ async function harness(
     signedDailyCap?: number;
     planAccount?: boolean;
     newId?: () => string;
+    binance?: BinanceGate;
   } = {}
 ): Promise<Harness> {
   let now = BEFORE_CLOSE;
@@ -478,6 +481,7 @@ async function harness(
       : {}),
     jobs: options.jobs ? jobs : null,
     teamJobLimit: options.teamJobLimit ?? 0,
+    ...(options.binance === undefined ? {} : { binance: options.binance }),
     ...(options.signedDailyCap === undefined ? {} : { signedDailyCap: options.signedDailyCap }),
     ...(options.newId === undefined ? {} : { newId: options.newId }),
     now: () => now,
@@ -1149,6 +1153,109 @@ describe("trading through the Agentic Wallet", () => {
     const receipt = (await h.store.receipt(traded.id)) as Parameters<typeof verifyReceipt>[0];
     expect(receipt.fills).toHaveLength(1);
     expect(verifyReceipt(receipt)).toMatchObject({ valid: true });
+  });
+
+  function binanceGate(
+    over: (request: Parameters<BinanceGate>[0]) => Partial<BinanceEvidence> = () => ({})
+  ): BinanceGate & { requests: Array<Parameters<BinanceGate>[0]> } {
+    const requests: Array<Parameters<BinanceGate>[0]> = [];
+    const gate = (async (request) => {
+      requests.push(request);
+      return {
+        v: 1,
+        rwa: {
+          tokenPrice: "192",
+          referencePrice: "191.9",
+          tokenToShareRatio: "1.000778223752807865",
+          openState: true,
+          marketStatus: null,
+          reasonCode: "TRADING",
+          reasonMsg: null,
+          nextOpenTime: null
+        },
+        marketPrice: "192",
+        quote: {
+          vendor: "LiquidMesh",
+          executionMode: "SWAP",
+          quoteId: "bq",
+          inputAmount: request.inputAmount,
+          outputAmount: request.walletOutputAmount,
+          walletOutputAmount: request.walletOutputAmount,
+          deviationPct: "0",
+          limitPct: "1.5"
+        },
+        failure: null,
+        calls: [],
+        ...over(request)
+      } satisfies BinanceEvidence;
+    }) as BinanceGate & { requests: Array<Parameters<BinanceGate>[0]> };
+    gate.requests = requests;
+    return gate;
+  }
+
+  it("waits while a Binance module is down, then trades with Binance's evidence on record", async () => {
+    let down = true;
+    const gate = binanceGate(() =>
+      down ? { failure: { module: "trading", code: 50001, message: "service unavailable" } } : {}
+    );
+    const h = await harness({ baw: true, reconciliation: true, binance: gate });
+    h.chain.receivedAmount = "191.351";
+    const waiting = await triggered(h);
+    expect(waiting.status).toBe("locked");
+    expect(waiting.lastEvaluation?.refusal).toBe("BINANCE_API_UNAVAILABLE");
+    expect(h.chain.log).not.toContain("swap");
+    expect(gate.requests[0]).toMatchObject({ side: "sell", account: WALLET });
+
+    down = false;
+    h.setNow(TRIGGERED + MINUTE);
+    h.setPrice(snapshot(TRIGGERED + MINUTE, "192"));
+    await h.service.tick();
+    const traded = await plan(h, waiting.id);
+    expect(h.chain.log).toEqual(["decision", "swap", "fill"]);
+    expect(traded.decision?.input.binance).toMatchObject({
+      rwa: { reasonCode: "TRADING" },
+      quote: { vendor: "LiquidMesh", deviationPct: "0" }
+    });
+  });
+
+  it("refuses for good when Binance's share ratio disagrees with the listed one", async () => {
+    const gate = binanceGate(() => ({
+      rwa: {
+        tokenPrice: "192",
+        referencePrice: "191.9",
+        tokenToShareRatio: "1.05",
+        openState: true,
+        marketStatus: null,
+        reasonCode: "TRADING",
+        reasonMsg: null,
+        nextOpenTime: null
+      }
+    }));
+    const h = await harness({ baw: true, binance: gate });
+    const refused = await triggered(h);
+    expect(refused.status).toBe("decided");
+    expect(refused.decision?.decision.refusal?.code).toBe("MULTIPLIER_MISMATCH");
+    expect(h.chain.log).not.toContain("swap");
+  });
+
+  it("refuses a token Binance reports as paused for a corporate action", async () => {
+    const gate = binanceGate(() => ({
+      rwa: {
+        tokenPrice: "192",
+        referencePrice: "191.9",
+        tokenToShareRatio: "1.000778223752807865",
+        openState: false,
+        marketStatus: "pause",
+        reasonCode: "ASSET_PAUSED",
+        reasonMsg: "stock_split",
+        nextOpenTime: null
+      }
+    }));
+    const h = await harness({ baw: true, binance: gate });
+    const refused = await triggered(h);
+    expect(refused.decision?.decision.refusal?.code).toBe("ASSET_PAUSED");
+    expect(refused.decision?.decision.refusal?.sentence).toContain("stock_split");
+    expect(h.chain.log).not.toContain("swap");
   });
 
   it("refuses a quote that would sell far below the token price and never trades", async () => {

@@ -117,9 +117,12 @@ export type QuoteCheckCode =
   | "REAL_PRICE_UNAVAILABLE"
   | "MULTIPLIER_MISMATCH"
   | "NO_SIZE_LIQUIDITY"
-  | "SIM_FAILED";
+  | "SIM_FAILED"
+  | "BINANCE_API_UNAVAILABLE"
+  | "QUOTE_DEVIATION_EXCEEDED";
 
-export type QuoteCheckStage = "quote" | "multiplier" | "sized_quote" | "simulation" | "all";
+export type QuoteCheckStage =
+  "quote" | "multiplier" | "sized_quote" | "simulation" | "binance" | "all";
 
 export interface MultiplierSources {
   list: string;
@@ -183,6 +186,8 @@ export interface DecisionInput {
   extracted: ExtractedReport | null;
   quotes: NormalizedQuote[];
   quoteChecks: QuoteCheckResult[];
+  /** What the signed Binance Web3 API modules returned for this trade, when they ran. */
+  binance?: BinanceEvidence;
   status: AssetStatusContext;
   audit: SecurityAuditContext;
   wallet: WalletContext;
@@ -190,4 +195,44 @@ export interface DecisionInput {
   atMs: number;
   executionEnabled: boolean;
   prices: DecisionPrices;
+}
+
+/** One signed Binance Web3 API call, without credentials. */
+export interface BinanceCall {
+  module: string;
+  method: string;
+  path: string;
+  at: string;
+  httpStatus: number | null;
+  code: number | null;
+  latencyMs: number;
+  ok: boolean;
+}
+
+/** Evidence from the Binance Web3 API, stored in the hashed decision input. */
+export interface BinanceEvidence {
+  v: 1;
+  rwa: {
+    tokenPrice: string | null;
+    referencePrice: string | null;
+    tokenToShareRatio: string | null;
+    openState: boolean | null;
+    marketStatus: string | null;
+    reasonCode: string | null;
+    reasonMsg: string | null;
+    nextOpenTime: number | null;
+  } | null;
+  marketPrice: string | null;
+  quote: {
+    vendor: string;
+    executionMode: string;
+    quoteId: string;
+    inputAmount: string;
+    outputAmount: string;
+    walletOutputAmount: string;
+    deviationPct: string;
+    limitPct: string;
+  } | null;
+  failure: { module: string; code: number | null; message: string } | null;
+  calls: BinanceCall[];
 }

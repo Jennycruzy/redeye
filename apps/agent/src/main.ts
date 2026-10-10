@@ -2,7 +2,9 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { loadEnvFile } from "node:process";
 import type { Address, Hex } from "viem";
-import { fetchRwaList, parseRwaList, storeRawRecord } from "@redeye/clients";
+import { BinanceWeb3Client, fetchRwaList, parseRwaList, storeRawRecord } from "@redeye/clients";
+import { createBinanceGate } from "./binance-gate.js";
+import { createBinanceStatus } from "./binance-status.js";
 import { AgenticWallet, createBawRunner, walletStatus } from "./agentic-wallet.js";
 import { PANCAKE_SMART_ROUTER_BSC, PlanAccountTrader } from "./plan-account.js";
 import { buildIdentityCard, identityConfigFromEnv } from "./identity.js";
@@ -176,7 +178,24 @@ const jobs =
         teamHook: (process.env.PLAN_JOB_HOOK_ADDRESS?.trim() || null) as Address | null
       })
     : null;
+// Signed Binance Web3 API: checks every trade and keeps a public tally of its use.
+const web3Key = process.env.BINANCE_WEB3_API_KEY?.trim();
+const web3Secret = process.env.BINANCE_WEB3_API_SECRET?.trim();
+let binanceStatus: ReturnType<typeof createBinanceStatus> | null = null;
+const binanceClient =
+  web3Key && web3Secret
+    ? new BinanceWeb3Client({
+        apiKey: web3Key,
+        secret: web3Secret,
+        onCall: (call) => {
+          binanceStatus?.record(call);
+          if (!call.ok) console.error(JSON.stringify({ binanceCall: call }));
+        }
+      })
+    : null;
+if (binanceClient !== null) binanceStatus = createBinanceStatus(binanceClient);
 const planService = new PlanService({
+  ...(binanceClient === null ? {} : { binance: createBinanceGate(binanceClient) }),
   store,
   chain: planChain,
   trader,
@@ -210,11 +229,32 @@ store.setPlanActions({
   stopStanding: (id) => planService.stopStanding(id)
 });
 planService.start();
+// Set first on shutdown: timers that are already running must not write to a closed database.
+let stopping = false;
 // /wallet shows the Agentic Wallet as the wallet tool reports it, checked every 5 minutes.
 if (trader) {
-  const refreshWallet = async () => store.recordWallet(await walletStatus(trader));
+  const refreshWallet = async () => {
+    if (stopping) return;
+    try {
+      const status = await walletStatus(trader);
+      if (!stopping) await store.recordWallet(status);
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          status: "wallet_refresh_failed",
+          reason: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
+  };
   void refreshWallet();
   setInterval(() => void refreshWallet(), 5 * 60 * 1000).unref();
+}
+// The bStock list from Binance's RWA module, refreshed every 10 minutes for /binance.
+if (binanceStatus !== null) {
+  const status = binanceStatus;
+  void status.refresh();
+  setInterval(() => void status.refresh(), 10 * 60 * 1000).unref();
 }
 // x402 sales. X402_SETTLEMENT picks the route: "self" settles through the official x402
 // EVM facilitator run by the agent wallet, "b402" through Binance B402 once its merchant
@@ -316,6 +356,7 @@ const server = startAgentServer(
     night,
     preview: (input) => planService.preview(input),
     previewStanding: (input) => planService.previewStanding(input),
+    ...(binanceStatus === null ? {} : { binanceStatus: binanceStatus.status }),
     passkeyStatus: () => {
       const rpId = process.env.PASSKEY_RP_ID?.trim() ?? "";
       const factory = process.env.PASSKEY_FACTORY_ADDRESS?.trim() ?? "";
@@ -366,6 +407,7 @@ void windowService.start().catch((error: unknown) => {
 });
 
 const shutdown = (): void => {
+  stopping = true;
   priceService.stop();
   planService.stop();
   windowService.stop();
