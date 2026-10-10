@@ -48,9 +48,67 @@ export interface Web3CallRecord {
   message: string | null;
   latencyMs: number;
   ok: boolean;
+  /** B402 only: the business code exactly as returned ("000000000" is success). */
+  businessCode?: string | null;
 }
 
-export type Web3Module = "rwa" | "market" | "trading" | "transaction" | "wallet";
+export type Web3Module = "rwa" | "market" | "trading" | "transaction" | "wallet" | "b402";
+
+/**
+ * B402, Binance's x402 facilitator, reached through the same signed /build gateway as the
+ * other modules. Its bodies are wrapped as {"body": inner}, and success is the business
+ * code "000000000" rather than 0. This is not the merchant (OnchainPay) facilitator that
+ * @bnb-chain/b402's B402Client signs with an RSA key at a per-merchant /papi base URL.
+ */
+export const B402_SUCCESS_CODE = "000000000";
+export const B402_PATHS = {
+  supported: "/api/v2/b402/supported",
+  verify: "/api/v2/b402/verify",
+  settle: "/api/v2/b402/settle"
+} as const;
+
+export interface B402SupportedKind {
+  x402Version: number;
+  scheme: string;
+  network: string;
+  extra: Record<string, unknown>;
+}
+
+export interface B402Supported {
+  kinds: B402SupportedKind[];
+  extensions: string[];
+  signers: Record<string, string[]>;
+}
+
+export interface B402Verify {
+  isValid: boolean;
+  payer: string;
+  invalidReason?: string;
+  invalidMessage?: string;
+}
+
+export interface B402Settle {
+  success: boolean;
+  /** On-chain transaction hash; "" when nothing was broadcast. */
+  transaction: string;
+  payer: string;
+  network: string;
+  amount?: string;
+  errorReason?: string;
+  errorMessage?: string;
+}
+
+interface RequestOptions {
+  listener?: ((call: Web3CallRecord) => void) | undefined;
+  /** "b402" accepts only the business code "000000000" as success. */
+  expect?: "web3" | "b402";
+  /**
+   * False: never resend after the request may have been processed (timeouts, 5xx, rate
+   * limits). A stale-timestamp refusal is still re-signed, since the gateway rejected it
+   * before doing anything.
+   */
+  retry?: boolean;
+}
 
 export interface Web3Result<T> {
   data: T;
@@ -147,6 +205,50 @@ export class BinanceWeb3Client {
     return this.request<T>(module, "POST", path, body);
   }
 
+  /** The payment kinds and signer addresses B402 offers to this key. */
+  async b402Supported(): Promise<Web3Result<B402Supported>> {
+    const result = await this.request<unknown>(
+      "b402",
+      "POST",
+      B402_PATHS.supported,
+      { body: {} },
+      {
+        expect: "b402"
+      }
+    );
+    return { ...result, data: parseB402Supported(result.data) };
+  }
+
+  /** Off-chain check of a signed payment. Moves nothing. */
+  async b402Verify(
+    paymentPayload: unknown,
+    paymentRequirements: unknown
+  ): Promise<Web3Result<B402Verify>> {
+    const result = await this.request<unknown>(
+      "b402",
+      "POST",
+      B402_PATHS.verify,
+      { body: { x402Version: 2, paymentPayload, paymentRequirements } },
+      { expect: "b402" }
+    );
+    return { ...result, data: parseB402Verify(result.data) };
+  }
+
+  /** Settles a signed payment on chain. Irreversible, so it is never resent blindly. */
+  async b402Settle(
+    paymentPayload: unknown,
+    paymentRequirements: unknown
+  ): Promise<Web3Result<B402Settle>> {
+    const result = await this.request<unknown>(
+      "b402",
+      "POST",
+      B402_PATHS.settle,
+      { body: { x402Version: 2, paymentPayload, paymentRequirements } },
+      { expect: "b402", retry: false }
+    );
+    return { ...result, data: parseB402Settle(result.data) };
+  }
+
   /** The same client, also reporting each call to `listener` (one trade's own calls). */
   withRecorder(listener: (call: Web3CallRecord) => void): Pick<BinanceWeb3Client, "get" | "post"> {
     return {
@@ -154,9 +256,9 @@ export class BinanceWeb3Client {
         module: Web3Module,
         path: string,
         query: Record<string, string | number | boolean | undefined> = {}
-      ) => this.request<T>(module, "GET", `${path}${web3Query(query)}`, undefined, listener),
+      ) => this.request<T>(module, "GET", `${path}${web3Query(query)}`, undefined, { listener }),
       post: <T>(module: Web3Module, path: string, body: unknown) =>
-        this.request<T>(module, "POST", path, body, listener)
+        this.request<T>(module, "POST", path, body, { listener })
     } as Pick<BinanceWeb3Client, "get" | "post">;
   }
 
@@ -165,8 +267,11 @@ export class BinanceWeb3Client {
     method: "GET" | "POST",
     pathAndQuery: string,
     payload: unknown,
-    listener?: (call: Web3CallRecord) => void
+    options: RequestOptions = {}
   ): Promise<Web3Result<T>> {
+    const { listener } = options;
+    const b402 = options.expect === "b402";
+    const mayRetry = options.retry !== false;
     const body = payload === undefined ? "" : JSON.stringify(payload);
     const requestPath = `${PATH_PREFIX}${pathAndQuery}`;
     const url = `${this.options.baseUrl}${pathAndQuery}`;
@@ -215,7 +320,7 @@ export class BinanceWeb3Client {
         call.message = caught instanceof Error ? caught.message : String(caught);
         this.options.onCall?.(call);
         listener?.(call);
-        if (attempt < this.options.maxAttempts) {
+        if (mayRetry && attempt < this.options.maxAttempts) {
           await this.options.sleep(500 * attempt);
           continue;
         }
@@ -246,8 +351,19 @@ export class BinanceWeb3Client {
       call.message = envelope && typeof envelope.msg === "string" ? envelope.msg : null;
       const serverTime =
         envelope && typeof envelope.timestamp === "number" ? envelope.timestamp : null;
-      // The gateway wraps answers: a non-zero code is a failure even on HTTP 200.
-      call.ok = response.ok && call.code === 0 && envelope?.success !== false;
+      if (b402) {
+        // Gateway refusals keep the numeric code (40104 and so on); B402's own answers carry a
+        // string business code, and only the exact success string counts.
+        const raw = envelope?.code;
+        call.businessCode = raw === undefined || raw === null ? null : String(raw);
+        if (call.message === null && envelope && typeof envelope.message === "string") {
+          call.message = envelope.message;
+        }
+        call.ok = response.ok && raw === B402_SUCCESS_CODE && envelope?.success !== false;
+      } else {
+        // The gateway wraps answers: a non-zero code is a failure even on HTTP 200.
+        call.ok = response.ok && call.code === 0 && envelope?.success !== false;
+      }
       this.options.onCall?.(call);
       listener?.(call);
       if (call.ok) return { data: envelope!.data as T, serverTime, call };
@@ -265,19 +381,92 @@ export class BinanceWeb3Client {
         call.code === WEB3_CODE.rateLimited ||
         call.code === WEB3_CODE.internal ||
         call.code === WEB3_CODE.unavailable;
-      if (retryable && attempt < this.options.maxAttempts) {
+      if (mayRetry && retryable && attempt < this.options.maxAttempts) {
         const retryAfter = Number(response.headers.get("retry-after"));
         const delay =
           Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 500 * 2 ** attempt;
         await this.options.sleep(Math.min(delay, MAX_RETRY_DELAY_MS));
         continue;
       }
+      const shownCode = b402 ? call.businessCode : call.code;
       throw new Web3ApiError(
         `Binance Web3 API ${path} answered ${call.httpStatus}` +
-          `${call.code === null ? "" : ` code ${call.code}`}${call.message ? `: ${call.message}` : ""}`,
+          `${shownCode === null || shownCode === undefined ? "" : ` code ${shownCode}`}` +
+          `${call.message ? `: ${call.message}` : ""}`,
         call
       );
     }
     throw new Error("unreachable");
   }
+}
+
+function b402Shape(what: string, problem: string): Error {
+  return new Error(`B402 ${what} answer is not the expected shape: ${problem}.`);
+}
+
+function optionalText(value: unknown, field: string, what: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") throw b402Shape(what, `${field} is not text`);
+  return value;
+}
+
+export function parseB402Supported(data: unknown): B402Supported {
+  if (!isObject(data)) throw b402Shape("supported", "data is not an object");
+  if (!Array.isArray(data.kinds)) throw b402Shape("supported", "kinds is not a list");
+  const kinds = data.kinds.map((kind, index): B402SupportedKind => {
+    if (!isObject(kind)) throw b402Shape("supported", `kinds[${index}] is not an object`);
+    if (typeof kind.x402Version !== "number") {
+      throw b402Shape("supported", `kinds[${index}].x402Version is not a number`);
+    }
+    if (typeof kind.scheme !== "string" || typeof kind.network !== "string") {
+      throw b402Shape("supported", `kinds[${index}] has no scheme or network`);
+    }
+    return {
+      x402Version: kind.x402Version,
+      scheme: kind.scheme,
+      network: kind.network,
+      extra: isObject(kind.extra) ? kind.extra : {}
+    };
+  });
+  const extensions = Array.isArray(data.extensions)
+    ? data.extensions.filter((e): e is string => typeof e === "string")
+    : [];
+  const signers: Record<string, string[]> = {};
+  if (isObject(data.signers)) {
+    for (const [key, list] of Object.entries(data.signers)) {
+      if (Array.isArray(list))
+        signers[key] = list.filter((a): a is string => typeof a === "string");
+    }
+  }
+  return { kinds, extensions, signers };
+}
+
+export function parseB402Verify(data: unknown): B402Verify {
+  if (!isObject(data)) throw b402Shape("verify", "data is not an object");
+  if (typeof data.isValid !== "boolean") throw b402Shape("verify", "isValid is not true or false");
+  const invalidReason = optionalText(data.invalidReason, "invalidReason", "verify");
+  const invalidMessage = optionalText(data.invalidMessage, "invalidMessage", "verify");
+  return {
+    isValid: data.isValid,
+    payer: optionalText(data.payer, "payer", "verify") ?? "",
+    ...(invalidReason === undefined ? {} : { invalidReason }),
+    ...(invalidMessage === undefined ? {} : { invalidMessage })
+  };
+}
+
+export function parseB402Settle(data: unknown): B402Settle {
+  if (!isObject(data)) throw b402Shape("settle", "data is not an object");
+  if (typeof data.success !== "boolean") throw b402Shape("settle", "success is not true or false");
+  const amount = optionalText(data.amount, "amount", "settle");
+  const errorReason = optionalText(data.errorReason, "errorReason", "settle");
+  const errorMessage = optionalText(data.errorMessage, "errorMessage", "settle");
+  return {
+    success: data.success,
+    transaction: optionalText(data.transaction, "transaction", "settle") ?? "",
+    payer: optionalText(data.payer, "payer", "settle") ?? "",
+    network: optionalText(data.network, "network", "settle") ?? "",
+    ...(amount === undefined ? {} : { amount }),
+    ...(errorReason === undefined ? {} : { errorReason }),
+    ...(errorMessage === undefined ? {} : { errorMessage })
+  };
 }

@@ -65,7 +65,7 @@ export function createBinanceStatus(client: BinanceWeb3Client, now: () => number
 
   const status = () => {
     const modules: Record<string, unknown> = {};
-    for (const name of ["rwa", "market", "trading", "transaction", "wallet"]) {
+    for (const name of ["rwa", "market", "trading", "transaction", "wallet", "b402"]) {
       const mine = calls.filter((c) => c.module === name);
       const last = mine[mine.length - 1];
       const latencies = mine.map((c) => c.latencyMs).sort((a, b) => a - b);

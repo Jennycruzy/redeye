@@ -82,12 +82,15 @@ export function storeContent(
  * How payments are verified and settled.
  * "self": the official x402 EVM facilitator runs inside the agent; the agent wallet submits
  * the buyer's signed U transfer to the token itself and pays the gas.
- * "b402": Binance B402, once merchant credentials exist.
+ * "b402-web3": Binance B402 through the signed Web3 API gateway (/build/api/v2/b402), with the
+ * same API key and HMAC signing as the other Web3 API modules.
+ * "b402-merchant": Binance B402 through the separate merchant (OnchainPay) facilitator, with
+ * merchant credentials and an RSA key from its onboarding.
  */
 export type X402Settlement =
   | { kind: "self"; signer: FacilitatorEvmSigner }
   | {
-      kind: "b402";
+      kind: "b402-web3" | "b402-merchant";
       transport: B402Transport;
       /** Durable store that stops one payment from being settled twice. */
       replayStore: B402ReplayStore;

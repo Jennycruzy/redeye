@@ -14,6 +14,8 @@ import { describe, expect, it } from "vitest";
 import { FakeDatabase } from "./fake-database.js";
 import { SqliteAgentStore } from "./sqlite-store.js";
 import type { AgentRequest } from "./types.js";
+import { web3B402Transport } from "./b402-web3.js";
+import { BinanceWeb3Client, signWeb3Request } from "@redeye/clients";
 import {
   createX402Seller,
   storeContent,
@@ -105,7 +107,7 @@ function get(pathname: string, headers: Record<string, string> = {}): AgentReque
 
 function b402(transport: FakeB402) {
   return {
-    kind: "b402" as const,
+    kind: "b402-merchant" as const,
     transport,
     replayStore: new SqliteAgentStore(new FakeDatabase()).replayStore()
   };
@@ -411,5 +413,92 @@ describe("x402 seller settling with the agent's own facilitator", () => {
     expect(response.status).toBe(402);
     expect(refusal(response)).toBe("invalid_exact_evm_signature");
     expect(chain.writes).toHaveLength(0);
+  });
+});
+
+describe("x402 seller settling through B402 on the signed Web3 gateway", () => {
+  /** Plays the /build gateway: checks each request is signed, unwraps {body}, answers B402. */
+  function gateway(fake: FakeB402) {
+    const seen: Array<{ path: string; body: Record<string, unknown>; signed: boolean }> = [];
+    const client = new BinanceWeb3Client({
+      apiKey: "key",
+      secret: "test-secret",
+      fetch: (async (url: string, init: RequestInit) => {
+        const path = new URL(url).pathname;
+        const raw = String(init.body);
+        const headers = new Headers(init.headers);
+        const signed =
+          headers.get("X-OC-SIGN") ===
+          signWeb3Request("test-secret", headers.get("X-OC-TIMESTAMP")!, "POST", path, raw);
+        const body = JSON.parse(raw) as { body: Record<string, unknown> };
+        seen.push({ path, body: body.body, signed });
+        const inner = body.body as unknown as SettleRequest;
+        const data = path.endsWith("/supported")
+          ? await fake.supported()
+          : path.endsWith("/verify")
+            ? await fake.verify(inner)
+            : await fake.settle(inner);
+        return new Response(JSON.stringify({ code: "000000000", message: "success", data }), {
+          status: 200
+        });
+      }) as typeof fetch
+    });
+    return { client, seen };
+  }
+
+  it("sells a price with supported, verify and settle all signed by the Web3 key", async () => {
+    const fake = new FakeB402();
+    const { client, seen } = gateway(fake);
+    const seller = await createX402Seller({
+      settlement: {
+        kind: "b402-web3",
+        transport: web3B402Transport(client),
+        replayStore: new SqliteAgentStore(new FakeDatabase()).replayStore()
+      },
+      payTo: AGENT,
+      content
+    });
+    expect(seller).toMatchObject({ paid: true, settledBy: "b402-web3", reason: null });
+    const challenge = await seller.handle(get("/x402/price/NVDA"));
+    const paid = await seller.handle(
+      get("/x402/price/NVDA", { "PAYMENT-SIGNATURE": await paymentFor(challenge.headers) })
+    );
+    expect(paid.status).toBe(200);
+    expect(paid.body).toEqual({ ticker: "NVDA", real: "237.5" });
+    expect(seen.map((s) => s.path)).toEqual([
+      "/build/api/v2/b402/supported",
+      "/build/api/v2/b402/verify",
+      "/build/api/v2/b402/settle"
+    ]);
+    expect(seen.every((s) => s.signed)).toBe(true);
+    expect(seen[0]!.body).toEqual({});
+    expect(seen[2]!.body).toMatchObject({
+      x402Version: 2,
+      paymentRequirements: { amount: "2000000000000000", payTo: AGENT }
+    });
+    expect(fake.settled).toHaveLength(1);
+  });
+
+  it("keeps paid routes off, with the reason, when the key has no B402 permission", async () => {
+    const client = new BinanceWeb3Client({
+      apiKey: "key",
+      secret: "test-secret",
+      sleep: async () => undefined,
+      fetch: (async () =>
+        new Response(JSON.stringify({ msg: "No permission: B402", data: "", code: 40104 }), {
+          status: 403
+        })) as typeof fetch
+    });
+    const seller = await createX402Seller({
+      settlement: {
+        kind: "b402-web3",
+        transport: web3B402Transport(client),
+        replayStore: new SqliteAgentStore(new FakeDatabase()).replayStore()
+      },
+      payTo: AGENT,
+      content
+    });
+    expect(seller.paid).toBe(false);
+    expect(seller.reason).toContain("40104");
   });
 });

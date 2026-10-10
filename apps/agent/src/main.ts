@@ -9,6 +9,7 @@ import { AgenticWallet, createBawRunner, walletStatus } from "./agentic-wallet.j
 import { PANCAKE_SMART_ROUTER_BSC, PlanAccountTrader } from "./plan-account.js";
 import { buildIdentityCard, identityConfigFromEnv } from "./identity.js";
 import { B402Client } from "@bnb-chain/b402/server";
+import { web3B402Transport } from "./b402-web3.js";
 import { createJobBook } from "./job-chain.js";
 import { createA2aHandler } from "./a2a.js";
 import { createMcpHandler } from "./mcp.js";
@@ -262,9 +263,11 @@ if (binanceStatus !== null) {
   setInterval(() => void status.refresh(), 10 * 60 * 1000).unref();
 }
 // x402 sales. X402_SETTLEMENT picks the route: "self" settles through the official x402
-// EVM facilitator run by the agent wallet, "b402" through Binance B402 once its merchant
-// credentials are set, and anything else keeps paid routes off. Bad B402 settings only
-// turn paid sales off; they never stop the agent.
+// EVM facilitator run by the agent wallet; "b402-web3" through Binance B402 on the signed
+// Web3 API gateway, with the same BINANCE_WEB3_API_KEY and secret as the other modules;
+// "b402-merchant" (or the older "b402") through the separate merchant facilitator once its
+// B402_* onboarding credentials are set. Anything else keeps paid routes off. Bad B402
+// settings only turn paid sales off; they never stop the agent.
 function x402Settlement(): X402Settlement | null {
   const route = process.env.X402_SETTLEMENT?.trim();
   if (route === "self" && agentKey) {
@@ -276,18 +279,33 @@ function x402Settlement(): X402Settlement | null {
       )
     };
   }
-  if (route !== "b402") return null;
+  const b402Hooks = {
+    replayStore: store.replayStore(),
+    onSettlementUnknown: (event: unknown) => {
+      console.error(JSON.stringify({ code: "X402_SETTLEMENT_UNKNOWN", event }));
+      void store.saveRunEvent("x402", "settlement_unknown", { event });
+    }
+  };
+  if (route === "b402-web3") {
+    if (binanceClient === null) {
+      console.error(
+        JSON.stringify({
+          code: "B402_CONFIG_INVALID",
+          reason: "b402-web3 needs BINANCE_WEB3_API_KEY and BINANCE_WEB3_API_SECRET."
+        })
+      );
+      return null;
+    }
+    return { kind: "b402-web3", transport: web3B402Transport(binanceClient), ...b402Hooks };
+  }
+  if (route !== "b402-merchant" && route !== "b402") return null;
   try {
     const transport = B402Client.fromEnv(process.env);
     if (!transport) return null;
     return {
-      kind: "b402",
+      kind: "b402-merchant",
       transport,
-      replayStore: store.replayStore(),
-      onSettlementUnknown: (event: unknown) => {
-        console.error(JSON.stringify({ code: "X402_SETTLEMENT_UNKNOWN", event }));
-        void store.saveRunEvent("x402", "settlement_unknown", { event });
-      }
+      ...b402Hooks
     };
   } catch (error) {
     console.error(

@@ -144,7 +144,8 @@ The MCP endpoint is `https://api.theredeyed-agent.site/mcp`.
 `X402_SETTLEMENT` picks how payments settle:
 
 - `self`: the official x402 EVM facilitator (`@x402/evm`) runs inside the agent. It checks the buyer's signature, balance and nonce, simulates the transfer, and the agent wallet submits the buyer's signed `transferWithAuthorization` to U, paying the gas (about $0.003 at 0.05 gwei, more than a $0.002 sale earns). U's own nonce check stops a signed payment from being used twice.
-- `b402`: Binance B402 through `@bnb-chain/b402`, once `B402_BASE_URL`, `B402_CLIENT_ID`, `B402_ACCESS_TOKEN` and `B402_PRIVATE_KEY_B64` from the merchant onboarding are set, with a SQLite replay guard.
+- `b402-web3`: Binance B402 through the signed Web3 API gateway (`POST /build/api/v2/b402/supported`, `/verify`, `/settle`), with the same `BINANCE_WEB3_API_KEY` and secret and the same HMAC signing as the other five modules (`packages/clients/src/web3api.ts`). Bodies are wrapped as `{"body": …}` and success is the business code `"000000000"`. The SDK's B402 scheme, a SQLite replay guard and settlement-unknown handling sit on top. Not active: on 10 Oct 2026 our key was refused with `403` code `40104` "No permission: B402" (`node scripts/b402-probe.mjs`, read-only).
+- `b402-merchant` (or `b402`): the separate merchant facilitator through `@bnb-chain/b402`'s RSA-signed `B402Client`, once `B402_BASE_URL`, `B402_CLIENT_ID`, `B402_ACCESS_TOKEN` and `B402_PRIVATE_KEY_B64` from the merchant onboarding are set.
 - unset: paid routes answer `X402_NOT_CONFIGURED`.
 
 The answer is prepared before settlement, so nobody pays for a ticker with nothing to sell, and is sent only after settlement succeeds. A price is sold only if it is under two minutes old. `src/x402-fork.test.ts` settles real payments against a local fork of BNB Chain (`REDEYE_FORK_RPC`).
