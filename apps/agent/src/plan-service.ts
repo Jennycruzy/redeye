@@ -2107,6 +2107,8 @@ export class PlanService {
     }
     const next: StoredPlan = { ...withoutError(stored), trade };
     await this.options.store.savePlan(next);
+    // The public record shows the fill, so refresh it once the order changes.
+    await this.saveRecord(next);
     await this.options.store.saveRunEvent(stored.id, `trade:${order?.status ?? "LOOKUP"}`, {
       orderId: order?.orderId ?? null,
       status: order?.status ?? null,

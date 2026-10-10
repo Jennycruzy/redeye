@@ -1135,6 +1135,10 @@ describe("trading through the Agentic Wallet", () => {
     expect(sold * Number("1.000778223752807865")).toBeCloseTo(1, 12);
     // The wallet tool is asked for the plan's 1 share, not for the token amount.
     expect(Number(h.baw.orders[0]!.fromTokenQty)).toBeCloseTo(1, 12);
+    // The public record shows the fill before the verdict, not only after it.
+    expect(await h.store.record()).toMatchObject({
+      items: [{ id: traded.id, status: "decided", action: "sell", fillTx: `0x${"ab".repeat(32)}` }]
+    });
 
     h.setOpen({ value: "193", source: "nasdaq:NVDA:daily-history", sourceRecordPath: "raw/x" });
     h.setNow(OPEN + 30 * MINUTE);
