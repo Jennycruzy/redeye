@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { loadEnvFile } from "node:process";
 import type { Address, Hex } from "viem";
 import { BinanceWeb3Client, fetchRwaList, parseRwaList, storeRawRecord } from "@redeye/clients";
-import { createBinanceGate } from "./binance-gate.js";
+import { createBinanceFillCheck, createBinanceGate } from "./binance-gate.js";
 import { createBinanceStatus } from "./binance-status.js";
 import { AgenticWallet, createBawRunner, walletStatus } from "./agentic-wallet.js";
 import { PANCAKE_SMART_ROUTER_BSC, PlanAccountTrader } from "./plan-account.js";
@@ -195,7 +195,12 @@ const binanceClient =
     : null;
 if (binanceClient !== null) binanceStatus = createBinanceStatus(binanceClient);
 const planService = new PlanService({
-  ...(binanceClient === null ? {} : { binance: createBinanceGate(binanceClient) }),
+  ...(binanceClient === null
+    ? {}
+    : {
+        binance: createBinanceGate(binanceClient),
+        binanceFill: createBinanceFillCheck(binanceClient)
+      }),
   store,
   chain: planChain,
   trader,

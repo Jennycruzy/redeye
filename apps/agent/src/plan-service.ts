@@ -39,7 +39,13 @@ import {
   type WalletContext
 } from "@redeye/core";
 import Decimal from "decimal.js";
-import { applyBinanceEvidence, type BinanceGate } from "./binance-gate.js";
+import {
+  applyBinanceEvidence,
+  type BinanceFillCheck,
+  type BinanceFillRequest,
+  type BinanceGate
+} from "./binance-gate.js";
+import type { ExactCall } from "./plan-account.js";
 import type { OrderResult, QuoteRequest } from "./agentic-wallet.js";
 import {
   getAddress,
@@ -148,6 +154,8 @@ export interface PermissionTrader {
   ): Promise<boolean | null>;
   /** Installs the EIP-7702 delegation if needed; returns its transaction when sent. */
   ensureAccount(owner: Address, permission: StoredPermission): Promise<Hex | null>;
+  /** The exact transaction swap() would send, so it can be dry-run before the decision. */
+  exactCall?(quote: NormalizedQuote, slippagePct: string, permission: StoredPermission): ExactCall;
 }
 
 export interface StoredAuthorization {
@@ -209,6 +217,8 @@ export interface StoredTrade {
   /** Whole tokens (sell: USDT, buy: stock token) that reached the wallet, read from chain. */
   received: string | null;
   fillChain: ChainWrite | null;
+  /** Binance's Wallet API view of the same fill, checked against fillChain's record. */
+  binanceCheck?: BinanceFillCheck;
 }
 
 export interface StoredPlan {
@@ -361,6 +371,8 @@ export interface PlanServiceOptions {
   permissionTrader?: PermissionTrader | null;
   /** Signed Binance Web3 API checks run before every trade, when configured. */
   binance?: BinanceGate;
+  /** Binance Wallet API check of a finished fill; null until Binance has indexed it. */
+  binanceFill?: (request: BinanceFillRequest) => Promise<BinanceFillCheck | null>;
   /** Immutable PlanAccount template and approved swap router used by permissions. */
   planAccount?: { template: Address; router: Address; maxPriceDeviationBps?: bigint };
   /** Null or absent when no job buyer is configured; plans then lock without a job. */
@@ -1985,6 +1997,7 @@ export class PlanService {
       stored = await this.trade(stored);
       if (this.tradePending(stored)) return;
     }
+    if (stored.status === "decided") await this.checkFillWithBinance(stored);
   }
 
   /** The decision input with a checked quote and the wallet's state, or null without a wallet. */
@@ -2046,12 +2059,26 @@ export class PlanService {
     let status = input.status;
     let binance: BinanceEvidence | undefined;
     if (this.options.binance && account !== undefined) {
+      // The PlanAccount door's transaction is fully known now: dry-run that exact one.
+      const permissionStored = stored?.signedPermission;
+      const exact =
+        plan.door === "plan_account" &&
+        permissionStored !== undefined &&
+        quote.success &&
+        this.options.permissionTrader?.exactCall
+          ? this.options.permissionTrader.exactCall(
+              quote,
+              plan.params.maxPriceImpactPct ?? "1",
+              permissionStored
+            )
+          : undefined;
       binance = await this.options.binance({
         tokenAddress: plan.tokenAddress,
         side,
         inputAmount: quote.inputAmount,
         walletOutputAmount: quote.outputAmount,
-        account
+        account,
+        ...(exact === undefined ? {} : { exactCall: { ...exact, owner: permissionStored!.owner } })
       });
       if (binance.rwa !== null) {
         status = { reasonCode: binance.rwa.reasonCode, reasonMsg: binance.rwa.reasonMsg };
@@ -2105,6 +2132,10 @@ export class PlanService {
         received: null,
         fillChain: null
       };
+      // Checked before anything is saved as sent: a changed transaction never leaves.
+      if (accountDoor) {
+        this.assertDryRunMatches(stored, quote, stored.plan?.params.maxPriceImpactPct ?? "1");
+      }
       await this.options.store.savePlan({ ...stored, trade });
       const slippage = stored.plan?.params.maxPriceImpactPct ?? "1";
       const order = accountDoor
@@ -2146,6 +2177,62 @@ export class PlanService {
       received: trade.received
     });
     return next;
+  }
+
+  /**
+   * Once a fill is on chain, asks Binance's Wallet API what the wallet sent and
+   * received and stores it next to the chain's record. Evidence only, retried each
+   * tick until Binance has indexed the transaction; it never changes the outcome.
+   */
+  private async checkFillWithBinance(stored: StoredPlan): Promise<void> {
+    const trade = stored.trade;
+    const check = this.options.binanceFill;
+    if (!check || !trade || trade.binanceCheck || trade.fillChain === null) return;
+    if (trade.order?.status !== "FINISHED" || !trade.order.txHash) return;
+    const sell = trade.quote.side === "sell";
+    let result: BinanceFillCheck | null;
+    try {
+      result = await check({
+        txHash: trade.order.txHash,
+        wallet: trade.wallet,
+        sentToken: sell ? trade.quote.tokenAddress : USDT_ADDRESS,
+        receivedToken: sell ? USDT_ADDRESS : trade.quote.tokenAddress,
+        chainReceived: trade.received
+      });
+    } catch {
+      return;
+    }
+    if (result === null) return;
+    const latest = (await this.options.store.getPlan(stored.id)) ?? stored;
+    if (!latest.trade) return;
+    await this.options.store.savePlan({
+      ...latest,
+      trade: { ...latest.trade, binanceCheck: result }
+    });
+    await this.options.store.saveRunEvent(stored.id, "binance-wallet", {
+      txStatus: result.txStatus,
+      received: result.received?.amount ?? null,
+      chainReceived: result.chainReceived,
+      matchesChain: result.matchesChain,
+      reason: result.detail,
+      txHash: trade.order.txHash
+    });
+  }
+
+  /** The PlanAccount transaction sent must be the one Binance dry-ran for the decision. */
+  private assertDryRunMatches(stored: StoredPlan, quote: NormalizedQuote, slippage: string): void {
+    const simulated = stored.decision?.input.binance?.simulation;
+    const builder = this.options.permissionTrader?.exactCall;
+    if (simulated?.kind !== "exact" || !builder) return;
+    const call = builder.call(
+      this.options.permissionTrader,
+      quote,
+      slippage,
+      this.requirePermission(stored)
+    );
+    if (keccak256(call.data) !== simulated.callHash) {
+      throw new Error("PLAN_ACCOUNT_CALL_CHANGED: the transaction differs from the one dry-run.");
+    }
   }
 
   private requirePermission(stored: StoredPlan): StoredPermission {

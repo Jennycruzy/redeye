@@ -1,6 +1,7 @@
 import Decimal from "decimal.js";
 import type { BinanceCall, BinanceEvidence, QuoteCheckResult } from "@redeye/core";
 import { BSC_CHAIN_ID, type BinanceWeb3Client, type Web3CallRecord } from "@redeye/clients";
+import { keccak256, type Hex } from "viem";
 
 export const BSC_USDT = "0x55d398326f99059fF775485246999027B3197955";
 /** Binance's own quote and the wallet's quote may differ by this much before a trade waits. */
@@ -18,6 +19,70 @@ export interface BinanceGateRequest {
   walletOutputAmount: string;
   /** The address that will trade, needed by Binance for stock-token routes. */
   account: string;
+  /** The PlanAccount door's exact transaction; dry-run and checked before the decision. */
+  exactCall?: ExactCallSummary;
+}
+
+export interface ExactCallSummary {
+  from: string;
+  to: string;
+  value: bigint;
+  data: string;
+  /** The address whose balances the swap changes (the PlanAccount owner). */
+  owner: string;
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: bigint;
+  minAmountOut: bigint;
+}
+
+interface SimulationAnswer {
+  status?: string;
+  failReason?: string | null;
+  balanceChanges?: Array<{ contractAddress?: string; change?: string; owner?: string }>;
+}
+
+/** Checks a dry run's predicted balance changes against the swap's own bounds. */
+export function checkSimulation(
+  answer: SimulationAnswer,
+  call: ExactCallSummary
+): {
+  passed: boolean;
+  detail: string;
+} {
+  if (answer.status !== "SUCCESS") {
+    return {
+      passed: false,
+      detail: `dry run ${answer.status ?? "unknown"}: ${answer.failReason ?? "no reason given"}`
+    };
+  }
+  const owner = call.owner.toLowerCase();
+  const changeOf = (token: string) =>
+    (answer.balanceChanges ?? [])
+      .filter(
+        (c) =>
+          c.owner?.toLowerCase() === owner &&
+          c.contractAddress?.toLowerCase() === token.toLowerCase()
+      )
+      .reduce((sum, c) => sum + BigInt(c.change ?? "0"), 0n);
+  const received = changeOf(call.tokenOut);
+  const spent = -changeOf(call.tokenIn);
+  if (received < call.minAmountOut) {
+    return {
+      passed: false,
+      detail: `dry run gives the owner ${received} of ${call.tokenOut}, below the minimum ${call.minAmountOut}`
+    };
+  }
+  if (spent > call.amountIn) {
+    return {
+      passed: false,
+      detail: `dry run spends ${spent} of ${call.tokenIn}, above the signed ${call.amountIn}`
+    };
+  }
+  return {
+    passed: true,
+    detail: `owner receives ${received} and spends ${spent}, inside the signed bounds`
+  };
 }
 
 export type BinanceGate = (request: BinanceGateRequest) => Promise<BinanceEvidence>;
@@ -89,6 +154,7 @@ export function createBinanceGate(
       rwa: null,
       marketPrice: null,
       quote: null,
+      simulation: null,
       failure: null,
       calls: []
     };
@@ -106,7 +172,32 @@ export function createBinanceGate(
     };
     const tracked = client.withRecorder(seen);
 
+    const exact = request.exactCall;
+    const simulate = (tx: { from: string; to: string; value: string; data: string }) =>
+      tracked.post<SimulationAnswer>("transaction", "/api/v1/dex/pre-transaction/simulate", {
+        binanceChainId: BSC_CHAIN_ID,
+        evmTx: tx
+      });
     await Promise.all([
+      exact === undefined
+        ? Promise.resolve()
+        : simulate({
+            from: exact.from,
+            to: exact.to,
+            value: exact.value.toString(),
+            data: exact.data
+          })
+            .then(({ data }) => {
+              const verdict = checkSimulation(data ?? {}, exact);
+              evidence.simulation = {
+                kind: "exact",
+                status: data?.status ?? "unknown",
+                failReason: data?.failReason ?? null,
+                callHash: keccak256(exact.data as Hex),
+                ...verdict
+              };
+            })
+            .catch((error: unknown) => fail("transaction", error)),
       tracked
         .get<RwaTokenRow[]>("rwa", "/api/v1/dex/market/rwa/tokens", {
           binanceChainId: BSC_CHAIN_ID,
@@ -170,6 +261,9 @@ export function createBinanceGate(
         })
         .catch((error: unknown) => fail("trading", error))
     ]);
+    // No dry run for the Agentic Wallet door: it builds its own transaction and does not
+    // expose it, and Binance's route for the same swap needs an approval first, which a
+    // single-transaction dry run cannot include (see docs/dx-log.md, 10 Oct 10:19 UTC).
     evidence.calls = calls.map(toCall);
     return evidence;
   };
@@ -195,6 +289,15 @@ export function applyBinanceEvidence(
       code: "BINANCE_API_UNAVAILABLE",
       stage: "binance",
       reason: `Binance ${evidence.failure.module} module: ${evidence.failure.message}`
+    };
+  }
+  if (evidence.simulation?.kind === "exact" && !evidence.simulation.passed) {
+    return {
+      ...check,
+      passed: false,
+      code: "SIM_FAILED",
+      stage: "simulation",
+      reason: evidence.simulation.detail
     };
   }
   const ratio = evidence.rwa?.tokenToShareRatio;
@@ -232,4 +335,79 @@ export function applyBinanceEvidence(
     };
   }
   return check;
+}
+
+/** What Binance's Wallet API saw for one fill, next to the chain's own record. */
+export interface BinanceFillCheck {
+  v: 1;
+  at: string;
+  txStatus: string | null;
+  sent: { token: string; amount: string } | null;
+  received: { token: string; amount: string } | null;
+  /** The wallet's receipt as the chain reconciliation recorded it. */
+  chainReceived: string | null;
+  matchesChain: boolean;
+  detail: string;
+}
+
+export interface BinanceFillRequest {
+  txHash: string;
+  wallet: string;
+  sentToken: string;
+  receivedToken: string;
+  chainReceived: string | null;
+}
+
+interface TxDetail {
+  txStatus?: string;
+  tokenTransferDetails?: Array<{
+    from?: string;
+    to?: string;
+    tokenContractAddress?: string;
+    amount?: string;
+  }>;
+}
+
+/**
+ * Asks Binance's Wallet API what the wallet sent and received in a fill and compares
+ * it with the chain's own record. Evidence only: the chain reconciliation decides.
+ * Returns null while Binance has not indexed the transaction yet.
+ */
+export function createBinanceFillCheck(client: BinanceWeb3Client, now: () => number = Date.now) {
+  return async (request: BinanceFillRequest): Promise<BinanceFillCheck | null> => {
+    const { data } = await client.get<TxDetail[] | TxDetail>(
+      "wallet",
+      "/api/v1/dex/post-transaction/transaction-detail-by-txhash",
+      { binanceChainId: BSC_CHAIN_ID, txHash: request.txHash }
+    );
+    const detail = Array.isArray(data) ? data[0] : data;
+    if (!detail?.txStatus) return null;
+    const wallet = request.wallet.toLowerCase();
+    const sum = (token: string, side: "from" | "to") =>
+      (detail.tokenTransferDetails ?? [])
+        .filter(
+          (t) =>
+            t[side]?.toLowerCase() === wallet &&
+            t.tokenContractAddress?.toLowerCase() === token.toLowerCase()
+        )
+        .reduce((total, t) => total.plus(t.amount || "0"), new Decimal(0));
+    const sent = sum(request.sentToken, "from");
+    const received = sum(request.receivedToken, "to");
+    const matches =
+      detail.txStatus === "success" &&
+      request.chainReceived !== null &&
+      received.eq(request.chainReceived);
+    return {
+      v: 1,
+      at: new Date(now()).toISOString(),
+      txStatus: detail.txStatus,
+      sent: { token: request.sentToken, amount: sent.toFixed() },
+      received: { token: request.receivedToken, amount: received.toFixed() },
+      chainReceived: request.chainReceived,
+      matchesChain: matches,
+      detail: matches
+        ? `Binance and the chain agree: the wallet received ${received.toFixed()}.`
+        : `Binance reports ${received.toFixed()} received (status ${detail.txStatus}); the chain recorded ${request.chainReceived ?? "nothing"}.`
+    };
+  };
 }

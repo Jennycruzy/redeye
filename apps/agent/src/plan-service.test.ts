@@ -1,5 +1,5 @@
 import type { BinanceEvidence } from "@redeye/core";
-import type { BinanceGate } from "./binance-gate.js";
+import type { BinanceFillCheck, BinanceFillRequest, BinanceGate } from "./binance-gate.js";
 import { describe, expect, it } from "vitest";
 import {
   createWindowRecord,
@@ -20,8 +20,8 @@ import {
   verifyReceipt
 } from "@redeye/core";
 import { privateKeyToAccount } from "viem/accounts";
-import { keccak256, toBytes, type Address, type Hex } from "viem";
-import { AgenticWallet, type BawRunner } from "./agentic-wallet.js";
+import { keccak256, toBytes, toHex, type Address, type Hex } from "viem";
+import { AgenticWallet, type BawRunner, type OrderResult } from "./agentic-wallet.js";
 import type { JobBook, JobKind, JobOpenInput, JobState, JobView } from "./job-chain.js";
 import type { ChainWrite, FreezeInput, Outcome, PlanChain } from "./plan-chain.js";
 import {
@@ -30,8 +30,10 @@ import {
   PlanService,
   type PermissionTrader,
   type OfficialOpen,
+  type StoredPermission,
   type StoredPlan
 } from "./plan-service.js";
+import type { ExactCall } from "./plan-account.js";
 import type { PriceSnapshotOk } from "./price-service.js";
 import { FakeDatabase } from "./fake-database.js";
 import { SqliteAgentStore } from "./sqlite-store.js";
@@ -286,6 +288,28 @@ class FakeBaw {
 class FakePermissionTrader implements PermissionTrader {
   readonly ensured: Array<{ owner: Address; permission: string }> = [];
   readonly delegationTx: Hex = `0x${"cd".repeat(32)}`;
+  /** Set to quote through the fake wallet tool, so the door can trade in tests. */
+  quoter: AgenticWallet | null = null;
+  /** Transactions swap() sent, as built by exactCall(). */
+  readonly sent: ExactCall[] = [];
+  /** Changes the built calldata on every call, to model a transaction that drifted. */
+  drift = false;
+  private built = 0;
+
+  exactCall(quote: NormalizedQuote, slippagePct: string, permission: StoredPermission): ExactCall {
+    const salt = this.drift ? (this.built += 1) : 0;
+    const data = toHex(`${quote.id}|${slippagePct}|${permission.owner}|${salt}`);
+    return {
+      from: AGENT as Address,
+      to: permission.owner,
+      value: 0n,
+      data,
+      tokenIn: permission.permission.tokenIn as Address,
+      tokenOut: permission.permission.tokenOut as Address,
+      amountIn: 1n,
+      minAmountOut: 1n
+    };
+  }
 
   async address(): Promise<Address> {
     return AGENT;
@@ -307,20 +331,19 @@ class FakePermissionTrader implements PermissionTrader {
     };
   }
 
-  async quote(_request: Parameters<PermissionTrader["quote"]>[0]): Promise<NormalizedQuote> {
-    void _request;
-    throw new Error("quote not used by lock test");
+  async quote(request: Parameters<PermissionTrader["quote"]>[0]): Promise<NormalizedQuote> {
+    if (!this.quoter) throw new Error("quote not used by lock test");
+    return this.quoter.quote(request);
   }
 
   async swap(
-    _quote: NormalizedQuote,
-    _slippagePct: string,
-    _permission: Parameters<PermissionTrader["swap"]>[2]
-  ): Promise<never> {
-    void _quote;
-    void _slippagePct;
-    void _permission;
-    throw new Error("swap not used by lock test");
+    quote: NormalizedQuote,
+    slippagePct: string,
+    permission: Parameters<PermissionTrader["swap"]>[2]
+  ): Promise<OrderResult> {
+    if (!this.quoter) throw new Error("swap not used by lock test");
+    this.sent.push(this.exactCall(quote, slippagePct, permission));
+    return { orderId: `0x${"ab".repeat(32)}`, status: "FINISHED", txHash: `0x${"ab".repeat(32)}` };
   }
 
   async waitForOrder(_orderId: string): Promise<never> {
@@ -444,6 +467,7 @@ async function harness(
     planAccount?: boolean;
     newId?: () => string;
     binance?: BinanceGate;
+    binanceFill?: (request: BinanceFillRequest) => Promise<BinanceFillCheck | null>;
   } = {}
 ): Promise<Harness> {
   let now = BEFORE_CLOSE;
@@ -466,6 +490,7 @@ async function harness(
       )
     : null;
   const permissionTrader = options.planAccount ? new FakePermissionTrader() : null;
+  if (permissionTrader && trader) permissionTrader.quoter = trader;
   const service = new PlanService({
     store,
     chain: options.chain === false ? null : chain,
@@ -482,6 +507,7 @@ async function harness(
     jobs: options.jobs ? jobs : null,
     teamJobLimit: options.teamJobLimit ?? 0,
     ...(options.binance === undefined ? {} : { binance: options.binance }),
+    ...(options.binanceFill === undefined ? {} : { binanceFill: options.binanceFill }),
     ...(options.signedDailyCap === undefined ? {} : { signedDailyCap: options.signedDailyCap }),
     ...(options.newId === undefined ? {} : { newId: options.newId }),
     now: () => now,
@@ -1184,6 +1210,16 @@ describe("trading through the Agentic Wallet", () => {
           deviationPct: "0",
           limitPct: "1.5"
         },
+        simulation: request.exactCall
+          ? {
+              kind: "exact",
+              status: "SUCCESS",
+              failReason: null,
+              callHash: keccak256(request.exactCall.data as Hex),
+              passed: true,
+              detail: "inside the signed bounds"
+            }
+          : null,
         failure: null,
         calls: [],
         ...over(request)
@@ -1216,6 +1252,154 @@ describe("trading through the Agentic Wallet", () => {
       rwa: { reasonCode: "TRADING" },
       quote: { vendor: "LiquidMesh", deviationPct: "0" }
     });
+  });
+
+  /** A PlanAccount Guard on NVDA, locked for tonight with an owner-signed permission. */
+  async function lockedAccountGuard(h: Harness): Promise<StoredPlan> {
+    const owner = privateKeyToAccount(`0x${"44".repeat(32)}`);
+    const template = {
+      kind: "guard" as const,
+      standingRunId: "standing-dry-run",
+      door: "plan_account" as const,
+      auditNoDataAccepted: true,
+      ticker: "NVDA",
+      wrapper: "bStock" as const,
+      tokenAddress: NVDA_TOKEN,
+      heldShares: "2",
+      params: guardInput.params
+    };
+    const run = createStandingRun({
+      runId: "standing-dry-run",
+      template,
+      startAtMs: BEFORE_CLOSE,
+      untilTs: BEFORE_CLOSE + 3 * 86_400_000
+    });
+    const copies = expandStandingPlan(run).filter((copy) => copy.lockByMs > BEFORE_CLOSE);
+    const runHash = hashCanonical({
+      runId: run.runId,
+      template: run.template,
+      startAtMs: run.startAtMs,
+      untilTs: run.untilTs
+    });
+    const permission = {
+      planHash: `0x${"00".repeat(32)}` as Hex,
+      standingRunHash: runHash,
+      agent: AGENT as Address,
+      tokenIn: NVDA_TOKEN as Address,
+      tokenOut: USDT as Address,
+      maxAmount: 999222381408450703n,
+      router: "0x0000000000000000000000000000000000007002" as Address,
+      notBefore: BigInt(Math.floor(copies[0]!.event.lockTs! / 1000)),
+      notAfter: BigInt(Math.floor(copies.at(-1)!.event.openTs! / 1000)),
+      maxPriceDeviationBps: 100n
+    };
+    const standing = await h.service.startStanding({
+      ...guardInput,
+      days: 3,
+      runId: "standing-dry-run",
+      door: "plan_account",
+      auditNoDataAccepted: true,
+      owner: owner.address,
+      issuedAt: Math.floor(BEFORE_CLOSE / 1000),
+      permission: serializePlanPermission(permission),
+      permissionSignature: await owner.signTypedData(
+        planPermissionTypedData(owner.address, permission)
+      )
+    });
+    return plan(h, Object.values(standing.nights)[0]!.planStoreId!);
+  }
+
+  async function triggerAccountGuard(h: Harness, locked: StoredPlan): Promise<StoredPlan> {
+    h.setNow(TRIGGERED);
+    h.setPrice(snapshot(TRIGGERED, "192"));
+    await h.service.tick();
+    return plan(h, locked.id);
+  }
+
+  it("dry-runs the exact PlanAccount transaction through Binance, then sends that same one", async () => {
+    const gate = binanceGate();
+    const h = await harness({ baw: true, planAccount: true, binance: gate });
+    const locked = await lockedAccountGuard(h);
+    const traded = await triggerAccountGuard(h, locked);
+    const exact = gate.requests[0]!.exactCall!;
+    expect(exact.owner).toBe(locked.signedPermission!.owner);
+    expect(traded.decision?.input.binance?.simulation).toMatchObject({
+      kind: "exact",
+      passed: true,
+      callHash: keccak256(exact.data as Hex)
+    });
+    expect(h.permissionTrader!.sent).toHaveLength(1);
+    expect(h.permissionTrader!.sent[0]!.data).toBe(exact.data);
+    expect(traded.trade?.order?.status).toBe("FINISHED");
+  });
+
+  it("refuses the PlanAccount trade when Binance's dry run fails, and sends nothing", async () => {
+    const gate = binanceGate((request) => ({
+      simulation: {
+        kind: "exact",
+        status: "FAILED",
+        failReason: "execution reverted: InvalidRouterCall()",
+        callHash: keccak256(request.exactCall!.data as Hex),
+        passed: false,
+        detail: "dry run FAILED: execution reverted: InvalidRouterCall()"
+      }
+    }));
+    const h = await harness({ baw: true, planAccount: true, binance: gate });
+    const refused = await triggerAccountGuard(h, await lockedAccountGuard(h));
+    expect(refused.decision?.decision.refusal?.code).toBe("SIM_FAILED");
+    expect(refused.decision?.decision.refusal?.sentence).toContain("InvalidRouterCall");
+    expect(h.permissionTrader!.sent).toHaveLength(0);
+  });
+
+  it("will not send a PlanAccount transaction that differs from the one dry-run", async () => {
+    const h = await harness({ baw: true, planAccount: true, binance: binanceGate() });
+    h.permissionTrader!.drift = true;
+    const stuck = await triggerAccountGuard(h, await lockedAccountGuard(h));
+    expect(stuck.status).toBe("decided");
+    expect(h.permissionTrader!.sent).toHaveLength(0);
+    expect(stuck.lastError?.message ?? "").toContain("PLAN_ACCOUNT_CALL_CHANGED");
+    // Nothing was saved as sent, so the agent never goes looking for an order that never left.
+    expect(stuck.trade).toBeUndefined();
+  });
+
+  it("checks a finished fill with Binance's Wallet API once Binance has indexed it", async () => {
+    const requests: BinanceFillRequest[] = [];
+    let indexed = false;
+    const h = await harness({
+      baw: true,
+      reconciliation: true,
+      binanceFill: async (request) => {
+        requests.push(request);
+        if (!indexed) return null;
+        return {
+          v: 1,
+          at: "2026-10-10T10:00:00.000Z",
+          txStatus: "success",
+          sent: { token: request.sentToken, amount: "1" },
+          received: { token: request.receivedToken, amount: request.chainReceived ?? "0" },
+          chainReceived: request.chainReceived,
+          matchesChain: true,
+          detail: "Binance and the chain agree."
+        };
+      }
+    });
+    h.chain.receivedAmount = "191.351";
+    const traded = await triggered(h);
+    expect(traded.trade?.binanceCheck).toBeUndefined();
+    expect(requests[0]).toMatchObject({ wallet: WALLET, chainReceived: "191.351" });
+
+    indexed = true;
+    h.setNow(TRIGGERED + MINUTE);
+    await h.service.tick();
+    const checked = await plan(h, traded.id);
+    expect(checked.trade?.binanceCheck).toMatchObject({
+      matchesChain: true,
+      chainReceived: "191.351"
+    });
+    const calls = requests.length;
+    h.setNow(TRIGGERED + 2 * MINUTE);
+    await h.service.tick();
+    expect(requests).toHaveLength(calls);
   });
 
   it("refuses for good when Binance's share ratio disagrees with the listed one", async () => {

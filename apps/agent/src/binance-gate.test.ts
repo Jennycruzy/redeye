@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { BinanceEvidence, QuoteCheckResult } from "@redeye/core";
 import { BinanceWeb3Client } from "@redeye/clients";
-import { applyBinanceEvidence, BSC_USDT, createBinanceGate } from "./binance-gate.js";
+import {
+  applyBinanceEvidence,
+  BSC_USDT,
+  checkSimulation,
+  createBinanceFillCheck,
+  createBinanceGate
+} from "./binance-gate.js";
 
 const TOKEN = "0x02fca66c1d1afb4e2a7884261eb00f63598a7436";
 const ACCOUNT = "0xDA11FAba6da586c4EEE689b3387Af0b0fd00aae2";
@@ -47,6 +53,7 @@ function evidence(over: Partial<BinanceEvidence> = {}): BinanceEvidence {
       deviationPct: "0.4348",
       limitPct: "1.5"
     },
+    simulation: null,
     failure: null,
     calls: [],
     ...over
@@ -175,6 +182,8 @@ describe("createBinanceGate", () => {
     expect(quoteUrl).toContain(`fromTokenAddress=${TOKEN}`);
     expect(quoteUrl).toContain(`toTokenAddress=${BSC_USDT}`);
     expect(quoteUrl).toContain(`userWalletAddress=${ACCOUNT}`);
+    // The Agentic Wallet door gets no dry run: Binance's route needs an approval first.
+    expect(result.simulation).toBeNull();
     expect(result.calls.map((call) => call.module).sort()).toEqual(["market", "rwa", "trading"]);
   });
 
@@ -192,5 +201,146 @@ describe("createBinanceGate", () => {
       account: ACCOUNT
     });
     expect(result.failure).toMatchObject({ module: "rwa", code: 50001 });
+  });
+});
+
+describe("checkSimulation", () => {
+  const call = {
+    from: "0xa",
+    to: "0xOwner",
+    value: 0n,
+    data: "0x01",
+    owner: "0xOwner",
+    tokenIn: "0xIn",
+    tokenOut: "0xOut",
+    amountIn: 100n,
+    minAmountOut: 50n
+  };
+  it("passes when the owner gets at least the minimum and spends at most the amount", () => {
+    expect(
+      checkSimulation(
+        {
+          status: "SUCCESS",
+          balanceChanges: [
+            { owner: "0xowner", contractAddress: "0xout", change: "60" },
+            { owner: "0xowner", contractAddress: "0xin", change: "-100" }
+          ]
+        },
+        call
+      ).passed
+    ).toBe(true);
+  });
+  it("fails a reverted dry run with its reason", () => {
+    expect(checkSimulation({ status: "FAILED", failReason: "reverted" }, call)).toEqual({
+      passed: false,
+      detail: "dry run FAILED: reverted"
+    });
+  });
+  it("fails when the owner would receive less than the signed minimum", () => {
+    const result = checkSimulation(
+      {
+        status: "SUCCESS",
+        balanceChanges: [{ owner: "0xOwner", contractAddress: "0xOut", change: "49" }]
+      },
+      call
+    );
+    expect(result.passed).toBe(false);
+    expect(result.detail).toContain("below the minimum 50");
+  });
+  it("fails when the dry run spends more than the signed amount", () => {
+    const result = checkSimulation(
+      {
+        status: "SUCCESS",
+        balanceChanges: [
+          { owner: "0xOwner", contractAddress: "0xOut", change: "60" },
+          { owner: "0xOwner", contractAddress: "0xIn", change: "-101" }
+        ]
+      },
+      call
+    );
+    expect(result.passed).toBe(false);
+    expect(result.detail).toContain("above the signed 100");
+  });
+});
+
+describe("rehearsal never gates", () => {
+  it("keeps a passing check when only the wallet rehearsal failed", () => {
+    const e = {
+      v: 1 as const,
+      rwa: null,
+      marketPrice: null,
+      quote: null,
+      simulation: {
+        kind: "rehearsal" as const,
+        status: "FAILED",
+        failReason: "allowance",
+        callHash: "0x",
+        passed: false,
+        detail: "rehearsal"
+      },
+      failure: null,
+      calls: []
+    };
+    expect(applyBinanceEvidence(passed, e, "1", "buy")).toBe(passed);
+  });
+});
+
+describe("createBinanceFillCheck", () => {
+  const WALLET = "0xDA11FAba6da586c4EEE689b3387Af0b0fd00aae2";
+  const CRCL = "0x80f3D493EBCe97e343c53D29a137942416B4ffC0";
+  const answer = (detail: unknown) =>
+    new BinanceWeb3Client({
+      apiKey: "k",
+      secret: "s",
+      maxAttempts: 1,
+      fetch: (async () =>
+        new Response(JSON.stringify({ code: 0, success: true, data: detail }), {
+          status: 200
+        })) as typeof fetch
+    });
+  // The live answer for plan #6's CRCL sale, trimmed to the wallet's own transfers.
+  const crclSale = [
+    {
+      txStatus: "success",
+      tokenTransferDetails: [
+        { from: WALLET, to: "0xb300", tokenContractAddress: CRCL, amount: "0.0605" },
+        {
+          from: "0xb300",
+          to: WALLET,
+          tokenContractAddress: BSC_USDT,
+          amount: "5.156123572686825706"
+        }
+      ]
+    }
+  ];
+  const request = {
+    txHash: "0x3014",
+    wallet: WALLET.toLowerCase(),
+    sentToken: CRCL,
+    receivedToken: BSC_USDT,
+    chainReceived: "5.156123572686825706"
+  };
+
+  it("agrees with the chain to the last digit", async () => {
+    const result = await createBinanceFillCheck(answer(crclSale))(request);
+    expect(result).toMatchObject({
+      txStatus: "success",
+      sent: { amount: "0.0605" },
+      received: { amount: "5.156123572686825706" },
+      matchesChain: true
+    });
+  });
+
+  it("flags a disagreement instead of hiding it", async () => {
+    const result = await createBinanceFillCheck(answer(crclSale))({
+      ...request,
+      chainReceived: "5.2"
+    });
+    expect(result?.matchesChain).toBe(false);
+    expect(result?.detail).toContain("the chain recorded 5.2");
+  });
+
+  it("returns null while Binance has not indexed the transaction", async () => {
+    expect(await createBinanceFillCheck(answer([]))(request)).toBeNull();
   });
 });

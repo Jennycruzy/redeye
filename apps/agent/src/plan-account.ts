@@ -295,11 +295,12 @@ export class PlanAccountTrader implements PermissionTrader {
     return txHash;
   }
 
-  async swap(
-    quote: NormalizedQuote,
-    slippagePct: string,
-    stored: StoredPermission
-  ): Promise<OrderResult> {
+  /**
+   * The exact transaction the agent relays for this quote and permission. Built
+   * the same way at decision time (for the dry run) and at send time, so the
+   * transaction that was dry-run is the one that is sent.
+   */
+  exactCall(quote: NormalizedQuote, slippagePct: string, stored: StoredPermission): ExactCall {
     const execution = quote.execution;
     if (!execution)
       throw new Error("PLAN_ACCOUNT_QUOTE_DATA_MISSING: quote has no router calldata.");
@@ -368,13 +369,31 @@ export class PlanAccountTrader implements PermissionTrader {
         swap
       ]
     });
+    return {
+      from: this.account.address,
+      to: owner,
+      value: swap.value,
+      data: callData,
+      tokenIn,
+      tokenOut,
+      amountIn: swap.amountIn,
+      minAmountOut: minimum
+    };
+  }
+
+  async swap(
+    quote: NormalizedQuote,
+    slippagePct: string,
+    stored: StoredPermission
+  ): Promise<OrderResult> {
+    const call = this.exactCall(quote, slippagePct, stored);
     // A prior ensureAccount call installed the code. Simulate the exact calldata
     // with the relayer as msg.sender before paying gas.
-    await this.reader.call({ account: this.account.address, to: owner, data: callData });
+    await this.reader.call({ account: call.from, to: call.to, data: call.data });
     const txHash = await this.writer.sendTransaction({
-      to: owner,
-      data: callData,
-      value: swap.value
+      to: call.to,
+      data: call.data,
+      value: call.value
     });
     const receipt = await this.reader.waitForTransactionReceipt({ hash: txHash, timeout: 120_000 });
     return {
@@ -404,6 +423,18 @@ export class PlanAccountTrader implements PermissionTrader {
     if (replyId === undefined || !/^0x[0-9a-fA-F]{64}$/.test(replyId)) return null;
     return this.waitForOrder(replyId);
   }
+}
+
+/** One relayed PlanAccount transaction, as dry-run and as sent. */
+export interface ExactCall {
+  from: Address;
+  to: Address;
+  value: bigint;
+  data: Hex;
+  tokenIn: Address;
+  tokenOut: Address;
+  amountIn: bigint;
+  minAmountOut: bigint;
 }
 
 export function authorizationObject(value: StoredAuthorization): StoredAuthorization {

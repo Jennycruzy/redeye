@@ -233,6 +233,20 @@ export interface BinanceEvidence {
     deviationPct: string;
     limitPct: string;
   } | null;
+  /**
+   * Transaction API dry run. "exact" is the transaction the agent will send (the
+   * PlanAccount door) and gates the trade; "rehearsal" is Binance's own route for
+   * the same swap from the same wallet (the Agentic Wallet builds its own
+   * transaction), recorded as evidence only.
+   */
+  simulation: {
+    kind: "exact" | "rehearsal";
+    status: string;
+    failReason: string | null;
+    callHash: string;
+    passed: boolean;
+    detail: string;
+  } | null;
   failure: { module: string; code: number | null; message: string } | null;
   calls: BinanceCall[];
 }
