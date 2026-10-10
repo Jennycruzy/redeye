@@ -294,6 +294,17 @@ describe("B402 through the Web3 gateway", () => {
     expect(h.sent).toHaveLength(1);
   });
 
+  it("reads the error text from errorData when there is no msg", async () => {
+    const h = harness([
+      {
+        status: 200,
+        body: { status: "FAIL", code: "100002", errorData: "invalid payTo", data: null }
+      }
+    ]);
+    const error = await h.client.b402Supported().catch((e: unknown) => e);
+    expect(String((error as Error).message)).toContain("code 100002: invalid payTo");
+  });
+
   it("re-signs a stale timestamp with a fresh nonce, the same as the other modules", async () => {
     const serverTime = Date.parse(TS) + 90_000;
     const h = harness([

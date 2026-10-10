@@ -359,6 +359,12 @@ export class BinanceWeb3Client {
         if (call.message === null && envelope && typeof envelope.message === "string") {
           call.message = envelope.message;
         }
+        if (call.message === null && envelope && envelope.errorData != null) {
+          call.message =
+            typeof envelope.errorData === "string"
+              ? envelope.errorData
+              : JSON.stringify(envelope.errorData).slice(0, 300);
+        }
         call.ok = response.ok && raw === B402_SUCCESS_CODE && envelope?.success !== false;
       } else {
         // The gateway wraps answers: a non-zero code is a failure even on HTTP 200.
