@@ -45,8 +45,20 @@ describe.skipIf(MODE !== "preview" && MODE !== "pay")("live B402 sale (REDEYE_B4
         return answer;
       },
       settle: async (request) => {
-        const answer = await inner.settle(request);
-        console.log(JSON.stringify({ settleAnswer: answer }));
+        let answer = await inner.settle(request);
+        console.log(JSON.stringify({ at: new Date().toISOString(), settleAnswer: answer }));
+        // Diagnostic only: an empty transaction means nothing was broadcast, and the payment's
+        // own EIP-3009 nonce stops it moving twice, so one later retry is safe to try.
+        if (
+          process.env.REDEYE_B402_RETRY === "1" &&
+          !answer.success &&
+          answer.transaction === "" &&
+          answer.errorReason === "invalid_transaction_state"
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 6_000));
+          answer = await inner.settle(request);
+          console.log(JSON.stringify({ at: new Date().toISOString(), settleRetryAnswer: answer }));
+        }
         return answer;
       }
     };
@@ -90,6 +102,25 @@ describe.skipIf(MODE !== "preview" && MODE !== "pay")("live B402 sale (REDEYE_B4
       "--selectedIndex",
       String(options[index]!.index ?? index)
     ]);
+    // What the wallet signed: the EIP-3009 window and nonce, against the local clock.
+    const signedPayload = JSON.parse(
+      Buffer.from(String(signed.paymentHeaderValue), "base64").toString("utf8")
+    ) as { payload?: { authorization?: Record<string, string> } };
+    const auth = signedPayload.payload?.authorization ?? {};
+    console.log(
+      JSON.stringify({
+        signedAt: new Date().toISOString(),
+        nowSeconds: Math.floor(Date.now() / 1000),
+        authorization: {
+          from: auth.from,
+          to: auth.to,
+          value: auth.value,
+          validAfter: auth.validAfter,
+          validBefore: auth.validBefore,
+          nonce: auth.nonce
+        }
+      })
+    );
     const paid = await seller.handle(
       get("/x402/price/NVDA", {
         [String(signed.paymentHeaderName ?? "PAYMENT-SIGNATURE")]: String(signed.paymentHeaderValue)
