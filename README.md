@@ -94,6 +94,21 @@ The agent serves its ERC-8004 registration file at `/.well-known/agent-registrat
 
 `POST /mcp` is an MCP server (streamable HTTP, stateless, JSON answers) built on the official `@modelcontextprotocol/sdk`. Its tools are all read-only: `redeye_price` (the latest checked close, 24/7 and token prices with gaps, ages and sources), `redeye_windows`, `redeye_record`, `redeye_run` (one plan and its receipt), and `redeye_plan_draft`, which checks a plan against tonight's window and returns its promise, fingerprint and lock deadline without saving or locking anything. A plan locked after a close belongs to the next close; in the last five minutes before a close a lock is refused rather than moved to another night.
 
+## A2A
+
+The agent card is served at `/.well-known/agent-card.json` (A2A protocol 1.0 and 0.3), with JSON-RPC at `/a2a`. Its skills are read-only: price, windows, record, run and plan check.
+
+## Try it from a terminal
+
+```sh
+curl -s https://api.theredeyed-agent.site/health
+curl -s https://api.theredeyed-agent.site/record
+curl -s https://theredeyed-agent.site/.well-known/agent-card.json
+curl -i https://api.theredeyed-agent.site/x402/price/NVDA   # answers 402 with the payment terms
+```
+
+The MCP endpoint is `https://api.theredeyed-agent.site/mcp`.
+
 ## x402 sales
 
 `GET /x402/price/{ticker}` (0.002 U) sells the live 24/7 price snapshot: the last close, the 24/7 price, the token price, gaps, ages and sources. `GET /x402/window/{ticker}` (0.01 U) sells the off-hours history against the next open, and `GET /x402/record/{id}` returns a plan's receipt for free. Payment is the x402 v2 `exact` scheme in U by EIP-3009 on BNB Chain (EIP-712 domain "United Stables", version "1"), paid to the agent wallet.
