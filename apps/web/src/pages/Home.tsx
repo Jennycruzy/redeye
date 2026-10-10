@@ -11,12 +11,13 @@ import { Link } from "../lib/router";
 
 const HERO_TICKERS = ["NVDA", "TSLA", "GOOGL", "MSTR", "META"];
 
-/** The plan the home page leads with: the newest graded one, else the newest still running. */
+/** The plan the home page leads with: the newest that traded, else graded, else running. */
 function leadPlan(items: RecordItem[]): RecordItem | null {
   const real = items.filter((i) => i.planId !== null);
   const newest = (list: RecordItem[]) =>
     [...list].sort((a, b) => (b.planId ?? 0) - (a.planId ?? 0))[0] ?? null;
   return (
+    newest(real.filter((i) => i.fillTx)) ??
     newest(real.filter((i) => i.status === "done")) ??
     newest(real.filter((i) => i.status === "decided")) ??
     newest(real)
@@ -127,7 +128,7 @@ function Hero({ now, record }: { now: number; record: RecordItem[] }) {
               </p>
             </div>
             <p className="tonight__source">
-              Hyperliquid xyz:{ticker} · {realAge === undefined ? "—" : `${realAge}s old`}
+              24/7 market · {realAge === undefined ? "—" : `${realAge}s old`}
             </p>
           </div>
           {night.status === "loading" && <Skeleton height={240} />}
@@ -179,7 +180,7 @@ const STEPS = [
   },
   {
     title: "Your plan is locked before 4 pm",
-    body: "Guard, Buy the dip, Sell the rise or Hold. The plan's fingerprint is written to PlanBook on BNB Chain before the close. After that nobody, Redeye included, can change it."
+    body: "Guard, Buy the dip, Sell the rise or Hold. A sealed copy of the plan is written on BNB Chain before the close. After that nobody, Redeye included, can change it."
   },
   {
     title: "Graded at the 9:30 open",
@@ -251,8 +252,9 @@ export default function Home() {
             <PriceBoard items={prices.value.items} marketOpen={market.open} />
           )}
           <p className="fine board__note">
-            Close: Nasdaq official close. 24/7 price: Hyperliquid's xyz equity market. Token: the
-            bStock's PancakeSwap pool on BNB Chain, per real share. Ages in seconds.
+            Close: the official Nasdaq close. 24/7 price: a market where the stock keeps trading
+            around the clock. Token: the stock token's price on BNB Chain, per real share. Ages in
+            seconds.
           </p>
         </div>
       </section>

@@ -72,7 +72,7 @@ export default function Stock({ ticker }: { ticker: string }) {
     <div className="wrap page">
       <header className="page__head page__head--row">
         <div>
-          <p className="eyebrow">{ticker} · bStock on BNB Chain</p>
+          <p className="eyebrow">{ticker} · stock token on BNB Chain</p>
           <h1 className="display display--sm">{stockName(ticker)}</h1>
         </div>
         <Link to={`/start?ticker=${ticker}`} className="button button--primary">

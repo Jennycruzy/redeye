@@ -41,7 +41,11 @@ const OUTCOME_WORD: Record<Outcome, string> = {
 export function OutcomeBadge({
   item
 }: {
-  item: Pick<RecordItem, "outcome" | "status"> & { closeTs?: number };
+  item: Pick<RecordItem, "outcome" | "status"> & {
+    closeTs?: number;
+    action?: string | null;
+    fillTx?: string | null;
+  };
 }) {
   if (item.outcome) {
     return (
@@ -57,7 +61,9 @@ export function OutcomeBadge({
         ? "Locked · starts at the close"
         : "Watching"
       : item.status === "decided"
-        ? "Waiting for the open"
+        ? item.fillTx
+          ? `${item.action === "buy" ? "Bought" : "Sold"} · graded at the open`
+          : "Waiting for the open"
         : item.status === "missed"
           ? "Lock missed"
           : item.status === "cancelled"

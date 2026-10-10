@@ -139,10 +139,11 @@ export function Shell({ children }: { children: ReactNode }) {
               <Link to="/proof">Proof and contracts</Link>
             </div>
             <div>
-              <h2>For agents</h2>
-              <a href="/.well-known/agent-card.json">A2A card</a>
-              <Link to="/proof#agents">MCP and x402</Link>
-              <a href="/api/health">Uptime</a>
+              <h2>For developers</h2>
+              <Link to="/proof#developers">Connect an agent</Link>
+              <a href="https://github.com/Jennycruzy/redeye" target="_blank" rel="noreferrer">
+                Source code
+              </a>
             </div>
           </div>
         </div>

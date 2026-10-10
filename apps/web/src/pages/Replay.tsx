@@ -61,9 +61,8 @@ export default function Replay() {
           Put a trigger through <em>a past window</em>.
         </h1>
         <p className="lede">
-          Replay the 24/7 five-minute price candles for one of the eight latest completed NYSE
-          windows. This checks trigger crossings only; it does not simulate Binance quotes,
-          liquidity, fees or a trade.
+          Pick one of the last eight nights or weekends and see, minute by minute, whether your
+          trigger would have been hit. It only checks the price; it does not trade or include fees.
         </p>
       </header>
 
@@ -140,9 +139,7 @@ export default function Replay() {
         </div>
         {trace.status === "loading" && <Skeleton height={300} />}
         {trace.status === "error" && <Problem message={trace.message} retry={trace.retry} />}
-        {noTrace && (
-          <Problem message="The close or historical price candles are unavailable for this window." />
-        )}
+        {noTrace && <Problem message="The prices for this night are not available." />}
         {trace.status === "ready" && result !== null && (
           <NightStrip
             trace={trace.value}
@@ -158,27 +155,25 @@ export default function Replay() {
       {trace.status === "ready" && result !== null && (
         <section className="replay">
           <div className="replay__head">
-            <p className="label">Trigger-only result · no trade was sent</p>
+            <p className="label">What would have happened · nothing was traded</p>
           </div>
           <p className="replay__verdict">
             {result.hit ? (
               <>
-                The {kind === "sell_rise" ? "rise" : "drop"} trigger was first crossed at{" "}
-                <strong>{utcStamp(result.hit.at)}</strong>, when the 24/7 reference was{" "}
-                <strong>{usd(result.hit.price)}</strong>.
+                The trigger was first hit at <strong>{utcStamp(result.hit.at)}</strong>, when the
+                24/7 price was <strong>{usd(result.hit.price)}</strong>.
               </>
             ) : (
               <>
-                No {kind === "sell_rise" ? "rise" : "drop"} trigger crossing appears in the
-                available candles. The window’s most {kind === "sell_rise" ? "elevated" : "dipped"}{" "}
+                The trigger was never hit. The {kind === "sell_rise" ? "highest" : "lowest"} 24/7
                 price was <strong>{usd(result.extreme)}</strong>; the close was{" "}
                 <strong>{usd(result.close)}</strong>.
               </>
             )}
           </p>
           <p className="fine">
-            Trigger level {usd(result.level)} ({plain(trigger)}% from the official close). This
-            historical chart is source data, not an execution record or a prediction.
+            Trigger {usd(result.level)} ({plain(trigger)}% from the official close). This is past
+            price data, not a trade and not a prediction.
           </p>
         </section>
       )}

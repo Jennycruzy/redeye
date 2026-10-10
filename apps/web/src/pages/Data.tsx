@@ -74,8 +74,8 @@ export default function Data() {
               <div>
                 <h2 className="h2">Distance from Monday’s official open</h2>
                 <p className="muted">
-                  Median absolute error, in percent. Lower is closer. “24/7” is the Hyperliquid
-                  reference; “Token” is the BNB Chain token price.
+                  How far each price was from Monday's official open, in percent (the middle value).
+                  Lower is closer. “Token” is the price on BNB Chain.
                 </p>
               </div>
               <button
@@ -93,7 +93,7 @@ export default function Data() {
                   <tr>
                     <th scope="col">Moment</th>
                     <th scope="col" className="num">
-                      n
+                      Weekends
                     </th>
                     <th scope="col" className="num">
                       Friday close
@@ -105,16 +105,16 @@ export default function Data() {
                       Token
                     </th>
                     <th scope="col" className="num hide-sm">
-                      Median token gap
+                      Token vs 24/7
                     </th>
                     <th scope="col" className="num hide-sm">
-                      Drift &gt; 0.5%
+                      Off by over 0.5%
                     </th>
                     <th scope="col" className="num hide-sm">
-                      Drift &gt; 1%
+                      Off by over 1%
                     </th>
                     <th scope="col" className="num hide-sm">
-                      Direction hits (n)
+                      Right direction
                     </th>
                   </tr>
                 </thead>
@@ -142,23 +142,21 @@ export default function Data() {
           <section className="section--tight">
             <h2 className="h2">How to read this</h2>
             <p className="muted">
-              The input snapshot was captured on 5 October 2026 and is deliberately not refreshed:
-              rebuilding it from hosted APIs later could produce different historical values. The
-              summary contains 104 observations across 13 stocks. The CSV has 120 source rows,
-              including AAPL and SKHY; those two are excluded from the summary because their source
-              series failed unit or comparability checks.
+              The data was captured on 5 October 2026 and is kept frozen, so the numbers can be
+              checked later. It covers 104 weekends across 13 stocks. Each row compares the Friday
+              close, the 24/7 price and the token with Monday's official open. “Right direction”
+              counts how often the 24/7 price moved the same way as Monday's open.
             </p>
             <p className="muted">
-              For each checkpoint, error is the absolute percent difference from Monday’s official
-              open; the token gap is the absolute percent difference between token and Hyperliquid
-              prices. Drift counts are the number of complete observations whose token gap exceeded
-              0.5% or 1%. Direction hits compare the Hyperliquid move from Friday’s close with the
-              direction of the next official open. These are sampled checkpoints, not a continuous
-              record of when a drift began or ended.
-            </p>
-            <p className="muted">
-              The CSV includes those per-row errors, signed token-to-24/7 gaps, drift flags and the
-              next-checkpoint drift status. The final sampled checkpoint has no later observation.
+              The full method, including the two stocks left out and why, is in the{" "}
+              <a
+                href="https://github.com/Jennycruzy/redeye/blob/main/docs/data.md"
+                target="_blank"
+                rel="noreferrer"
+              >
+                data notes on GitHub
+              </a>
+              .
             </p>
             <p className="fine">
               These are descriptive historical measurements, not a forecast, trading signal or

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { TxLink } from "../components/bits";
 import { agent, type PasskeyAccountResult, type PasskeyStatus } from "../lib/api";
 import { useAgent } from "../lib/hooks";
 import {
@@ -48,29 +49,32 @@ export default function Newcomer() {
       <p className="eyebrow">New to crypto</p>
       <h1 className="display">Your device is the key. There is no seed phrase.</h1>
       <p className="lede">
-        Redeye creates a dedicated PlanAccount on BNB Chain. Face ID, fingerprint or your device
-        screen lock signs bounded plans; Redeye sponsors the account-creation fee.
+        Redeye makes you an account on BNB Chain that only your phone can approve, with Face ID,
+        fingerprint or screen lock. Redeye pays the fee to create it.
       </p>
       {!insideTelegram && (
         <p className="problem">
-          Open this page from the Redeye Telegram bot to bind the account safely.
+          Open this page from the Redeye Telegram bot, so the account is linked to you safely.
         </p>
       )}
-      {status.status === "error" && <p className="problem">The account service is unavailable.</p>}
+      {status.status === "error" && (
+        <p className="problem">Accounts can't be created right now. Please try again later.</p>
+      )}
       {status.status === "ready" && !status.value.available && (
         <p className="problem">
-          Passkey account deployment is not configured yet. No credential was created.
+          Accounts can't be created right now. Nothing was set up on your phone.
         </p>
       )}
       {state.step === "ready" ? (
         <div className="locked" role="status">
-          <p className="locked__title">Passkey created on this device.</p>
+          <p className="locked__title">Your account is ready.</p>
           <p>
-            Credential {state.passkey.credentialId.slice(0, 10)}… is bound to Telegram. Your
-            PlanAccount is {state.account.state === "existing" ? "already live" : "now live"} at{" "}
+            It is linked to your Telegram and approved by this phone. Your account address is{" "}
             <code>{state.account.account}</code>.
           </p>
-          {state.account.txHash && <p>Deployment: {state.account.txHash}</p>}
+          {state.account.txHash && (
+            <TxLink hash={state.account.txHash}>creation transaction</TxLink>
+          )}
         </div>
       ) : (
         <div className="walletlist">

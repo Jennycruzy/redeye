@@ -48,13 +48,13 @@ function Row({ item }: { item: RecordItem }) {
           {item.door === "agentic_wallet"
             ? "trades through the Agentic Wallet"
             : item.door === "plan_account"
-              ? "trades through the owner's PlanAccount permission"
+              ? "trades from the owner's wallet, with a one-trade permission"
               : item.door === "signed"
                 ? `signed in ${item.owner.slice(0, 6)}…${item.owner.slice(-4)}'s wallet · promise only`
                 : "promise only, no trading"}
         </span>
         {item.owner.toLowerCase() === TEAM && <span className="tag">team</span>}
-        {item.standingRunId && <span className="tag">standing</span>}
+        {item.standingRunId && <span className="tag">repeats nightly</span>}
         <span className="rrow__links">
           <TxLink hash={item.freezeTx}>lock</TxLink>
           {item.decisionTx && <TxLink hash={item.decisionTx}>decision</TxLink>}

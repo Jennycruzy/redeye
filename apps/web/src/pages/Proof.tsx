@@ -1,108 +1,77 @@
-import { useState } from "react";
-import { Problem, Skeleton } from "../components/bits";
+import { Skeleton } from "../components/bits";
 import { agent } from "../lib/api";
-import { addressUrl, plain, txUrl } from "../lib/format";
+import { addressUrl, txUrl } from "../lib/format";
 import { useAgent } from "../lib/hooks";
 import { Link } from "../lib/router";
 
+const REPO = "https://github.com/Jennycruzy/redeye";
+
 const CONTRACTS = [
   {
-    name: "PlanBook",
+    name: "Plan book",
     address: "0xC7B860d561f2208c725ac9a873bf4eA5205e9057",
-    what: "Holds every plan's fingerprint, decision and result. Refuses a lock after the close."
+    what: "Holds every plan, decision and result. It refuses a plan locked after the close."
   },
   {
-    name: "PlanAccount",
+    name: "One-trade permission",
     address: "0x9736a95F6a5c24165Ecf282e3E08016715460AAC",
-    what: "Per-plan permission for wallets: the agent may make exactly one matching trade."
+    what: "Lets the agent make exactly one matching trade from a person's own wallet, and nothing else."
   },
   {
-    name: "PlanJobHook",
+    name: "Job checker",
     address: "0x42a7F449e4950524c13deBC96a0549100b516594",
-    what: "ERC-8183 hook for team jobs, approved only when the receipt checks out."
+    what: "Approves a plan's job record only when its receipt checks out."
   },
   {
     name: "Agent wallet",
     address: "0xe201bbf3C736a5d188797974a7e4B9464f707eA8",
-    what: "Writes to PlanBook and receives x402 payments. Holds no user funds."
+    what: "Writes plans and results on chain and receives payments. Holds no one else's money."
   },
   {
-    name: "Agentic Wallet",
+    name: "Binance Agentic Wallet",
     address: "0xDA11FAba6da586c4EEE689b3387Af0b0fd00aae2",
-    what: "The Binance Agentic Wallet the team's trading plans use."
+    what: "The team's own trading wallet. It made the first plan trade."
   }
 ];
 
-/** What is live and what is not, stated plainly (spec §21, §24). */
+const FIRST_TRADE = "0x3014f7996e59458934dcd500232fd2674904d183df376daac9c8171770f0e87a";
+
+/** What is live and what is not, stated plainly. */
 const REAL = [
   [
-    "Off-hours prices: close, 24/7 futures price, token per real share",
+    "Prices after hours: the close, the 24/7 price and the token",
     "Live",
-    "Every minute, with source and age"
+    "Checked every minute, each with its source and age"
   ],
-  ["Plans locked on BNB Chain before the close", "Live", "PlanBook on mainnet"],
-  ["Decisions and results written on chain", "Live", "Recomputable in your browser with Check it"],
+  ["Plans locked on BNB Chain before the close", "Live", "Every plan since 7 Oct is in the record"],
+  ["Decisions and results written on chain", "Live", "Check them yourself with Check it"],
   [
     "Trading through the Binance Agentic Wallet",
     "Live",
-    "Test trades filled on 8 Oct; plans #2 and #3 trade this weekend"
+    "Plan #6 sold CRCL at 02:41 UTC on 10 Oct, after the 24/7 price rose 1%"
   ],
   [
-    "ERC-8183 job for each locked plan",
+    "Trading from your own wallet, one trade at a time",
     "Live",
-    "Jobs open and funded; first completions after Monday's open"
-  ],
-  ["x402 sales of the 24/7 price", "Live", "First settled sale on 8 Oct"],
-  ["MCP and A2A doors for other agents", "Live", "Read-only; a plan check saves nothing"],
-  ["ERC-8004 identity", "Live", "Agent #368521 on BNB Chain's identity registry"],
-  [
-    "Wallet door through PlanAccount",
-    "Live lock",
-    "Plan #8 delegated and locked a bounded $2 permission on mainnet; a triggered swap and browser-wallet authorization remain"
+    "Plan #8 is locked with a $2 limit; its trigger has not been hit yet"
   ],
   [
-    "Telegram and device passkeys for newcomers",
-    "Live · phone validation pending",
-    "Factory deployed and sponsor caps active; the first real Android or iPhone passkey account remains the release gate"
-  ]
+    "Phone accounts for newcomers, through Telegram",
+    "Testing",
+    "Account creation is live; the first real phone account is still being confirmed"
+  ],
+  ["Paid price feed for other agents (x402)", "Live", "First paid sale on 8 Oct"],
+  ["On-chain agent identity (ERC-8004)", "Live", "Redeye is agent #368521"],
+  [
+    "A job record for each plan (ERC-8183)",
+    "Live",
+    "Opened and paid for each plan; the first ones close after Monday's open"
+  ],
+  ["Other AI agents can read Redeye (MCP and A2A)", "Live", "Read-only"]
 ] as const;
-
-function Copy({ text }: { text: string }) {
-  const [done, setDone] = useState(false);
-  return (
-    <button
-      className="textbutton"
-      type="button"
-      onClick={() =>
-        navigator.clipboard.writeText(text).then(
-          () => (setDone(true), window.setTimeout(() => setDone(false), 1500)),
-          () => setDone(false)
-        )
-      }
-    >
-      {done ? "copied" : "copy"}
-    </button>
-  );
-}
-
-function Code({ text }: { text: string }) {
-  return (
-    <div className="code">
-      <pre>{text}</pre>
-      <Copy text={text} />
-    </div>
-  );
-}
 
 export default function Proof() {
   const health = useAgent(() => agent.health(), [], 30_000);
-  const study = useAgent(() => agent.study(), []);
-  const record = useAgent(() => agent.record(), [], 60_000);
-  const origin = typeof window === "undefined" ? "" : window.location.origin;
-  const jobs =
-    record.status === "ready"
-      ? record.value.items.filter((i) => i.jobId !== null || i.teamJobId !== null)
-      : [];
 
   return (
     <div className="wrap page">
@@ -112,7 +81,7 @@ export default function Proof() {
           Check it yourself, <em>in five minutes</em>.
         </h1>
         <p className="lede">
-          No wallet needed. Every claim on this site links to the chain or to a source you can call.
+          No wallet needed. Every claim on this site links to BNB Chain or to a public source.
         </p>
       </header>
 
@@ -120,18 +89,33 @@ export default function Proof() {
         <li>
           <strong>Open the latest promise</strong>
           <span>
-            The home page leads with it: locked before the close, watched overnight, graded at the
-            open. Press Check it.
+            The home page leads with it: locked before the close, watched through the night, graded
+            at the open. Press Check it.
           </span>
           <Link to="/" className="arrowlink arrowlink--sm">
             Home
           </Link>
         </li>
         <li>
+          <strong>See the first trade</strong>
+          <span>
+            Plan #6 promised to sell CRCL if it rose 1% over the weekend. It did, at 02:41 UTC on 10
+            Oct, and the agent sold through the Binance Agentic Wallet.
+          </span>
+          <a
+            className="arrowlink arrowlink--sm"
+            href={txUrl(FIRST_TRADE)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            The trade on BscScan
+          </a>
+        </li>
+        <li>
           <strong>Read the whole record</strong>
           <span>
-            Every plan, including refused and broken ones, with its lock, decision, trade and result
-            transactions.
+            Every plan, including refused and broken ones, with its lock, decision, trade and
+            result.
           </span>
           <Link to="/record" className="arrowlink arrowlink--sm">
             Record
@@ -139,36 +123,29 @@ export default function Proof() {
         </li>
         <li>
           <strong>Compare the three prices right now</strong>
-          <span>
-            The frozen close, the 24/7 futures price and the token, each with its source and age.
-          </span>
+          <span>The close, the 24/7 price and the token, each with its source and age.</span>
           <Link to="/t/NVDA" className="arrowlink arrowlink--sm">
             Nvidia
           </Link>
         </li>
         <li>
-          <strong>Download the off-hours sample</strong>
-          <span>Inspect the frozen source data and the method behind the price comparison.</span>
+          <strong>Look at the research</strong>
+          <span>104 past weekends: how far each price was from Monday's open.</span>
           <Link to="/data" className="arrowlink arrowlink--sm">
-            Data and method
+            Data
           </Link>
         </li>
         <li>
-          <strong>Replay a past window</strong>
-          <span>Check where a trigger crossed on historical 24/7 candles; no trade is sent.</span>
+          <strong>Replay a past night</strong>
+          <span>See where a trigger would have been hit. Nothing is traded.</span>
           <Link to="/replay" className="arrowlink arrowlink--sm">
             Replay
           </Link>
         </li>
-        <li>
-          <strong>Call the agent</strong>
-          <span>Uptime, a plan check, or the A2A card, straight from your terminal.</span>
-        </li>
       </ol>
-      <Code text={`curl -s ${origin}/api/health\ncurl -s ${origin}/api/record`} />
 
       <section className="section--tight">
-        <h2 className="h2">What is real and what is not</h2>
+        <h2 className="h2">What is live and what is not</h2>
         <div className="board">
           <table>
             <thead>
@@ -200,7 +177,7 @@ export default function Proof() {
       </section>
 
       <section className="section--tight">
-        <h2 className="h2">Contracts and wallets on BNB Smart Chain</h2>
+        <h2 className="h2">Contracts and wallets on BNB Chain</h2>
         <ul className="contracts">
           {CONTRACTS.map((c) => (
             <li key={c.address}>
@@ -214,145 +191,44 @@ export default function Proof() {
         </ul>
       </section>
 
-      <section className="section--tight">
-        <h2 className="h2">Identity</h2>
+      <section className="section--tight" id="developers">
+        <h2 className="h2">For developers and other agents</h2>
         <p className="muted">
-          Redeye is agent #368521 in the ERC-8004 identity registry on BNB Chain. The registry links
-          to its registration file, which lists the site, the record, uptime, MCP and A2A.
-        </p>
-        <p>
+          Redeye is agent #368521 in BNB Chain's agent registry (
           <a
             className="tx"
             href={txUrl("0x674625e3d3000b4e748e4fc518763e94693db4d0f28f7ed05b6bf212fe02156f")}
             target="_blank"
             rel="noreferrer"
           >
-            registration transaction
-          </a>{" "}
-          · <a href="/.well-known/agent-registration.json">registration file</a>
+            registration
+          </a>
+          ). Other AI agents can read its prices and record, and can pay per call for the 24/7 price
+          (
+          <a
+            className="tx"
+            href={txUrl("0x7dd090f39dfa8ba765a50c3dddc547418a9ac8e1d25244e97737cbf072e79a78")}
+            target="_blank"
+            rel="noreferrer"
+          >
+            first paid sale
+          </a>
+          ).
         </p>
-      </section>
-
-      <section className="section--tight" id="agents">
-        <h2 className="h2">For other agents</h2>
-        <div className="agents">
-          <div>
-            <h3>A2A</h3>
-            <p className="muted">
-              Agent card and JSON-RPC, protocol 1.0 and 0.3. Skills: price, windows, record, run,
-              plan check.
-            </p>
-            <Code text={`curl -s ${origin}/.well-known/agent-card.json`} />
-          </div>
-          <div>
-            <h3>MCP</h3>
-            <p className="muted">Streamable HTTP at /mcp with five read-only tools.</p>
-            <Code text={`${origin}/api/mcp`} />
-          </div>
-          <div>
-            <h3>x402</h3>
-            <p className="muted">Pay $0.002 per call for the 24/7 price, settled on BNB Chain.</p>
-            <Code text={`curl -i ${origin}/api/x402/price/NVDA`} />
-            <a
-              className="tx"
-              href={txUrl("0x7dd090f39dfa8ba765a50c3dddc547418a9ac8e1d25244e97737cbf072e79a78")}
-              target="_blank"
-              rel="noreferrer"
-            >
-              first settled sale
-            </a>
-          </div>
-        </div>
-      </section>
-
-      <section className="section--tight">
-        <h2 className="h2">ERC-8183 jobs</h2>
-        {record.status === "loading" && <Skeleton height={120} />}
-        {jobs.length > 0 && (
-          <ul className="minilist">
-            {jobs.map((p) => (
-              <li key={p.id}>
-                <Link to={`/runs/${p.id}`}>
-                  <span>#{p.planId}</span>
-                  <span>
-                    {p.jobId !== null && `job ${p.jobId} ${p.jobState ?? ""}`}
-                    {p.teamJobId !== null && ` · team job ${p.teamJobId} ${p.teamJobState ?? ""}`}
-                  </span>
-                  <span className="muted">{p.ticker}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="section--tight">
-        <h2 className="h2">The off-hours study</h2>
-        {study.status === "error" && <Problem message={study.message} retry={study.retry} />}
-        {study.status === "ready" && study.value.summary && (
-          <>
-            <p className="muted">
-              {study.value.summary.samples} stock-weekends across{" "}
-              {study.value.summary.stocks.length} stocks. Error is the distance from Monday's
-              official open, in percent.
-            </p>
-            <div className="board">
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">Moment</th>
-                    <th scope="col" className="num">
-                      n
-                    </th>
-                    <th scope="col" className="num">
-                      Frozen close
-                    </th>
-                    <th scope="col" className="num">
-                      24/7 price
-                    </th>
-                    <th scope="col" className="num">
-                      Token
-                    </th>
-                    <th scope="col" className="num hide-sm">
-                      Token vs 24/7
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(study.value.summary.windows).map(([name, w]) => (
-                    <tr key={name}>
-                      <td>{name}</td>
-                      <td className="num">{w.n}</td>
-                      <td className="num">{plain(w.closeError)}%</td>
-                      <td className="num">{plain(w.hyperliquidError)}%</td>
-                      <td className="num">{plain(w.tokenError)}%</td>
-                      <td className="num hide-sm">{plain(w.medianAbsDifference)}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="fine">
-              This is a frozen historical sample, not a live feed.{" "}
-              <Link to="/data" className="arrowlink arrowlink--sm">
-                View the data and download the CSV
-              </Link>
-              .
-            </p>
-          </>
-        )}
+        <p>
+          <a href={REPO} target="_blank" rel="noreferrer" className="arrowlink arrowlink--sm">
+            How to connect: the developer guide on GitHub
+          </a>
+        </p>
       </section>
 
       <section className="section--tight">
         <h2 className="h2">Uptime</h2>
+        {health.status === "loading" && <Skeleton height={24} />}
         {health.status === "ready" && (
           <p className="muted">
-            {health.value.passes} price passes since the last restart; longest gap{" "}
-            {health.value.longestGapSeconds}s; last success{" "}
-            {health.value.lastSuccessAt
-              ? new Date(health.value.lastSuccessAt).toLocaleTimeString()
-              : "—"}
-            .
+            {health.value.passes} price checks since the last restart. The longest gap between
+            checks was {health.value.longestGapSeconds} seconds.
           </p>
         )}
       </section>

@@ -41,8 +41,8 @@ function CheckIt({ item }: { item: RecordItem }) {
         {running ? "Checking against the chain…" : steps ? "Check it again" : "Check it"}
       </button>
       <p className="fine">
-        Your browser recomputes every fingerprint with Redeye's own code and checks PlanBook and
-        wallet transfers against public BNB Smart Chain nodes.
+        Your browser redoes the maths itself and compares it with what is written on BNB Chain. You
+        don't have to trust Redeye.
       </p>
       {steps && steps.length > 0 && (
         <ol className="checks" aria-live="polite">

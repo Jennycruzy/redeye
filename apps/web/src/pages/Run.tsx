@@ -9,8 +9,10 @@ import {
   kindName,
   localStamp,
   nyClock,
+  num,
   nyStamp,
   pct,
+  plain,
   reasonWords,
   usd,
   windowName
@@ -41,14 +43,15 @@ function Log({
   const first = checks[0] ? eventTime(checks[0]) : null;
   const last = checks[checks.length - 1] ? eventTime(checks[checks.length - 1]!) : null;
   const lines: Array<{ at: number; title: string; body: string; tx?: string | undefined }> = [];
+  const traded = events.find((e) => e.step === "decided")?.action;
   for (const event of events) {
     if (event.step.startsWith("check:")) continue;
     const at = eventTime(event);
     if (event.step === "locked")
       lines.push({
         at,
-        title: "Locked on PlanBook",
-        body: "The plan's fingerprint went on chain.",
+        title: "Locked on chain",
+        body: "A sealed copy of the plan was written on BNB Chain.",
         tx: event.txHash
       });
     else if (event.step === "decided")
@@ -58,7 +61,7 @@ function Log({
         body:
           event.action === "none"
             ? reasonWords(String(event.refusal ?? event.reason ?? ""))
-            : `Action: ${String(event.action)}.`,
+            : `The trigger was hit, so the agent will ${event.action === "buy" ? "buy" : "sell"}.`,
         tx: event.txHash
       });
     else if (event.step === "result")
@@ -68,7 +71,30 @@ function Log({
         body: `Outcome: ${String(event.outcome ?? "")}.`,
         tx: event.txHash
       });
-    else
+    else if (event.step.startsWith("trade:")) {
+      const status = event.step.slice("trade:".length);
+      const received = num(event.received as string | undefined);
+      lines.push({
+        at,
+        title:
+          status === "FINISHED"
+            ? traded === "buy"
+              ? "Bought"
+              : "Sold"
+            : status === "FAILED"
+              ? "Trade failed"
+              : "Trade sent, waiting for the wallet",
+        body:
+          status === "FINISHED" && received !== null
+            ? traded === "buy"
+              ? `The wallet received ${plain(received, 6)} shares.`
+              : `The wallet received ${usd(received)} in USDT.`
+            : status === "FAILED"
+              ? "The wallet's order failed, so no trade happened."
+              : "",
+        tx: (event.txHash as string | null | undefined) ?? undefined
+      });
+    } else
       lines.push({
         at,
         title: event.step.replace(/_/g, " "),
@@ -226,7 +252,7 @@ export default function Run({ id }: { id: string }) {
           <Log events={events.value.items} close={close} closeTs={item.closeTs} />
         )}
         <p className="fine">
-          Raw data: <a href={`/api/runs/${id}`}>plan</a> ·{" "}
+          Raw data for developers: <a href={`/api/runs/${id}`}>plan</a> ·{" "}
           <a href={`/api/runs/${id}/events`}>log</a>
           {item.outcome && (
             <>

@@ -186,31 +186,25 @@ const DOORS = [
     id: "signed",
     name: "Sign it with your wallet",
     state: "Live",
-    body: "Your wallet signs one bounded PlanAccount permission and, where needed, an EIP-7702 delegation. The agent can make only this plan's swap; your funds stay in your wallet and the chain rejects anything else."
+    body: "Your wallet gives Redeye permission for one trade only: this stock, this amount, this window. Your money stays in your wallet, and BNB Chain blocks anything else."
   },
   {
     id: "agentic",
     name: "Binance Agentic Wallet",
     state: "Live",
-    body: "Trades stay inside the daily limit you set in the Binance app. Redeye reads your limits and session, quotes every trade, and refuses anything outside the plan. Plans #2 and #3 trade through this door this weekend."
-  },
-  {
-    id: "wallet",
-    name: "Trade from your own wallet",
-    state: "Built",
-    body: "Your wallet signs one bounded permission for one plan or standing run. PlanAccount on BNB Chain lets the agent make only the approved swap and refuses anything else."
+    body: "Trades stay inside the daily limit you set in the Binance app. Redeye checks every price before it trades and refuses anything outside the plan. Plan #6 sold CRCL through this door on 10 Oct, after the price rose 1%."
   },
   {
     id: "newcomer",
     name: "New to crypto",
     state: "In progress",
-    body: "Start in Telegram, make an account protected by a device passkey, no seed phrase and no gas to buy. Redeye pays the network fee."
+    body: "Start in Telegram and protect your account with your phone's fingerprint, face or screen lock. No seed phrase, and Redeye pays the network fee."
   },
   {
     id: "passkey",
-    name: "Passkey PlanAccount",
+    name: "Your passkey account",
     state: "Live",
-    body: "Your saved passkey account signs one bounded permission with your fingerprint, Face ID or device screen lock. Redeye relays only the frozen plan; it cannot use the account for another trade."
+    body: "Your fingerprint, face or screen lock approves one trade for this plan only. Redeye cannot use your account for anything else."
   }
 ];
 
@@ -489,7 +483,7 @@ export default function Start() {
                 {standing && (
                   <p className="fine">
                     A fresh copy is locked before every close for {days} days. Each night gets its
-                    own fingerprint and its own result.
+                    own sealed copy and its own result.
                   </p>
                 )}
                 {preview && preview.issues.length > 0 && (
@@ -627,11 +621,11 @@ export default function Start() {
               <ol className="tline">
                 <li>
                   <span className="tline__when">Now</span>
-                  <strong>The plan's fingerprint goes on chain</strong>
+                  <strong>A sealed copy goes on chain</strong>
                   <span>
-                    PlanBook on BNB Chain stores <code>{preview.planHash.slice(0, 18)}…</code>.
-                    Anyone can recompute it from the sentence above. After this it cannot be
-                    changed.
+                    BNB Chain stores a code made from the sentence above (
+                    <code>{preview.planHash.slice(0, 10)}…</code>). Anyone can check that it
+                    matches. After this the plan cannot be changed.
                   </span>
                 </li>
                 <li>
@@ -696,8 +690,8 @@ export default function Start() {
                   ) : (
                     <>
                       <p>
-                        This door is not open yet. Your plan is ready: copy it, and watch plans #2
-                        and #3 run through the Agentic Wallet this weekend in the meantime.
+                        This door is not open yet. Your plan is ready: copy it, and see the plans
+                        running through the Agentic Wallet now in the record.
                       </p>
                       <CopyPlan plan={previewPlan} />
                     </>
@@ -772,21 +766,24 @@ function SignAndLock({
       }
       if (preview.permission === undefined) {
         throw new Error(
-          "The agent has not configured a PlanAccount template and approved router yet."
+          "Trading from your own wallet is not switched on yet. Please try again later."
         );
       }
-      setState({ step: "busy", label: "Checking PlanAccount compatibility…" });
+      setState({ step: "busy", label: "Checking your wallet…" });
       const delegated = await hasPlanAccountDelegation(wallet, owner, preview.permission.template);
       const authorization = delegated
         ? undefined
         : await (async () => {
-            setState({ step: "busy", label: "Authorize the PlanAccount delegation…" });
+            setState({
+              step: "busy",
+              label: "Approve the one-time account upgrade in your wallet…"
+            });
             return signDelegation(wallet, owner, preview.permission!.template);
           })();
-      setState({ step: "busy", label: "Check the bounded trade permission in your wallet…" });
+      setState({ step: "busy", label: "Check the trade permission in your wallet and sign it…" });
       const { signature, issuedAt } = await signPlanPermission(wallet, owner, preview.permission);
       if (standing) {
-        setState({ step: "busy", label: "Starting the standing run on BNB Chain…" });
+        setState({ step: "busy", label: "Starting your repeating plan on BNB Chain…" });
         const started = await agent.startStanding({
           ...plan,
           days,
@@ -829,12 +826,12 @@ function SignAndLock({
   const lockWithPasskey = async (account: StoredPasskeyAccount) => {
     try {
       if (preview.permission === undefined) {
-        throw new Error("The agent has not returned the bounded PlanAccount permission yet.");
+        throw new Error("The trade permission is not ready yet. Please try again in a moment.");
       }
-      setState({ step: "busy", label: "Check the bounded permission with your passkey…" });
+      setState({ step: "busy", label: "Approve with your fingerprint, face or screen lock…" });
       const { signature, issuedAt } = await signPasskeyPermission(account, preview.permission);
       if (standing) {
-        setState({ step: "busy", label: "Starting the standing run on BNB Chain…" });
+        setState({ step: "busy", label: "Starting your repeating plan on BNB Chain…" });
         const started = await agent.startStanding({
           ...plan,
           days,
@@ -892,8 +889,8 @@ function SignAndLock({
       <div className="locked" role="status">
         <p className="locked__title">Locked as plan #{state.planId}, in your name.</p>
         <p>
-          PlanBook now holds it under {state.owner.slice(0, 6)}…{state.owner.slice(-4)}. The bounded
-          permission is recorded with it; the agent cannot use it for another plan.
+          It is on BNB Chain under your address {state.owner.slice(0, 6)}…{state.owner.slice(-4)}.
+          The trade permission works for this plan only.
         </p>
         <TxLink hash={state.tx}>lock transaction</TxLink>
         <Link to={`/runs/${state.id}`} className="arrowlink">
@@ -905,10 +902,10 @@ function SignAndLock({
   if (state.step === "standing-done") {
     return (
       <div className="locked" role="status">
-        <p className="locked__title">Standing run started in your name.</p>
+        <p className="locked__title">Repeating plan started in your name.</p>
         <p>
-          PlanBook will receive one frozen copy before each close for {days} days. The same bounded
-          permission can be used once per window and expires with this run.
+          A sealed copy is locked before each close for {days} days. The permission allows at most
+          one trade per window and ends with the plan.
         </p>
         <Link to="/record" className="arrowlink">
           Follow it in the public record
@@ -920,8 +917,8 @@ function SignAndLock({
     <>
       <p>
         {passkeyAccount
-          ? "Your device passkey will approve the exact token, amount, router and time bounds. The assertion moves no funds; Redeye pays the network fee to lock it."
-          : "Your wallet will show the exact token, amount, router and time bounds. Signing authorizes one bounded swap; it moves no funds and Redeye pays the network fee to lock it."}
+          ? "Your phone will ask you to approve this one trade: the stock, the amount and when it is allowed. Approving moves no money, and Redeye pays the network fee to lock it."
+          : "Your wallet will show the stock, the amount and when the trade is allowed. Signing moves no money, and Redeye pays the network fee to lock it."}
       </p>
       {passkeyAccount !== undefined ? (
         <button
