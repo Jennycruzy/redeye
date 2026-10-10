@@ -48,6 +48,11 @@ export interface AgentApiConfig {
   passkeyPreview?: (input: Record<string, unknown>, identity: TelegramIdentity) => Promise<unknown>;
   /** Creates a sponsored passkey account after Telegram initData is verified. */
   passkeyCreate?: (input: Record<string, unknown>, identity: TelegramIdentity) => Promise<unknown>;
+  /** Relays an owner-signed withdrawal from a passkey account; the agent pays the gas. */
+  passkeyWithdraw?: (
+    input: Record<string, unknown>,
+    identity: TelegramIdentity
+  ) => Promise<unknown>;
   /** Bot token used only inside the server-side Telegram HMAC verifier. */
   telegramBotToken?: string;
   /** Maximum accepted age for Telegram initData; defaults to one hour. */

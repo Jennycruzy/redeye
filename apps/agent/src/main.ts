@@ -388,7 +388,9 @@ const server = startAgentServer(
           telegramInitDataMaxAgeSeconds: Number(process.env.TELEGRAM_INIT_DATA_MAX_AGE_S ?? "3600")
         }
       : {}),
-    ...(passkeyService && telegramBotToken ? { passkeyCreate: passkeyService.create } : {}),
+    ...(passkeyService && telegramBotToken
+      ? { passkeyCreate: passkeyService.create, passkeyWithdraw: passkeyService.withdraw }
+      : {}),
     lockSigned: (body) => planService.lockSigned(body),
     mcp: createMcpHandler(readSources, AGENT_VERSION)
   },

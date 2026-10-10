@@ -77,8 +77,8 @@ contract PasskeyAccountTest {
 
         _assert(account == predictedAccount, "account prediction mismatch");
         _assert(owner == predictedOwner, "owner prediction mismatch");
-        _assert(PlanAccount(account).accountAddress() == account, "account does not own funds");
-        _assert(PlanAccount(account).accountOwner() == owner, "passkey signer not configured");
+        _assert(PlanAccount(payable(account)).accountAddress() == account, "account does not own funds");
+        _assert(PlanAccount(payable(account)).accountOwner() == owner, "passkey signer not configured");
         _assert(PasskeyOwner(owner).publicKeyX() == qx, "wrong public key x");
         _assert(PasskeyOwner(owner).publicKeyY() == qy, "wrong public key y");
     }

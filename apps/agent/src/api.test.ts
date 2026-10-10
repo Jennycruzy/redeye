@@ -125,7 +125,8 @@ describe("agent HTTP boundary", () => {
       ...config,
       telegramBotToken: token,
       passkeyPreview: async (input, identity) => ({ input, identity }),
-      passkeyCreate: async (input, identity) => ({ created: true, input, identity })
+      passkeyCreate: async (input, identity) => ({ created: true, input, identity }),
+      passkeyWithdraw: async (input, identity) => ({ withdrawn: true, input, identity })
     });
     const initData = telegramFixture(token);
     const preview = await api(
@@ -147,6 +148,17 @@ describe("agent HTTP boundary", () => {
     );
     expect(created.status).toBe(200);
     expect(created.body).toMatchObject({ created: true, identity: { userId: "7" } });
+    const withdrawn = await api(
+      request("/passkey/withdraw", {
+        method: "POST",
+        body: { telegramInitData: initData, account: "0x01" }
+      })
+    );
+    expect(withdrawn.body).toMatchObject({ withdrawn: true, identity: { userId: "7" } });
+    const unsigned = await api(
+      request("/passkey/withdraw", { method: "POST", body: { account: "0x01" } })
+    );
+    expect(unsigned.body).toMatchObject({ error: { code: "TELEGRAM_INIT_DATA_REQUIRED" } });
     const tampered = await api(
       request("/passkey/preview", {
         method: "POST",

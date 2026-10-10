@@ -9,7 +9,7 @@ import {
   WalletUnsupported,
   type WalletChoice
 } from "./wallet";
-import { p256Coordinates, passkeyCreationOptions } from "./passkey";
+import { p256Coordinates, passkeyCreationOptions, withdrawDigest } from "./passkey";
 
 const THU_CLOSE = Date.parse("2026-10-08T20:00:00Z");
 const FRI_OPEN = Date.parse("2026-10-09T13:30:00Z");
@@ -149,5 +149,19 @@ describe("passkey registration", () => {
 
   it("refuses a non-P-256 point", () => {
     expect(() => p256Coordinates(new Uint8Array(40).buffer)).toThrow("P-256");
+  });
+});
+
+describe("withdrawDigest", () => {
+  it("matches PlanAccount.withdrawDigest for the same inputs (pinned in the Foundry test)", () => {
+    expect(
+      withdrawDigest("0x000000000000000000000000000000000000c0de", {
+        token: "0x55d398326f99059ff775485246999027b3197955",
+        to: "0x000000000000000000000000000000000000beef",
+        amount: 5_000_000_000_000_000_000n,
+        nonce: 3n,
+        deadline: 1_791_700_000n
+      })
+    ).toBe("0x06b2e958af2aa6e074854443025cc6aa0be576b3c7c335ff933490b172f3ff64");
   });
 });

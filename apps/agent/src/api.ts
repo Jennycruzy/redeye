@@ -70,17 +70,24 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
       if (
         request.method === "POST" &&
         root === "passkey" &&
-        (id === "preview" || id === "create") &&
+        (id === "preview" || id === "create" || id === "withdraw") &&
         parts.length === 2
       ) {
-        const callback = id === "preview" ? config.passkeyPreview : config.passkeyCreate;
+        const callback =
+          id === "preview"
+            ? config.passkeyPreview
+            : id === "create"
+              ? config.passkeyCreate
+              : config.passkeyWithdraw;
         if (callback === undefined)
           return error(
             404,
             "PASSKEY_NOT_AVAILABLE",
             id === "preview"
               ? "Passkey account preview is not configured on this agent."
-              : "Passkey account creation is not configured on this agent.",
+              : id === "create"
+                ? "Passkey account creation is not configured on this agent."
+                : "Passkey withdrawals are not configured on this agent.",
             config
           );
         if (config.telegramBotToken === undefined || config.telegramBotToken.trim().length === 0)

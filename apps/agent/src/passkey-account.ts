@@ -3,6 +3,8 @@ import {
   createWalletClient,
   getAddress,
   http,
+  isAddress,
+  parseAbi,
   type Address,
   type Hex
 } from "viem";
@@ -57,6 +59,15 @@ export interface NormalizedPasskeyInput {
   publicKeyX: `0x${string}`;
   publicKeyY: `0x${string}`;
 }
+
+const PLAN_ACCOUNT_WITHDRAW_ABI = parseAbi([
+  "function withdraw(address token, address to, uint256 amount, uint64 deadline, bytes signature)",
+  "function planBook() view returns (address)"
+]);
+/** Withdrawals the agent relays per Telegram user per day. */
+export const WITHDRAW_DAILY_PER_USER = 5;
+/** A signed withdrawal must expire within this many seconds. */
+const WITHDRAW_MAX_DEADLINE_S = 3_600;
 
 export class PasskeyAccountError extends Error {
   readonly status: number;
@@ -171,8 +182,120 @@ export function createPasskeyAccountService(config: PasskeyAccountServiceConfig)
   const walletClient = createWalletClient({ account, chain: bsc, transport });
   const preview = createPasskeyAccountPreview(config);
 
+  const withdrawCounts = new Map<string, number>();
+
+  /**
+   * Relays a withdrawal the account owner signed with their passkey. The account
+   * checks the signature, nonce and deadline itself; the agent only refuses
+   * accounts that are not Redeye PlanAccounts, dry-runs the call before paying,
+   * and keeps the same fee cap and a per-user daily limit.
+   */
+  const withdraw = async (
+    input: Record<string, unknown>,
+    identity: TelegramIdentity
+  ): Promise<unknown> => {
+    const field = (name: string): Address => {
+      const value = input[name];
+      if (typeof value !== "string" || !isAddress(value, { strict: false })) {
+        throw new PasskeyAccountError(
+          400,
+          "PASSKEY_WITHDRAW_INVALID",
+          `${name} must be an address.`
+        );
+      }
+      return getAddress(value);
+    };
+    const target = field("account");
+    const token = field("token");
+    const to = field("to");
+    if (to === "0x0000000000000000000000000000000000000000")
+      throw new PasskeyAccountError(400, "PASSKEY_WITHDRAW_INVALID", "to must not be zero.");
+    if (typeof input.amount !== "string" || !/^[1-9][0-9]{0,77}$/.test(input.amount))
+      throw new PasskeyAccountError(
+        400,
+        "PASSKEY_WITHDRAW_INVALID",
+        "amount must be a positive whole number of raw units."
+      );
+    const amount = BigInt(input.amount);
+    const nowS = Math.floor(Date.now() / 1000);
+    const deadline = Number(input.deadline);
+    if (
+      !Number.isInteger(deadline) ||
+      deadline <= nowS ||
+      deadline > nowS + WITHDRAW_MAX_DEADLINE_S
+    )
+      throw new PasskeyAccountError(
+        400,
+        "PASSKEY_WITHDRAW_INVALID",
+        "deadline must be within the next hour."
+      );
+    if (typeof input.signature !== "string" || !/^0x([0-9a-fA-F]{2})+$/.test(input.signature))
+      throw new PasskeyAccountError(400, "PASSKEY_WITHDRAW_INVALID", "signature must be hex.");
+    const signature = input.signature as Hex;
+
+    const book = await publicClient
+      .readContract({ address: target, abi: PLAN_ACCOUNT_WITHDRAW_ABI, functionName: "planBook" })
+      .catch(() => null);
+    if (book === null || getAddress(book) !== planBook)
+      throw new PasskeyAccountError(
+        400,
+        "PASSKEY_WITHDRAW_ACCOUNT",
+        "This is not a Redeye account, or BNB Chain could not be reached."
+      );
+
+    const day = new Date().toISOString().slice(0, 10);
+    const key = `${identity.userId}:${day}`;
+    if ((withdrawCounts.get(key) ?? 0) >= WITHDRAW_DAILY_PER_USER)
+      throw new PasskeyAccountError(
+        429,
+        "PASSKEY_WITHDRAW_LIMIT",
+        "Today's withdrawal limit for this Telegram user is reached."
+      );
+
+    const args = [token, to, amount, BigInt(deadline), signature] as const;
+    let gas: bigint;
+    let gasPrice: bigint;
+    try {
+      [gas, gasPrice] = await Promise.all([
+        publicClient.estimateContractGas({
+          address: target,
+          abi: PLAN_ACCOUNT_WITHDRAW_ABI,
+          functionName: "withdraw",
+          args,
+          account: account.address
+        }),
+        publicClient.getGasPrice()
+      ]);
+    } catch {
+      // The dry run reverted: wrong signature, used nonce, past deadline or too little balance.
+      throw new PasskeyAccountError(
+        400,
+        "PASSKEY_WITHDRAW_REFUSED",
+        "The account refused this withdrawal; nothing was sent."
+      );
+    }
+    if (gas * gasPrice > config.maxFeeWei)
+      throw new PasskeyAccountError(
+        503,
+        "PASSKEY_SPONSOR_CAP",
+        "The withdrawal fee exceeds the sponsor cap."
+      );
+    withdrawCounts.set(key, (withdrawCounts.get(key) ?? 0) + 1);
+    const hash = await walletClient.writeContract({
+      address: target,
+      abi: PLAN_ACCOUNT_WITHDRAW_ABI,
+      functionName: "withdraw",
+      args,
+      account,
+      chain: bsc
+    });
+    const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 120_000 });
+    return { state: receipt.status === "success" ? "sent" : "reverted", txHash: hash };
+  };
+
   return {
     preview,
+    withdraw,
     create: async (
       input: Record<string, unknown>,
       identity: TelegramIdentity

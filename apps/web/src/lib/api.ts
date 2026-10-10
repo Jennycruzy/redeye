@@ -249,7 +249,11 @@ export interface BinanceStatus {
   lastError: string | null;
   since: string | null;
   modules: Record<string, BinanceModuleStatus>;
-  bstocks: { checkedAt: string | null; count: number };
+  bstocks: {
+    checkedAt: string | null;
+    count: number;
+    items: Array<{ ticker: string | null; tokenAddress: string | null }>;
+  };
 }
 
 /** What the Binance Web3 API returned around one trade, as stored on the run. */
@@ -284,6 +288,19 @@ export const agent = {
     publicKeyY: string;
   }) =>
     request<PasskeyAccountResult>("/passkey/create", {
+      method: "POST",
+      body: JSON.stringify(body)
+    }),
+  passkeyWithdraw: (body: {
+    telegramInitData: string;
+    account: string;
+    token: string;
+    to: string;
+    amount: string;
+    deadline: number;
+    signature: string;
+  }) =>
+    request<{ state: string; txHash: string }>("/passkey/withdraw", {
       method: "POST",
       body: JSON.stringify(body)
     }),

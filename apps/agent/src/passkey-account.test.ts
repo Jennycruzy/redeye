@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { normalizePasskeyInput, PasskeyAccountError } from "./passkey-account.js";
+import {
+  createPasskeyAccountService,
+  normalizePasskeyInput,
+  PasskeyAccountError
+} from "./passkey-account.js";
 
 const valid = {
   credentialIdHash: `0x${"11".repeat(32)}`,
@@ -28,5 +32,46 @@ describe("passkey account input", () => {
     expect(() => normalizePasskeyInput({ ...valid, credentialIdHash: "not-hex" })).toThrow(
       "32-byte hex"
     );
+  });
+});
+
+describe("passkey withdrawal relay", () => {
+  const service = createPasskeyAccountService({
+    rpcUrl: "http://127.0.0.1:9",
+    factory: "0x90bb63a48d4fbcddbfd504c901c6fcb31750255e",
+    planBook: "0xC7B860d561f2208c725ac9a873bf4eA5205e9057",
+    sponsorKey: `0x${"55".repeat(32)}`,
+    dailyLimit: 1,
+    maxFeeWei: 1n,
+    ledger: { claimPasskeySponsor: () => true, releasePasskeySponsor: () => undefined }
+  });
+  const identity = { userId: "7", authDate: 1, queryId: null };
+  const good = {
+    account: "0x000000000000000000000000000000000000c0de",
+    token: "0x55d398326f99059fF775485246999027B3197955",
+    to: "0x000000000000000000000000000000000000beef",
+    amount: "1000",
+    deadline: Math.floor(Date.now() / 1000) + 600,
+    signature: "0x1234"
+  };
+
+  it("refuses malformed requests before any RPC call", async () => {
+    for (const [change, message] of [
+      [{ to: "nope" }, "to must be an address"],
+      [{ to: "0x0000000000000000000000000000000000000000" }, "to must not be zero"],
+      [{ amount: "0" }, "positive whole number"],
+      [{ amount: "1.5" }, "positive whole number"],
+      [{ deadline: Math.floor(Date.now() / 1000) + 7_200 }, "within the next hour"],
+      [{ deadline: Math.floor(Date.now() / 1000) - 1 }, "within the next hour"],
+      [{ signature: "abc" }, "signature must be hex"]
+    ] as const) {
+      await expect(service.withdraw({ ...good, ...change }, identity)).rejects.toThrow(message);
+    }
+  });
+
+  it("refuses an address that is not a Redeye account", async () => {
+    await expect(service.withdraw(good, identity)).rejects.toMatchObject({
+      code: "PASSKEY_WITHDRAW_ACCOUNT"
+    });
   });
 });

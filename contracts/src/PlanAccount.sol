@@ -44,6 +44,8 @@ contract PlanAccount {
     error TokenApprovalFailed();
     error RouterCallFailed(bytes reason);
     error ReentrantCall();
+    error WithdrawExpired();
+    error TransferFailed();
 
     bytes4 private constant ERC1271_MAGIC = 0x1626ba7e;
     bytes32 private constant DOMAIN_TYPEHASH =
@@ -51,6 +53,8 @@ contract PlanAccount {
     bytes32 private constant PERMISSION_TYPEHASH = keccak256(
         "PlanPermission(bytes32 planHash,bytes32 standingRunHash,address agent,address tokenIn,address tokenOut,uint256 maxAmount,address router,uint64 notBefore,uint64 notAfter,uint256 maxPriceDeviationBps)"
     );
+    bytes32 private constant WITHDRAW_TYPEHASH =
+        keccak256("Withdraw(address token,address to,uint256 amount,uint256 nonce,uint64 deadline)");
     bytes32 private constant CALL_TYPEHASH = keccak256(
         "PlanSwapCall(bytes32 permissionHash,bytes32 planHash,bytes32 eventKey,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 referenceAmountOut,uint256 value,bytes32 dataHash)"
     );
@@ -92,8 +96,11 @@ contract PlanAccount {
     mapping(bytes32 => bool) public revoked;
     mapping(bytes32 => bool) public used;
     mapping(bytes32 => bool) public usedForWindow;
+    /// @notice Counts owner-signed withdrawals, so each signature moves funds once.
+    uint256 public withdrawNonce;
 
     event PermissionRevoked(bytes32 indexed permissionHash, address indexed owner);
+    event Withdrawn(address indexed token, address indexed to, uint256 amount, uint256 nonce);
     event PermissionUsed(bytes32 indexed permissionHash, bytes32 indexed callHash);
     event SwapExecuted(
         bytes32 indexed permissionHash,
@@ -237,6 +244,40 @@ contract PlanAccount {
         );
         return returned;
     }
+
+    /// @notice Returns the EIP-712 digest the owner signs to move funds out of the account.
+    function withdrawDigest(address token, address to, uint256 amount, uint256 nonce, uint64 deadline)
+        public
+        view
+        returns (bytes32)
+    {
+        bytes32 structHash = keccak256(abi.encode(WITHDRAW_TYPEHASH, token, to, amount, nonce, deadline));
+        return keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
+    }
+
+    /// @notice Moves funds out on the owner's signature; anyone may relay it and pay the gas.
+    /// @dev A deployed passkey account has no key that can send transactions, so without this
+    ///      its funds could only ever be swapped inside it. token = address(0) sends BNB.
+    function withdraw(address token, address to, uint256 amount, uint64 deadline, bytes calldata signature) external {
+        if (to == address(0)) revert ZeroAddress();
+        if (block.timestamp > deadline) revert WithdrawExpired();
+        uint256 nonce = withdrawNonce;
+        if (!_validOwnerSignature(withdrawDigest(token, to, amount, nonce, deadline), signature)) {
+            revert InvalidSignature();
+        }
+        if (executing) revert ReentrantCall();
+        withdrawNonce = nonce + 1;
+        emit Withdrawn(token, to, amount, nonce);
+        if (token == address(0)) {
+            (bool sent,) = to.call{value: amount}("");
+            if (!sent) revert TransferFailed();
+        } else {
+            (bool success, bytes memory returned) = token.call(abi.encodeWithSelector(0xa9059cbb, to, amount));
+            if (!success || (returned.length > 0 && !abi.decode(returned, (bool)))) revert TransferFailed();
+        }
+    }
+
+    receive() external payable {}
 
     function _permissionHash(Permission calldata permission) private pure returns (bytes32) {
         return keccak256(

@@ -2342,3 +2342,15 @@ button {
   line-height: 1.1;
   color: var(--ink) !important;
 }
+
+/* ---------- move money out ---------- */
+
+.withdraw {
+  display: grid;
+  gap: 14px;
+  max-width: 520px;
+}
+.withdraw select,
+.withdraw input {
+  width: 100%;
+}

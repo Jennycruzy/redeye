@@ -251,15 +251,63 @@ export async function signPasskeyPermission(
   account: StoredPasskeyAccount,
   permission: SerializedPlanPermission
 ): Promise<{ signature: Hex; issuedAt: number }> {
-  if (!window.PublicKeyCredential || !navigator.credentials) {
-    throw new Error("This browser does not support passkey assertions.");
-  }
   const digest = hashTypedData({
     domain: planPermissionDomain(account.account),
     types: PLAN_PERMISSION_TYPES,
     primaryType: "PlanPermission",
     message: permissionMessage(permission)
   });
+  return {
+    signature: await signPasskeyDigest(account, digest),
+    issuedAt: Math.floor(Date.now() / 1000)
+  };
+}
+
+/** Keep this in lockstep with PlanAccount.sol's WITHDRAW_TYPEHASH. */
+export const WITHDRAW_TYPES = {
+  Withdraw: [
+    { name: "token", type: "address" },
+    { name: "to", type: "address" },
+    { name: "amount", type: "uint256" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint64" }
+  ]
+} as const;
+
+export interface WithdrawRequest {
+  token: `0x${string}`;
+  to: `0x${string}`;
+  amount: bigint;
+  nonce: bigint;
+  deadline: bigint;
+}
+
+/**
+ * The digest the account checks for a withdrawal, built here from what the person
+ * typed and the nonce read from the chain, never taken from the agent: a passkey
+ * prompt does not show what is signed.
+ */
+export function withdrawDigest(account: `0x${string}`, request: WithdrawRequest): Hex {
+  return hashTypedData({
+    domain: planPermissionDomain(account),
+    types: WITHDRAW_TYPES,
+    primaryType: "Withdraw",
+    message: request
+  });
+}
+
+export async function signPasskeyWithdraw(
+  account: StoredPasskeyAccount,
+  request: WithdrawRequest
+): Promise<Hex> {
+  return signPasskeyDigest(account, withdrawDigest(account.account, request));
+}
+
+/** One WebAuthn assertion over `digest`, encoded the way PasskeyOwner reads it. */
+async function signPasskeyDigest(account: StoredPasskeyAccount, digest: Hex): Promise<Hex> {
+  if (!window.PublicKeyCredential || !navigator.credentials) {
+    throw new Error("This browser does not support passkey assertions.");
+  }
   const challenge = hexToBytes(digest);
   const credential = await navigator.credentials.get({
     publicKey: {
@@ -305,7 +353,7 @@ export async function signPasskeyPermission(
       clientDataJSON
     ]
   );
-  return { signature, issuedAt: Math.floor(Date.now() / 1000) };
+  return signature;
 }
 
 export function telegramInitData(): string | null {
