@@ -38,7 +38,7 @@ describe("passkey account input", () => {
 describe("passkey withdrawal relay", () => {
   const service = createPasskeyAccountService({
     rpcUrl: "http://127.0.0.1:9",
-    factory: "0x90bb63a48d4fbcddbfd504c901c6fcb31750255e",
+    factory: "0x5065d3395d365d88870a5a6799c48e8f59f0e9e9",
     planBook: "0xC7B860d561f2208c725ac9a873bf4eA5205e9057",
     sponsorKey: `0x${"55".repeat(32)}`,
     dailyLimit: 1,
