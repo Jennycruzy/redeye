@@ -674,9 +674,10 @@ export class PlanService {
     signature: Hex,
     mismatchMessage: string
   ): Promise<Address> {
-    const verifyContract = this.options.permissionTrader?.verifyPermission;
-    if (verifyContract !== undefined) {
-      const contractResult = await verifyContract(owner, permission, signature);
+    const trader = this.options.permissionTrader;
+    if (trader?.verifyPermission !== undefined) {
+      // Called on the trader itself: the PlanAccount client reads chain state through `this`.
+      const contractResult = await trader.verifyPermission(owner, permission, signature);
       if (contractResult !== null) {
         if (!contractResult) {
           throw new PlanError(
