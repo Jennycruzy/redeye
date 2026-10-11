@@ -8,6 +8,8 @@
 
 Live on BNB Chain mainnet: **[theredeyed-agent.site](https://theredeyed-agent.site)** · [Proof page](https://theredeyed-agent.site/proof) · [Every promise it made](https://theredeyed-agent.site/record) · Telegram: [@redeyed_bot](https://t.me/redeyed_bot)
 
+▶ [Watch the demo video on YouTube](https://youtu.be/-Q18jD9z_NM) · [Watch the demo video on X](https://x.com/jennyoliver57/status/2109245070960447490)
+
 ## Check it yourself
 
 Every link below is a real transaction on BNB Chain mainnet. No wallet needed.
