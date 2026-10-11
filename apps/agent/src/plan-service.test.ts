@@ -387,6 +387,7 @@ function snapshot(atMs: number, real: string, closeDate = "2026-10-07"): PriceSn
 }
 
 interface Harness {
+  database: FakeDatabase;
   store: SqliteAgentStore;
   chain: FakeChain;
   baw: FakeBaw;
@@ -468,16 +469,20 @@ async function harness(
     newId?: () => string;
     binance?: BinanceGate;
     binanceFill?: (request: BinanceFillRequest) => Promise<BinanceFillCheck | null>;
+    /** A process restart: a new store and service over the same database, chain, wallet and jobs. */
+    restartOf?: Harness;
   } = {}
 ): Promise<Harness> {
+  const before = options.restartOf;
   let now = BEFORE_CLOSE;
   let price: PriceSnapshotOk | null = null;
   let open: OfficialOpen | null = null;
-  const store = new SqliteAgentStore(new FakeDatabase());
+  const database = before?.database ?? new FakeDatabase();
+  const store = new SqliteAgentStore(database);
   const logs: Record<string, unknown>[] = [];
-  const chain = new FakeChain(() => now);
-  const baw = new FakeBaw(chain.log);
-  const jobs = new FakeJobs(() => now);
+  const chain = before?.chain ?? new FakeChain(() => now);
+  const baw = before?.baw ?? new FakeBaw(chain.log);
+  const jobs = before?.jobs ?? new FakeJobs(() => now);
   jobs.teamJobs = (options.teamJobLimit ?? 0) > 0;
   const trader = options.baw
     ? new AgenticWallet(
@@ -525,6 +530,7 @@ async function harness(
     log: (line) => logs.push(line)
   });
   return {
+    database,
     store,
     chain,
     baw,
@@ -534,6 +540,8 @@ async function harness(
     logs,
     setNow: (atMs) => {
       now = atMs;
+      // The shared chain and job fakes still read the first process's clock.
+      before?.setNow(atMs);
     },
     setPrice: (value) => {
       price = value;
@@ -1947,5 +1955,80 @@ describe("ERC-8183 jobs", () => {
       state: "rejected",
       reviewReason: "RECEIPT_INVALID"
     });
+  });
+});
+
+describe("restarting the agent", () => {
+  it("grades a plan awaiting its open price once, after a restart", async () => {
+    const first = await harness({ jobs: true });
+    const locked = await lockedGuard(first);
+    first.setNow(OPEN + MINUTE);
+    first.setPrice(snapshot(OPEN + MINUTE, "199"));
+    await first.service.tick();
+    expect((await plan(first, locked.id)).status).toBe("decided");
+
+    const second = await harness({ jobs: true, restartOf: first });
+    second.setNow(OPEN + 20 * MINUTE);
+    second.setPrice(snapshot(OPEN + 20 * MINUTE, "199"));
+    second.setOpen({ value: "198.10", source: "nasdaq:NVDA:daily-history", sourceRecordPath: "raw/x" });
+    await second.service.tick();
+    await second.service.tick();
+
+    const done = await plan(second, locked.id);
+    expect(done.verdict).toMatchObject({ outcome: "kept", openPrice: "198.10" });
+    expect(second.chain.freezes).toHaveLength(1);
+    expect(second.chain.verdicts).toEqual([
+      { planId: 1, outcome: "kept", hash: done.verdict!.verdictHash }
+    ]);
+    expect(second.jobs.opened).toHaveLength(1);
+    const receipt = (await second.store.receipt(locked.id)) as Parameters<typeof verifyReceipt>[0];
+    expect(verifyReceipt(receipt)).toMatchObject({ valid: true });
+  });
+
+  it("keeps watching a locked plan after a restart without locking or paying again", async () => {
+    const first = await harness({ jobs: true });
+    const locked = await lockedGuard(first);
+
+    const second = await harness({ jobs: true, restartOf: first });
+    second.setNow(CLOSE + 30 * MINUTE);
+    second.setPrice(snapshot(CLOSE + 30 * MINUTE, "199"));
+    await second.service.tick();
+    expect((await plan(second, locked.id)).status).toBe("locked");
+    expect(second.chain.freezes).toHaveLength(1);
+    expect(second.jobs.opened).toHaveLength(1);
+    expect(second.chain.decisions).toHaveLength(0);
+
+    // The trigger is still watched by the new process.
+    second.setNow(CLOSE + 60 * MINUTE);
+    second.setPrice(snapshot(CLOSE + 60 * MINUTE, "192"));
+    await second.service.tick();
+    expect((await plan(second, locked.id)).status).toBe("decided");
+    expect(second.chain.decisions).toHaveLength(1);
+  });
+
+  it("does not trade a second time after a restart", async () => {
+    const tradingGuard = { ...guardInput, door: "agentic_wallet", auditNoDataAccepted: true };
+    const first = await harness({ baw: true, reconciliation: true });
+    first.chain.receivedAmount = "191.351";
+    const draft = (await first.store.planDraft(tradingGuard)) as StoredPlan;
+    const locked = await first.service.lock(draft.id);
+    first.setNow(CLOSE + 2 * 60 * MINUTE);
+    first.setPrice(snapshot(CLOSE + 2 * 60 * MINUTE, "192"));
+    await first.service.tick();
+    expect(first.baw.orders).toHaveLength(1);
+
+    const second = await harness({ baw: true, reconciliation: true, restartOf: first });
+    second.setNow(CLOSE + 3 * 60 * MINUTE);
+    second.setPrice(snapshot(CLOSE + 3 * 60 * MINUTE, "185"));
+    await second.service.tick();
+    second.setOpen({ value: "193", source: "nasdaq:NVDA:daily-history", sourceRecordPath: "raw/x" });
+    second.setNow(OPEN + 30 * MINUTE);
+    await second.service.tick();
+    await second.service.tick();
+
+    expect(second.baw.orders).toHaveLength(1);
+    expect(second.chain.log).toEqual(["decision", "swap", "fill"]);
+    expect(second.chain.verdicts).toHaveLength(1);
+    expect((await plan(second, locked.id)).verdict).toMatchObject({ outcome: "kept" });
   });
 });
