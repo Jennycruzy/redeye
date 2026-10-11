@@ -38,7 +38,7 @@ const STORY = [
   {
     at: "Fri 9 Oct · 10:41 pm New York",
     title: "Sold through the Binance Agentic Wallet",
-    body: "0.0605 CRCL sold for 5.156 USDT, five seconds after the decision.",
+    body: "0.0605 CRCL sold for 5.156 USDT, three seconds after the decision.",
     tx: "0x3014f7996e59458934dcd500232fd2674904d183df376daac9c8171770f0e87a",
     link: "Sale"
   },
