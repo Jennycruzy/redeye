@@ -494,7 +494,7 @@ node skills/redeye/scripts/redeye.mjs buy price NVDA --yes
 
       <section className="section--tight" id="found">
         <p className="eyebrow">What we found building it</p>
-        <h2 className="h2">80 log entries, 743 minutes of friction, every one written down</h2>
+        <h2 className="h2">86 log entries, 1,090 minutes lost, every one written down</h2>
         <p className="muted">
           We logged each snag the moment it happened: the page, the exact error, the time lost and
           the fix. Some of what we found:
