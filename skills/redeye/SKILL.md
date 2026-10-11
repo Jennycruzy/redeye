@@ -38,6 +38,7 @@ object with `"ok": true` or `"ok": false` plus a `code` and a plain `reason`.
 | "Guard half my Nvidia if it drops 5% this weekend" | build the plan (below), then `check '<plan>'`, read back, then `lock '<plan>'` and `lock '<plan>' --yes` |
 | "What's my plan / how did it go?"                  | `plan <id or #number>`                                                                                   |
 | "Show me everything Redeye has promised"           | `record`                                                                                                 |
+| "Buy Redeye's full NVDA price feed"                | `buy price NVDA`, tell the user the cost, then `buy price NVDA --yes` only after they agree              |
 
 ## Turning plain words into a plan
 
@@ -81,7 +82,11 @@ Read `references/plans.md` for every field and bound. In short:
 6. **Report prices with their source and age.** The close is frozen at 4 pm; the 24/7 price comes from
    Hyperliquid's xyz market; the token price is the bStock pool on BNB Chain per real share. Never
    call any of them "the real value" without saying which.
-7. **No promises about money.** Never say "profit", "guaranteed" or "risk-free". Tokenized stocks can
+7. **Paying is the user's choice.** `buy price <TICKER>` (or `buy window <TICKER>`) without `--yes` only
+   shows the cost (0.002 U today). With `--yes` the Agentic Wallet signs an x402 payment (EIP-3009,
+   no gas for the user), Redeye answers with the data, and Binance B402 settles the transfer on BNB
+   Chain; the reply carries the transaction. `price` stays free; say so.
+8. **No promises about money.** Never say "profit", "guaranteed" or "risk-free". Tokenized stocks can
    lose value. Redeye is not investment advice.
 
 ## When something is refused
@@ -95,6 +100,7 @@ Read `references/plans.md` for every field and bound. In short:
 | `SIGNATURE_MISMATCH` / `SIGNATURE_EXPIRED` | sign again; nothing was locked                                               |
 | `DEVELOPER_MODE_OFF`                       | turn on Developer mode in the Binance App, then retry                        |
 | `AGENT_UNREACHABLE`                        | Redeye is not answering; nothing was locked                                  |
+| `CANNOT_PAY`                               | the Agentic Wallet cannot pay (usually too little U); nothing was paid       |
 
 ## Results
 

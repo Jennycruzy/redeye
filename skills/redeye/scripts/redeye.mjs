@@ -8,6 +8,8 @@
 //   redeye.mjs lock '<plan json>' --yes  sign in your Agentic Wallet, lock in your name
 //   redeye.mjs plan <id|#n>              one plan: status, result and chain links
 //   redeye.mjs record                    every plan, newest first
+//   redeye.mjs buy price NVDA --yes      buy the full 24/7 price over x402, paid from your
+//                                        Agentic Wallet and settled by Binance B402
 //
 // Every command prints one JSON object. Set REDEYE_API to use another agent.
 
@@ -322,6 +324,107 @@ async function lock(plan, confirmed) {
   throw lastError;
 }
 
+// Tokens Redeye's paid routes ask for, so the cost reads in whole units.
+const PAY_TOKENS = {
+  "0xce24439f2d9c6a2289f741120fe202248b666666": { symbol: "U", decimals: 18 }
+};
+
+function units(raw, decimals) {
+  const text = BigInt(raw)
+    .toString()
+    .padStart(decimals + 1, "0");
+  const whole = text.slice(0, text.length - decimals);
+  const fraction = text.slice(text.length - decimals).replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole;
+}
+
+function decodeHeader(value) {
+  return JSON.parse(Buffer.from(value, "base64").toString("utf8"));
+}
+
+/** What a 402 asks for, in words a person can confirm. */
+export function describeChallenge(header) {
+  const required = decodeHeader(header);
+  const offer = required.accepts?.[0];
+  if (!offer) throw new Refused("NOT_FOR_SALE", "The agent's 402 offers no way to pay.");
+  const token = PAY_TOKENS[String(offer.asset).toLowerCase()];
+  return {
+    resource: required.resource?.url ?? null,
+    cost: token
+      ? `${units(offer.amount, token.decimals)} ${token.symbol}`
+      : `${offer.amount} raw units of ${offer.asset}`,
+    network: offer.network,
+    payTo: offer.payTo,
+    settledBy: offer.extra?.signerAddress ?? null
+  };
+}
+
+async function buy(kind, ticker, confirmed) {
+  if (kind !== "price" && kind !== "window")
+    throw new Refused("USAGE", "Buy price or window, for example: buy price NVDA --yes");
+  if (!ticker) throw new Refused("TICKER_REQUIRED", "Name a ticker, for example NVDA.");
+  const path = `/x402/${kind}/${ticker.toUpperCase()}`;
+  const ask = (headers = {}) =>
+    fetch(`${API}${path}`, { headers: { accept: "application/json", ...headers } }).catch(
+      (error) => {
+        throw new Refused("AGENT_UNREACHABLE", `Redeye did not answer at ${API}: ${error.message}`);
+      }
+    );
+  const first = await ask();
+  const header = first.headers.get("payment-required");
+  if (first.status !== 402 || !header) {
+    const body = await first.json().catch(() => null);
+    throw new Refused(
+      body?.error?.code ?? `HTTP_${first.status}`,
+      body?.error?.reason ?? `Expected 402 Payment Required, got HTTP ${first.status}.`
+    );
+  }
+  const offer = describeChallenge(header);
+  if (!confirmed) {
+    return {
+      state: "needs_confirmation",
+      ...offer,
+      next: "Tell the user the cost. Only if they say yes, run the same command with --yes."
+    };
+  }
+  const preview = await baw(["x402-payment", "preview", "--paymentRequirements", header]);
+  const options = preview.options ?? [];
+  const index = options.findIndex((option) => option.status === "READY_TO_SIGN");
+  if (index < 0)
+    throw new Refused("CANNOT_PAY", "The Agentic Wallet cannot pay this (not enough balance?).", {
+      options
+    });
+  const signed = await baw([
+    "x402-payment",
+    "sign",
+    "--paymentId",
+    String(preview.paymentId),
+    "--selectedIndex",
+    String(options[index].index ?? index)
+  ]);
+  const paid = await ask({
+    [signed.paymentHeaderName ?? "PAYMENT-SIGNATURE"]: signed.paymentHeaderValue
+  });
+  const body = await paid.json().catch(() => null);
+  const receipt = paid.headers.get("payment-response");
+  const settlement = receipt ? decodeHeader(receipt) : null;
+  if (paid.status !== 200) {
+    throw new Refused(
+      body?.error?.code ?? `HTTP_${paid.status}`,
+      body?.error?.reason ?? settlement?.errorReason ?? `The paid request got HTTP ${paid.status}.`,
+      { settlement }
+    );
+  }
+  return {
+    state: "bought",
+    ...offer,
+    payer: settlement?.payer ?? null,
+    tx: settlement?.transaction ?? null,
+    txUrl: settlement?.transaction ? `https://bscscan.com/tx/${settlement.transaction}` : null,
+    data: body
+  };
+}
+
 async function planInfo(ref) {
   const record = await api("/record");
   const id = String(ref ?? "").replace(/^#/, "");
@@ -371,6 +474,8 @@ async function main() {
       return lock(parsePlan(args[0] ?? ""), rest.includes("--yes"));
     case "plan":
       return planInfo(args[0]);
+    case "buy":
+      return buy(args[0], args[1], rest.includes("--yes"));
     case "record": {
       const record = await api("/record");
       return {
@@ -387,7 +492,7 @@ async function main() {
     default:
       throw new Refused(
         "USAGE",
-        "Commands: price, window, check, lock, plan, record. See the header of this file."
+        "Commands: price, window, check, lock, plan, record, buy. See the header of this file."
       );
   }
 }
