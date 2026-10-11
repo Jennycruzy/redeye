@@ -1,24 +1,106 @@
-Redeye is the agent for when Wall Street is closed. It prices your stock from the market that never shuts, locks its plan on chain before the close, and at the next open shows whether it kept its word.
+# Redeye
 
-Redeye reads the last US close, a source-labelled 24/7 equity price, and the token's own BNB Smart Chain price. It turns a plain plan into deterministic checks, publishes the plan fingerprint before the window starts, and keeps the result visible.
+**The agent for when Wall Street is closed.**
 
-Status, 11 Oct 2026: live on BNB Smart Chain at [theredeyed-agent.site](https://theredeyed-agent.site).
+> Friday, 4pm, New York. The closing bell rings and every stock price in the country freezes until Monday. On-chain, nothing stops. Tokenized stocks trade straight through the weekend, priced off a reference that has not updated in two days. Anyone can see the gap, and almost nobody has built anything that acts on it.
 
-- **First plan-triggered trade.** Plan #6 promised to sell 0.0605 CRCL if its 24/7 price rose 1% over the weekend. At 02:41 UTC on 10 Oct it did: the decision went on chain, the Binance Agentic Wallet sold for 5.156 USDT, and the fill was recorded on PlanBook. Binance's Wallet API and the chain agree on the amount to the last digit.
-- **Trades are checked by the Binance Web3 API, signed with our own key** (five modules; which ones run depends on the route, see below).
+**We built Redeye to act on this gap.** It reads a 24/7 price for your stock while Wall Street sleeps, locks its promise on BNB Chain before the bell, acts on it overnight or over the weekend, and at the next open shows on chain whether it kept its word.
+
+Live on BNB Chain mainnet: **[theredeyed-agent.site](https://theredeyed-agent.site)** · [Proof page](https://theredeyed-agent.site/proof) · [Every promise it made](https://theredeyed-agent.site/record)
+
+## Check it yourself
+
+Every link below is a real transaction on BNB Chain mainnet. No wallet needed.
+
+| What happened                                                                                                                                                                                                     | When (UTC)                                          | Check it                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A promise kept its word with real money.** "If CRCL rises 1% while Wall Street is closed, sell it." It rose 1.002% on a Saturday; the agent sold 0.0605 CRCL for 5.156 USDT through the Binance Agentic Wallet. | Sat 10 Oct 02:41                                    | [promise locked](https://bscscan.com/tx/0xc20089b42d0b848d1dd689411449c2005ce529676a639c6f70a79b281c1a2c7b) (Fri, 10 h 45 min before the bell) · [decision](https://bscscan.com/tx/0x4a25f64a1bb47ef302ef5dfb978bcf0ce27bd583f797217e954ef6687ab8a62a) · [sale](https://bscscan.com/tx/0x3014f7996e59458934dcd500232fd2674904d183df376daac9c8171770f0e87a) · [fill recorded](https://bscscan.com/tx/0xcea26956f4a1053b9cf6f4feee049781addc82a4082b9ff0b4645d95243e683e) |
+| **Re-check it in your browser.** Your browser re-hashes the promise and the decision and compares them with the chain. No trust in our server.                                                                    | any time                                            | [open the CRCL sale, press Check it](https://theredeyed-agent.site/runs/61d44225-d48b-4af2-9a56-5d0e0c99bcaf)                                                                                                                                                                                                                                                                                                                                                           |
+| **Agents pay Redeye, Binance settles it (B402).** An agent pays 0.002 U for the 24/7 price; Binance's own facilitator settles it on chain before Redeye answers.                                                  | 10 Oct 21:07 · live on the agent since 11 Oct 01:49 | [first B402 sale](https://bscscan.com/tx/0x967e61768d815efc4642a5ba2ba0e8e7ffdfebcdff76e2ec9593ef951a663173) · [first through the live agent](https://bscscan.com/tx/0x6f195cebdf27795c63ebc4add95f1ced16105bbc9f71b5cb2f96d126c4c9cb9e) · [how we got there](docs/b402-investigation.md)                                                                                                                                                                               |
+| **A promise signed by the Binance Agentic Wallet itself**, through the Redeye skill, stored under the wallet's own address.                                                                                       | 10 Oct 18:47                                        | [lock](https://bscscan.com/tx/0x76a339440af84130637f97cc68420fa574011dbe0e709f1bb6e77ab19f4decb5)                                                                                                                                                                                                                                                                                                                                                                       |
+| **A phone account with no seed phrase.** Made inside Telegram, approved with a fingerprint; Redeye paid the fee.                                                                                                  | 11 Oct 05:35                                        | [account created](https://bscscan.com/tx/0x3ce352638a95caa276a88c674b37866b07f608c2e19555ad6556eed57b6c6a9f)                                                                                                                                                                                                                                                                                                                                                            |
+| **The first promise, graded at the open.** Protect half an Nvidia holding overnight; graded: kept.                                                                                                                | locked 7 Oct 14:32                                  | [lock](https://bscscan.com/tx/0x759ead4af86268d4015ab4074a58f2dc866ff8ee96dd077f85a5cd6ad2902092) · [result](https://bscscan.com/tx/0xe4e5493faf64545464d3ef4f9364d59bc15c2505ccca05110c4cb699b0cf6606)                                                                                                                                                                                                                                                                 |
+| **An agent with an on-chain identity**: Redeye is agent #368521 in BNB Chain's ERC-8004 registry.                                                                                                                 | 9 Oct 00:39                                         | [registration](https://bscscan.com/tx/0x674625e3d3000b4e748e4fc518763e94693db4d0f28f7ed05b6bf212fe02156f)                                                                                                                                                                                                                                                                                                                                                               |
+
+From a terminal:
+
+```sh
+curl -s https://api.theredeyed-agent.site/record              # every promise and its result
+curl -i https://api.theredeyed-agent.site/x402/price/NVDA     # 402: pay 0.002 U, settled by Binance B402
+curl -s https://api.theredeyed-agent.site/binance             # live calls to the Binance Web3 API
+```
+
+Every x402 and B402 buyer so far is one of our own wallets; we say so rather than count them as customers.
+
+## What Redeye does
+
+You hold a tokenized US stock on BNB Chain. At 4pm New York the official price stops, but the token keeps trading all night and all weekend. Redeye lets you decide **before the bell** what should happen while the market is shut, in plain words:
+
+- **Protect:** "If Nvidia falls 3% overnight, sell half."
+- **Buy the dip:** "If Tesla falls 1% this weekend, buy $5."
+- **Sell the rise:** "If CRCL rises 1% this weekend, sell it."
+- **Hold:** "Hold through the night and tell me how it went."
+
+Then:
+
+1. **Locked before the bell.** The promise is written on BNB Chain before the close. After that nobody, including Redeye, can change it. A promise locked too late is refused.
+2. **Watched every minute.** Redeye compares the token with a 24/7 price for the same stock (Hyperliquid's equity market, which never closes; used as a reference only, never traded).
+3. **Checked by Binance before any money moves.** Token status, shares per token, Binance's own price and quote, and a dry run of the exact transaction. If a check fails, Redeye refuses and says which check and why.
+4. **Acted on.** When the trigger is hit, the decision goes on chain first, then the trade.
+5. **Graded at the open.** When Wall Street opens, the result is published next to the promise: kept, refused or broken. Anyone can re-check it.
+
+### Three ways in
+
+| For                                        | How                                                                                                                                                                       | State                                                   |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| People with the **Binance Agentic Wallet** | Redeye trades inside the daily limit you set in the Binance app; the Redeye skill lets the wallet sign promises in its own name                                           | Live: made the CRCL sale                                |
+| People with **their own wallet**           | A one-trade permission: the agent can make exactly one matching trade, and nothing else                                                                                   | Live: a $2 buy-the-dip on Intel is locked; no trade yet |
+| **Newcomers**                              | Open [@redeyed_bot](https://t.me/redeyed_bot) in Telegram, approve with a fingerprint or Face ID. No seed phrase; Redeye pays the fee; only your phone can move money out | Live: first account 11 Oct                              |
+
+## Why this, and why it is different
+
+- **The gap is real, and measured.** Across 104 stock-weekends of 13 stocks ([data](https://theredeyed-agent.site/data)), the price moved a median 0.89% between Friday's close and Monday's open while the token traded all weekend. By Monday 07:00 UTC the 24/7 price was closer to Monday's open than Friday's close in 59 of 97 cases (median miss 0.73% against 0.90%). On Saturday it was about a coin flip, so Redeye acts on the plan you set, not on a forecast.
+- **A promise you can hold it to.** Most trading bots tell you what they did afterwards. Redeye says what it will do _before_ the close, on chain, and is graded against the open in public, including when it refuses.
+- **Built on Binance end to end.** Six Binance Web3 API modules signed with our own key, B402 settlement for agent payments, the Agentic Wallet for trading and signing, and a skill so the wallet can use Redeye directly.
+
+## What we found building it
+
+We kept a developer log as we built: **80 entries, 743 minutes of friction**, each with the exact page, error, time lost and fix ([`docs/dx-log.md`](docs/dx-log.md)). Highlights:
+
+- **B402 refused four settlements** with an undocumented `invalid_transaction_state`. A dry run that never settled showed why: the Agentic Wallet signs the payment as valid from the signing second, and settling 0.3 s later is too early. Redeye now waits for a block past it. Full write-up: [`docs/b402-investigation.md`](docs/b402-investigation.md).
+- **Passkeys don't open inside Telegram's in-app browser.** Redeye keeps the account key behind Telegram's own fingerprint check and signs in the same format a passkey uses, so the same on-chain account checks it.
+- **The docs and the live route differ:** stock tokens are documented as an RFQ trade; the live answer is a swap routed through LiquidMesh. The Agentic Wallet's quotes matched the Trading API exactly.
+- **On a Saturday, RWA market status said TRADING** with no market state, so Redeye keeps its own clock of when Wall Street is open.
+- **Agentic Wallet EIP-712 signatures come in two pieces** (64 bytes plus a recovery byte); the skill joins them and checks both recovery values.
+- **The token security audit returned no data** for all 15 stock tokens Redeye trades; Redeye shows `AUDIT_NO_DATA` instead of pretending a token passed.
+
+## Words we use
+
+| Word                       | Meaning                                                                                                                    |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Promise / plan             | What Redeye will do while the market is shut, in plain words, locked on chain before the close                             |
+| Plan number (e.g. plan #6) | The order in which promises were locked; only needed to find one in the record. The CRCL sale is plan #6                   |
+| 24/7 price                 | The stock's price from Hyperliquid's equity market, which trades around the clock. A reference, never traded               |
+| Window                     | The hours Wall Street is shut: overnight, the weekend or a holiday                                                         |
+| Kept / refused / broken    | The grade at the open: did what it promised / did not trade because a check failed, and says which / did not keep its word |
+| PlanBook                   | The contract that stores every promise, decision and result                                                                |
+| PlanAccount                | The one-trade permission for your own wallet or phone account                                                              |
+| Agentic Wallet             | Binance's wallet built for AI agents, with limits set by the owner in the Binance app                                      |
+| x402 / B402                | Pay-per-call for agents over HTTP; B402 is Binance's settlement service for it                                             |
+
+# For developers
+
+Everything below is the technical detail behind the product above.
+
+## Status in detail, 11 Oct 2026
+
+- **First plan-triggered trade.** Plan #6 promised to sell 0.0605 CRCL if its 24/7 price rose 1% over the weekend. At 02:41 UTC on 10 Oct it did: the decision went on chain, the Binance Agentic Wallet sold for 5.156 USDT, and the fill was recorded on PlanBook. Binance's Wallet API and the chain agree on the amount to the last digit (checked after the trade; the pre-trade Binance checks were added later that day).
+- **Trades are checked by the Binance Web3 API, signed with our own key** (five modules; which ones run depends on the route, see below), plus B402 for x402 settlement.
 - **Spot only.** The 24/7 price from Hyperliquid's `xyz` market is a reference signal only; Redeye never opens a position there. Every trade is a spot bStock trade on BNB Smart Chain mainnet.
 - Plans #2 to #5, #7 and #8 are watching the weekend window, graded at Monday's open (13:30 UTC); plan #9 (Monday night) and #10 are locked. Results publish at the next open.
 - **Plan #10 was signed by the Binance Agentic Wallet itself** through the Redeye skill (`skills/redeye`, `lock --yes`): the wallet signed the plan (EIP-712, Developer mode), and PlanBook stores it under the wallet's own address `0xDA11…aae2`. A Hold on NVDA for the Monday-night window; no money moves, graded at Tuesday's open.
-- **x402 sales settle through Binance B402** since 11 Oct 01:49 UTC: other agents pay 0.002 U for the 24/7 price, and Binance's own facilitator settles the transfer on chain. First full B402 sale: the Agentic Wallet paid, Binance settled ([tx](https://bscscan.com/tx/0x967e61768d815efc4642a5ba2ba0e8e7ffdfebcdff76e2ec9593ef951a663173)). First sale through the live agent, bought with the Redeye skill (`buy price NVDA --yes`) on 11 Oct 01:57 UTC ([tx](https://bscscan.com/tx/0x6f195cebdf27795c63ebc4add95f1ced16105bbc9f71b5cb2f96d126c4c9cb9e)). Every sale so far was bought by our own wallets. How we got there: [`docs/b402-investigation.md`](docs/b402-investigation.md).
-- Two ways to trade: the Binance Agentic Wallet, and your own wallet through PlanAccount (one bounded, owner-signed trade; plan #8 is locked this way). A phone passkey account for newcomers, created from Telegram, is deployed and tested; the first real phone account is still to be made.
-
-## Check it in 60 seconds
-
-1. Open [theredeyed-agent.site/record](https://theredeyed-agent.site/record): every plan, its promise, and its result once graded.
-2. Open plan #6 and press **Check it**: your browser re-hashes the plan and the decision and compares them with PlanBook on BNB Chain; no trust in our server needed.
-3. Click the sale link on plan #6: the Agentic Wallet's CRCL sale on BscScan, 02:41 UTC on 10 Oct.
-4. `curl -i https://api.theredeyed-agent.site/x402/price/NVDA`: a 402 asking for 0.002 U, settled by Binance B402.
-5. `curl -s https://api.theredeyed-agent.site/binance`: live counts of the Binance Web3 API checks.
+- **x402 sales settle through Binance B402** since 11 Oct 01:49 UTC (see [x402 sales](#x402-sales)).
+- **Three doors:** the Binance Agentic Wallet; your own wallet through PlanAccount (one bounded, owner-signed trade; plan #8 is locked this way); and a phone account for newcomers, created from Telegram. The first real phone account was made on 11 Oct 05:35 UTC ([tx](https://bscscan.com/tx/0x3ce352638a95caa276a88c674b37866b07f608c2e19555ad6556eed57b6c6a9f), account [`0xe40D7AEA…069F`](https://bscscan.com/address/0xe40D7AEA0860FC87B0352a3e83BeEcB7409F069F)), approved with Telegram's fingerprint check. Where the phone's browser supports passkeys, a WebAuthn passkey is used instead; both sign in the format `PasskeyOwner` checks.
 
 ## On chain
 
@@ -35,6 +117,7 @@ Status, 11 Oct 2026: live on BNB Smart Chain at [theredeyed-agent.site](https://
 | Plan 6: first triggered trade, CRCL sell on +1%                 | [decision](https://bscscan.com/tx/0x4a25f64a1bb47ef302ef5dfb978bcf0ce27bd583f797217e954ef6687ab8a62a) · [sale](https://bscscan.com/tx/0x3014f7996e59458934dcd500232fd2674904d183df376daac9c8171770f0e87a) · [fill on PlanBook](https://bscscan.com/tx/0xcea26956f4a1053b9cf6f4feee049781addc82a4082b9ff0b4645d95243e683e) |
 | Plan 10: signed by the Agentic Wallet itself (Redeye skill)     | [lock](https://bscscan.com/tx/0x76a339440af84130637f97cc68420fa574011dbe0e709f1bb6e77ab19f4decb5), owner [`0xDA11FAba6da586c4EEE689b3387Af0b0fd00aae2`](https://bscscan.com/address/0xDA11FAba6da586c4EEE689b3387Af0b0fd00aae2)                                                                                           |
 | Passkey account factory (with owner-signed withdrawal)          | [`0x5065d3395d365d88870a5a6799c48e8f59f0e9e9`](https://bscscan.com/address/0x5065d3395d365d88870a5a6799c48e8f59f0e9e9)                                                                                                                                                                                                    |
+| First phone account (Telegram fingerprint), 11 Oct 05:35 UTC    | [create](https://bscscan.com/tx/0x3ce352638a95caa276a88c674b37866b07f608c2e19555ad6556eed57b6c6a9f), account [`0xe40D7AEA0860FC87B0352a3e83BeEcB7409F069F`](https://bscscan.com/address/0xe40D7AEA0860FC87B0352a3e83BeEcB7409F069F)                                                                                       |
 
 ## Binance Web3 API
 
@@ -181,11 +264,11 @@ pnpm contract:test
 ```
 
 The contract test suite is offline and does not deploy or move funds. The first live
-PlanAccount-triggered execution and the phone-backed Telegram flow are still release
-gates. The signed-wallet code path is covered offline and its mainnet template is
+PlanAccount-triggered execution is still a release gate; the phone-backed Telegram flow
+made its first real account on 11 Oct 2026. The signed-wallet code path is covered offline and its mainnet template is
 deployed and source-verified. Mainnet delegation and plan locking are confirmed;
-browser-provider EIP-7702 support, the first phone-backed passkey account and signed plan,
-and a triggered small-value mainnet swap remain release gates.
+browser-provider EIP-7702 support, the first plan signed from a phone account, and a
+triggered small-value mainnet swap through PlanAccount remain release gates.
 
 The PlanAccount path also has an opt-in BSC fork test against the live Pancake
 SmartRouter, QuoterV2, USDT and INTCB pool. Run it with

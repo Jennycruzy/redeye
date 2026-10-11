@@ -60,8 +60,9 @@ curl https://api.theredeyed-agent.site/.well-known/agent-card.json
 The study command reads only the stored raw study records. It does not fetch network
 data.
 
-The public record contains mainnet-locked plans and one completed no-trade verdict
-(plan #1, kept). The first plan-triggered production trade is plan #6: CRCL rose 1%
+The public record contains mainnet-locked plans and one completed no-trade verdict:
+protect half an Nvidia holding overnight (plan #1), kept. The first trade made by a
+promise was the weekend CRCL sale (plan #6): CRCL rose 1%
 over the weekend and at 02:41 UTC on 10 Oct the agent sold 0.0605 CRCL for
 5.156124 USDT through the Agentic Wallet. Lock
 `0xc20089b42d0b848d1dd689411449c2005ce529676a639c6f70a79b281c1a2c7b`, decision
@@ -69,5 +70,6 @@ over the weekend and at 02:41 UTC on 10 Oct the agent sold 0.0605 CRCL for
 `0x3014f7996e59458934dcd500232fd2674904d183df376daac9c8171770f0e87a`, fill on PlanBook
 `0xcea26956f4a1053b9cf6f4feee049781addc82a4082b9ff0b4645d95243e683e`. Binance's Wallet
 API and the chain agree on the amount received. Its result is graded at the open on
-Monday 12 Oct. PlanAccount plan #8 (own wallet, EIP-7702) is locked; no trade has gone
-through that route yet. Plan #10 was signed by the Agentic Wallet itself (Hold, no trade). Replay receipts and simulations remain labeled `REPLAY` or `SIMULATED`.
+Monday 12 Oct. A $2 buy-the-dip on Intel from the team's own wallet through PlanAccount
+(EIP-7702, plan #8) is locked; no trade has gone through that route yet. A Hold on Nvidia
+for Monday night (plan #10) was signed by the Agentic Wallet itself; no money moves. Replay receipts and simulations remain labeled `REPLAY` or `SIMULATED`.
