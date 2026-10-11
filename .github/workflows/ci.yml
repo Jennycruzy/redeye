@@ -25,5 +25,6 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm format:check
-      - run: pnpm contract:build
+      # A fresh runner must download the pinned solc version before offline tests.
+      - run: forge build --root contracts
       - run: pnpm contract:test
