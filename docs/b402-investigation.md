@@ -91,7 +91,7 @@ Two payments in total were settled by Binance today (20:19:34 and 21:07:35); fou
 
 ## Status
 
-Built, tested and pushed. The live agent still settles x402 sales with its own facilitator (`X402_SETTLEMENT=self`); switching to `b402-web3` is one setting plus a restart.
+Live. On 11 Oct 2026 at 01:49 UTC the agent was restarted with `X402_SETTLEMENT=b402-web3`, after tests that a restarted agent grades waiting plans once, keeps watching locked ones and never trades twice. Every paid route on `api.theredeyed-agent.site` now asks for a B402 payment whose settler is Binance's signer `0x34F7…0899`. Sales before that time settled through the agent's own facilitator.
 
 ## What we would ask Binance for
 
@@ -109,6 +109,13 @@ cd apps/agent
 REDEYE_B402_LIVE=preview  pnpm exec vitest run src/x402-b402-live.test.ts   # builds a 402, wallet previews; nothing signed
 REDEYE_B402_LIVE=simulate pnpm exec vitest run src/x402-b402-live.test.ts   # wallet signs; on-chain dry run; verify only
 REDEYE_B402_LIVE=pay      pnpm exec vitest run src/x402-b402-live.test.ts   # real 0.002 U payment through B402
+```
+
+Against the live agent, from the Redeye skill:
+
+```sh
+node skills/redeye/scripts/redeye.mjs buy price NVDA         # the 402 read back as a cost; nothing signed
+node skills/redeye/scripts/redeye.mjs buy price NVDA --yes   # real 0.002 U payment, prints Binance's settle tx
 ```
 
 (`node scripts/b402-probe.mjs` needs a build of `packages/clients`.) The live modes need `BINANCE_WEB3_API_KEY` and `BINANCE_WEB3_API_SECRET` (with the B402 Payments permission) and a paired Agentic Wallet (`baw`).

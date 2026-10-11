@@ -97,7 +97,7 @@ const REAL = [
   [
     "Paid price feed for other agents (x402)",
     "Live",
-    "First paid sale on 8 Oct, by our own test wallet"
+    "Settled by Binance B402 since 11 Oct; every sale so far was bought by our own wallets"
   ],
   ["On-chain agent identity (ERC-8004)", "Live", "Redeye is agent #368521"],
   [
