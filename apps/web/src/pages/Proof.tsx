@@ -12,14 +12,14 @@ const DOC = (path: string) => `${REPO}/blob/main/${path}`;
 const PLAN6_OPEN = Date.parse("2026-10-12T13:30:00Z");
 const STORY = [
   {
-    at: "Fri 9 Oct · 09:14 UTC",
+    at: "Fri 9 Oct · 5:14 am New York",
     title: "Locked before the bell",
     body: "The promise went on BNB Chain 10 h 45 min before the close: if the 24/7 price rises 1% above Friday's close, sell all 0.0605 CRCL. After this it cannot be changed.",
     tx: "0xc20089b42d0b848d1dd689411449c2005ce529676a639c6f70a79b281c1a2c7b",
     link: "Lock"
   },
   {
-    at: "Fri 9 Oct · 20:00 UTC",
+    at: "Fri 9 Oct · 4:00 pm New York",
     title: "4pm in New York. The price freezes",
     body: "Wall Street closes for the weekend. The official CRCL price stops at the close; the CRCL token on BNB Chain keeps trading."
   },
@@ -29,28 +29,28 @@ const STORY = [
     body: "Redeye compares the token with the 24/7 price from Hyperliquid's equity market, each with its source and age. It reads that price only; it never trades there."
   },
   {
-    at: "Sat 10 Oct · 02:41 UTC",
+    at: "Fri 9 Oct · 10:41 pm New York",
     title: "The trigger is hit: +1.002%",
     body: "The decision, with the prices that caused it, is written on chain before any money moves.",
     tx: "0x4a25f64a1bb47ef302ef5dfb978bcf0ce27bd583f797217e954ef6687ab8a62a",
     link: "Decision"
   },
   {
-    at: "Sat 10 Oct · 02:41 UTC",
+    at: "Fri 9 Oct · 10:41 pm New York",
     title: "Sold through the Binance Agentic Wallet",
     body: "0.0605 CRCL sold for 5.156 USDT, five seconds after the decision.",
     tx: "0x3014f7996e59458934dcd500232fd2674904d183df376daac9c8171770f0e87a",
     link: "Sale"
   },
   {
-    at: "Sat 10 Oct · 02:41 UTC",
+    at: "Fri 9 Oct · 10:41 pm New York",
     title: "The fill is recorded with the promise",
     body: "The plan book stores what was actually received. Checked afterwards with Binance's Wallet API: Binance and the chain agree to the last digit, 5.156123572686825706 USDT.",
     tx: "0xcea26956f4a1053b9cf6f4feee049781addc82a4082b9ff0b4645d95243e683e",
     link: "Fill"
   },
   {
-    at: "Mon 12 Oct · 13:30 UTC",
+    at: "Mon 12 Oct · 9:30 am New York",
     title: "Graded at the open",
     body: "When Wall Street opens, the result is published on chain next to the promise. Anyone can re-check it in their browser with Check it.",
     pendingUntil: PLAN6_OPEN
@@ -80,7 +80,7 @@ const FIRSTS = [
   {
     at: "10 Oct · 02:41",
     what: "First trade made by a promise",
-    note: "CRCL rose 1% on a Saturday; the agent sold through the Binance Agentic Wallet.",
+    note: "Friday 10:41 pm in New York, 6 h 41 min after the bell: CRCL was up 1%, and the agent sold through the Binance Agentic Wallet.",
     tx: "0x3014f7996e59458934dcd500232fd2674904d183df376daac9c8171770f0e87a"
   },
   {
@@ -239,7 +239,7 @@ const REAL = [
   [
     "Trading through the Binance Agentic Wallet",
     "Live",
-    "Sold CRCL at 02:41 UTC on Saturday 10 Oct, after its 24/7 price rose 1%"
+    "Sold CRCL at 10:41 pm New York time on Friday 9 Oct (02:41 UTC), after its 24/7 price rose 1%"
   ],
   [
     "Trading from your own wallet, one trade at a time",
@@ -338,7 +338,7 @@ export default function Proof() {
       <section className="section--tight" id="story">
         <p className="eyebrow">One promise, start to finish</p>
         <h2 className="h2">
-          "If CRCL rises 1% while Wall Street is closed, sell it." It did, on a Saturday.
+          "If CRCL rises 1% while Wall Street is closed, sell it." At 10:41 pm that Friday, it did.
         </h2>
         <ol className="story">
           {STORY.map((step) => {
