@@ -3,7 +3,12 @@ import { TxLink } from "../components/bits";
 import { agent, type PasskeyAccountResult, type PasskeyStatus } from "../lib/api";
 import { useAgent } from "../lib/hooks";
 import {
+  forgetHandoff,
+  isAndroid,
   loadPasskeyAccount,
+  openInBrowser,
+  passkeyAuth,
+  passkeysWork,
   registerPasskey,
   savePasskeyAccount,
   signPasskeyWithdraw,
@@ -15,6 +20,62 @@ import {
 import { formatUnits, isAddress, parseUnits, type Address } from "viem";
 
 const USDT = "0x55d398326f99059fF775485246999027B3197955";
+const BOT = "https://t.me/redeyed_bot";
+
+/** Inside Telegram: the bot vouches for the person, then the phone's own browser takes over. */
+function ContinueInBrowser({ primary, label }: { primary: boolean; label: string }) {
+  const [state, setState] = useState<
+    { step: "idle" } | { step: "busy" } | { step: "opened" } | { step: "error"; message: string }
+  >({ step: "idle" });
+  const go = async () => {
+    const initData = telegramInitData();
+    if (initData === null) return;
+    setState({ step: "busy" });
+    try {
+      const { url } = await agent.passkeyHandoff(initData);
+      openInBrowser(url);
+      setState({ step: "opened" });
+    } catch (error) {
+      setState({
+        step: "error",
+        message: error instanceof Error ? error.message : "The link could not be made."
+      });
+    }
+  };
+  return (
+    <>
+      <button
+        className={primary ? "button button--primary" : "button button--ghost"}
+        type="button"
+        disabled={state.step === "busy"}
+        onClick={() => void go()}
+      >
+        {state.step === "busy" ? "Making your link…" : label}
+      </button>
+      {state.step === "opened" && (
+        <p className="fine">
+          Redeye opened in your phone's browser. Finish there; the link works once, for 15 minutes.
+        </p>
+      )}
+      {state.step === "error" && <p className="problem">{state.message}</p>}
+    </>
+  );
+}
+
+/** Outside Telegram with no link: point to the bot instead of showing buttons that cannot work. */
+function OpenTelegram({ doing }: { doing: string }) {
+  return (
+    <div className="walletlist">
+      <a className="button button--primary" href={BOT}>
+        Open Redeye in Telegram
+      </a>
+      <p className="fine">
+        To {doing}, start from the Redeye Telegram bot so the account is linked to you. On Android
+        the bot sends you back here, in your browser, to approve with your fingerprint or face.
+      </p>
+    </div>
+  );
+}
 
 type MoveState =
   | { step: "idle" }
@@ -61,9 +122,9 @@ function MoveMoneyOut({ account }: { account: StoredPasskeyAccount }) {
   const ready =
     raw !== null && raw > 0n && isAddress(to.trim()) && (balance === null || raw <= balance);
 
+  const auth = passkeyAuth();
   const send = async () => {
-    const initData = telegramInitData();
-    if (initData === null || raw === null) return;
+    if (auth === null || raw === null) return;
     try {
       setState({ step: "busy", label: "Reading your account on BNB Chain…" });
       const { readWithdrawNonce } = await import("../lib/withdraw");
@@ -80,7 +141,7 @@ function MoveMoneyOut({ account }: { account: StoredPasskeyAccount }) {
       const signature = await signPasskeyWithdraw(account, request);
       setState({ step: "busy", label: "Sending it on BNB Chain…" });
       const result = await agent.passkeyWithdraw({
-        telegramInitData: initData,
+        ...auth,
         account: account.account,
         token,
         to: request.to,
@@ -88,6 +149,7 @@ function MoveMoneyOut({ account }: { account: StoredPasskeyAccount }) {
         deadline: Number(deadline),
         signature
       });
+      if ("handoff" in auth) forgetHandoff();
       setState({ step: "sent", txHash: result.txHash });
     } catch (error) {
       setState({
@@ -104,7 +166,9 @@ function MoveMoneyOut({ account }: { account: StoredPasskeyAccount }) {
         Your money stays yours. Send it to any address on BNB Chain: your phone approves it and
         Redeye pays the fee.
       </p>
-      {state.step === "sent" ? (
+      {auth === null && state.step !== "sent" ? (
+        <OpenTelegram doing="move money" />
+      ) : state.step === "sent" ? (
         <div className="locked" role="status">
           <p className="locked__title">Sent.</p>
           <TxLink hash={state.txHash}>transfer transaction</TxLink>
@@ -148,7 +212,7 @@ function MoveMoneyOut({ account }: { account: StoredPasskeyAccount }) {
           <button
             className="button button--primary"
             type="button"
-            disabled={!ready || state.step === "busy" || telegramInitData() === null}
+            disabled={!ready || state.step === "busy"}
             onClick={() => void send()}
           >
             {state.step === "busy" ? state.label : "Approve and send"}
@@ -170,17 +234,30 @@ export default function Newcomer() {
   const status = useAgent<PasskeyStatus>(() => agent.passkey(), [], 60_000);
   const [state, setState] = useState<State>({ step: "idle" });
   const [saved, setSaved] = useState<StoredPasskeyAccount | null>(() => loadPasskeyAccount());
-  const insideTelegram = telegramInitData() !== null;
+  const [auth] = useState(() => passkeyAuth());
+  const insideTelegram = auth !== null && "telegramInitData" in auth;
+  const [canPasskey, setCanPasskey] = useState<boolean | null>(null);
+  useEffect(() => {
+    let live = true;
+    void passkeysWork().then((works) => live && setCanPasskey(works));
+    return () => {
+      live = false;
+    };
+  }, []);
+  // Telegram's in-app browser on Android often cannot show a passkey prompt; the phone's own
+  // browser can. There the bot's handoff link comes first, and trying inside Telegram second.
+  const handOffFirst = insideTelegram && (isAndroid() || canPasskey === false);
+  const available = status.status === "ready" && status.value.available;
+
   const create = async (mode: PasskeyRegistrationMode) => {
-    if (status.status !== "ready" || !status.value.available) return;
+    if (status.status !== "ready" || !status.value.available || auth === null) return;
     setState({ step: "busy" });
     try {
       const passkey = await registerPasskey(status.value.rpId, mode);
-      const initData = telegramInitData();
-      if (initData === null) throw new Error("Open Redeye from Telegram to finish onboarding.");
-      const request = { ...passkey, telegramInitData: initData };
+      const request = { ...passkey, ...auth };
       await agent.passkeyPreview(request);
       const account = await agent.passkeyCreate(request);
+      if ("handoff" in auth) forgetHandoff();
       savePasskeyAccount({
         ...passkey,
         account: account.account as `0x${string}`,
@@ -204,11 +281,6 @@ export default function Newcomer() {
         Redeye makes you an account on BNB Chain that only your phone can approve, with Face ID,
         fingerprint or screen lock. Redeye pays the fee to create it.
       </p>
-      {!insideTelegram && (
-        <p className="problem">
-          Open this page from the Redeye Telegram bot, so the account is linked to you safely.
-        </p>
-      )}
       {status.status === "error" && (
         <p className="problem">Accounts can't be created right now. Please try again later.</p>
       )}
@@ -228,37 +300,54 @@ export default function Newcomer() {
             <TxLink hash={state.account.txHash}>creation transaction</TxLink>
           )}
         </div>
+      ) : auth === null ? (
+        <OpenTelegram doing="make your account" />
       ) : (
         <div className="walletlist">
-          <button
-            className="button button--primary"
-            type="button"
-            disabled={
-              !insideTelegram ||
-              status.status !== "ready" ||
-              !status.value.available ||
-              state.step === "busy"
-            }
-            onClick={() => void create("device")}
-          >
-            {state.step === "busy" ? "Opening passkey prompt…" : "Use this phone or tablet"}
-          </button>
-          <button
-            className="button button--ghost"
-            type="button"
-            disabled={
-              !insideTelegram ||
-              status.status !== "ready" ||
-              !status.value.available ||
-              state.step === "busy"
-            }
-            onClick={() => void create("flexible")}
-          >
-            Use another device or security key
-          </button>
+          {handOffFirst && (
+            <ContinueInBrowser
+              primary
+              label={isAndroid() ? "Continue in Chrome" : "Continue in your browser"}
+            />
+          )}
+          {!insideTelegram && canPasskey === false && (
+            <p className="problem">
+              This browser cannot make a passkey. Open the link in Chrome on Android or Safari on
+              iPhone.
+            </p>
+          )}
+          {available && canPasskey !== false && (
+            <>
+              <button
+                className={handOffFirst ? "button button--ghost" : "button button--primary"}
+                type="button"
+                disabled={state.step === "busy"}
+                onClick={() => void create("device")}
+              >
+                {state.step === "busy"
+                  ? "Opening passkey prompt…"
+                  : handOffFirst
+                    ? "Try here in Telegram"
+                    : "Use this phone or tablet"}
+              </button>
+              <button
+                className="button button--ghost"
+                type="button"
+                disabled={state.step === "busy"}
+                onClick={() => void create("flexible")}
+              >
+                Use another device or security key
+              </button>
+            </>
+          )}
         </div>
       )}
-      {state.step === "error" && <p className="problem">{state.message}</p>}
+      {state.step === "error" && (
+        <p className="problem">
+          {state.message}
+          {insideTelegram && " If no prompt appeared, use Continue in Chrome above."}
+        </p>
+      )}
       {saved && <MoveMoneyOut account={saved} />}
     </main>
   );

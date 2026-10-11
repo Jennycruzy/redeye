@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createAgentApi } from "./api.js";
+import { createPasskeyHandoff, type HandoffRecord } from "./passkey-handoff.js";
 import type { AgentRequest, AgentStore } from "./types.js";
 
 function request(pathname: string, overrides: Partial<AgentRequest> = {}): AgentRequest {
@@ -172,6 +173,121 @@ describe("agent HTTP boundary", () => {
     );
     expect(missing.status).toBe(400);
     expect(missing.body).toMatchObject({ error: { code: "TELEGRAM_INIT_DATA_REQUIRED" } });
+  });
+
+  it("hands a Telegram-verified person to the phone's browser with a one-time link", async () => {
+    const token = "123456:fixture-token";
+    const records = new Map<string, HandoffRecord>();
+    let now = 1_000_000;
+    let failCreate = true;
+    const api = createAgentApi(store(), {
+      ...config,
+      telegramBotToken: token,
+      passkeyHandoff: createPasskeyHandoff(
+        { get: (key) => records.get(key) ?? null, put: (key, record) => records.set(key, record) },
+        { now: () => now }
+      ),
+      passkeyPreview: async (input, identity) => ({ input, identity }),
+      passkeyCreate: async (input, identity) => {
+        if (failCreate) throw new Error("rpc timeout");
+        return { created: true, input, identity };
+      }
+    });
+
+    const refused = await api(request("/passkey/handoff", { method: "POST", body: {} }));
+    expect(refused.body).toMatchObject({ error: { code: "TELEGRAM_INIT_DATA_REQUIRED" } });
+    const issued = await api(
+      request("/passkey/handoff", {
+        method: "POST",
+        body: { telegramInitData: telegramFixture(token) }
+      })
+    );
+    expect(issued.status).toBe(200);
+    const { handoff, url, expiresAt } = issued.body as {
+      handoff: string;
+      url: string;
+      expiresAt: number;
+    };
+    expect(url).toBe(`https://redeye.example/new#handoff=${handoff}`);
+    expect(expiresAt).toBe(now + 15 * 60_000);
+    // Only the hash is stored.
+    expect([...records.keys()]).not.toContain(handoff);
+
+    const preview = await api(
+      request("/passkey/preview", { method: "POST", body: { handoff, credentialIdHash: "0x01" } })
+    );
+    expect(preview.body).toMatchObject({
+      input: { credentialIdHash: "0x01" },
+      identity: { userId: "7" }
+    });
+    expect(preview.body).not.toHaveProperty("input.handoff");
+
+    // A failed creation leaves the link usable for another try.
+    const failed = await api(
+      request("/passkey/create", { method: "POST", body: { handoff, credentialIdHash: "0x01" } })
+    );
+    expect(failed.status).toBe(500);
+    failCreate = false;
+    const created = await api(
+      request("/passkey/create", { method: "POST", body: { handoff, credentialIdHash: "0x01" } })
+    );
+    expect(created.body).toMatchObject({ created: true, identity: { userId: "7" } });
+    const again = await api(
+      request("/passkey/preview", { method: "POST", body: { handoff, credentialIdHash: "0x01" } })
+    );
+    expect(again.status).toBe(401);
+    expect(again.body).toMatchObject({
+      error: { code: "PASSKEY_HANDOFF_INVALID", reason: expect.stringContaining("already used") }
+    });
+
+    const second = (
+      await api(
+        request("/passkey/handoff", {
+          method: "POST",
+          body: { telegramInitData: telegramFixture(token) }
+        })
+      )
+    ).body as { handoff: string };
+    now += 15 * 60_000 + 1;
+    const late = await api(
+      request("/passkey/preview", {
+        method: "POST",
+        body: { handoff: second.handoff, credentialIdHash: "0x01" }
+      })
+    );
+    expect(late.body).toMatchObject({
+      error: { code: "PASSKEY_HANDOFF_INVALID", reason: expect.stringContaining("expired") }
+    });
+    const forged = await api(
+      request("/passkey/preview", {
+        method: "POST",
+        body: { handoff: "A".repeat(43), credentialIdHash: "0x01" }
+      })
+    );
+    expect(forged.body).toMatchObject({ error: { code: "PASSKEY_HANDOFF_INVALID" } });
+  });
+
+  it("does not accept handoff links when none are configured", async () => {
+    const token = "123456:fixture-token";
+    const api = createAgentApi(store(), {
+      ...config,
+      telegramBotToken: token,
+      passkeyPreview: async (input, identity) => ({ input, identity })
+    });
+    const issued = await api(
+      request("/passkey/handoff", {
+        method: "POST",
+        body: { telegramInitData: telegramFixture(token) }
+      })
+    );
+    expect(issued.body).toMatchObject({ error: { code: "PASSKEY_NOT_AVAILABLE" } });
+    const preview = await api(
+      request("/passkey/preview", {
+        method: "POST",
+        body: { handoff: "A".repeat(43), credentialIdHash: "0x01" }
+      })
+    );
+    expect(preview.body).toMatchObject({ error: { code: "TELEGRAM_INIT_DATA_REQUIRED" } });
   });
 
   it("rejects writes without the owner token", async () => {

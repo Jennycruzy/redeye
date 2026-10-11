@@ -33,6 +33,16 @@ function pathParts(pathname: string): string[] {
     .map((part) => decodeURIComponent(part));
 }
 
+function telegramIdentity(initData: string, config: AgentApiConfig) {
+  return verifyTelegramInitData(
+    initData,
+    config.telegramBotToken ?? "",
+    config.telegramInitDataMaxAgeSeconds === undefined
+      ? {}
+      : { maxAgeSeconds: config.telegramInitDataMaxAgeSeconds }
+  );
+}
+
 function ownerAuthorized(request: AgentRequest, config: AgentApiConfig): boolean {
   const bearer = request.headers.get("authorization");
   const token = request.headers.get("x-owner-token");
@@ -109,23 +119,68 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
             config
           );
         const body = request.body as Record<string, unknown>;
-        if (typeof body.telegramInitData !== "string" || body.telegramInitData.length === 0)
+        // In the phone's own browser, a handoff link from Telegram stands in for initData.
+        const handoff =
+          typeof body.handoff === "string" && config.passkeyHandoff !== undefined
+            ? body.handoff
+            : null;
+        if (
+          handoff === null &&
+          (typeof body.telegramInitData !== "string" || body.telegramInitData.length === 0)
+        )
           return error(
             400,
             "TELEGRAM_INIT_DATA_REQUIRED",
             "Telegram initData is required.",
             config
           );
-        const identity = verifyTelegramInitData(
-          body.telegramInitData,
-          config.telegramBotToken,
-          config.telegramInitDataMaxAgeSeconds === undefined
-            ? {}
-            : { maxAgeSeconds: config.telegramInitDataMaxAgeSeconds }
-        );
+        const identity =
+          handoff !== null
+            ? config.passkeyHandoff!.identity(handoff)
+            : telegramIdentity(body.telegramInitData as string, config);
         const input = { ...body };
         delete input.telegramInitData;
-        return json(200, await callback(input, identity), config);
+        delete input.handoff;
+        const result = await callback(input, identity);
+        // Spent only once the account exists or money moved, so a failed try can be retried.
+        if (handoff !== null && id !== "preview") config.passkeyHandoff!.spend(handoff);
+        return json(200, result, config);
+      }
+      if (
+        request.method === "POST" &&
+        root === "passkey" &&
+        id === "handoff" &&
+        parts.length === 2
+      ) {
+        if (
+          config.passkeyHandoff === undefined ||
+          config.telegramBotToken === undefined ||
+          config.telegramBotToken.trim().length === 0
+        )
+          return error(
+            404,
+            "PASSKEY_NOT_AVAILABLE",
+            "Passkey handoff is not configured on this agent.",
+            config
+          );
+        const body = request.body as Record<string, unknown> | null;
+        if (typeof body?.telegramInitData !== "string" || body.telegramInitData.length === 0)
+          return error(
+            400,
+            "TELEGRAM_INIT_DATA_REQUIRED",
+            "Telegram initData is required.",
+            config
+          );
+        const issued = config.passkeyHandoff.issue(telegramIdentity(body.telegramInitData, config));
+        return json(
+          200,
+          {
+            ...issued,
+            // Keep the bearer token in the fragment so browsers never send it to web-server logs.
+            url: `${config.siteOrigin}/new#handoff=${encodeURIComponent(issued.handoff)}`
+          },
+          config
+        );
       }
       if (
         request.method === "GET" &&

@@ -1970,7 +1970,11 @@ describe("restarting the agent", () => {
     const second = await harness({ jobs: true, restartOf: first });
     second.setNow(OPEN + 20 * MINUTE);
     second.setPrice(snapshot(OPEN + 20 * MINUTE, "199"));
-    second.setOpen({ value: "198.10", source: "nasdaq:NVDA:daily-history", sourceRecordPath: "raw/x" });
+    second.setOpen({
+      value: "198.10",
+      source: "nasdaq:NVDA:daily-history",
+      sourceRecordPath: "raw/x"
+    });
     await second.service.tick();
     await second.service.tick();
 
@@ -2021,7 +2025,11 @@ describe("restarting the agent", () => {
     second.setNow(CLOSE + 3 * 60 * MINUTE);
     second.setPrice(snapshot(CLOSE + 3 * 60 * MINUTE, "185"));
     await second.service.tick();
-    second.setOpen({ value: "193", source: "nasdaq:NVDA:daily-history", sourceRecordPath: "raw/x" });
+    second.setOpen({
+      value: "193",
+      source: "nasdaq:NVDA:daily-history",
+      sourceRecordPath: "raw/x"
+    });
     second.setNow(OPEN + 30 * MINUTE);
     await second.service.tick();
     await second.service.tick();

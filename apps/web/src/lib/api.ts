@@ -267,6 +267,9 @@ export interface RunBinance {
   fill?: { matchesChain: boolean; detail: string; txStatus: string | null };
 }
 
+/** Telegram's own data inside the bot, or a one-time handoff link in the phone's browser. */
+export type PasskeyAuth = { telegramInitData: string } | { handoff: string };
+
 export const agent = {
   prices: (tickers?: string[]) =>
     request<Prices>(tickers ? `/prices?tickers=${tickers.join(",")}` : "/prices"),
@@ -275,31 +278,39 @@ export const agent = {
   record: () => request<PlanRecord>("/record"),
   health: () => request<Health>("/health"),
   passkey: () => request<PasskeyStatus>("/passkey"),
-  passkeyPreview: (body: {
-    telegramInitData: string;
-    credentialIdHash: string;
-    publicKeyX: string;
-    publicKeyY: string;
-  }) => request<PasskeyPreview>("/passkey/preview", { method: "POST", body: JSON.stringify(body) }),
-  passkeyCreate: (body: {
-    telegramInitData: string;
-    credentialIdHash: string;
-    publicKeyX: string;
-    publicKeyY: string;
-  }) =>
+  passkeyPreview: (
+    body: PasskeyAuth & {
+      credentialIdHash: string;
+      publicKeyX: string;
+      publicKeyY: string;
+    }
+  ) => request<PasskeyPreview>("/passkey/preview", { method: "POST", body: JSON.stringify(body) }),
+  passkeyCreate: (
+    body: PasskeyAuth & {
+      credentialIdHash: string;
+      publicKeyX: string;
+      publicKeyY: string;
+    }
+  ) =>
     request<PasskeyAccountResult>("/passkey/create", {
       method: "POST",
       body: JSON.stringify(body)
     }),
-  passkeyWithdraw: (body: {
-    telegramInitData: string;
-    account: string;
-    token: string;
-    to: string;
-    amount: string;
-    deadline: number;
-    signature: string;
-  }) =>
+  passkeyHandoff: (telegramInitData: string) =>
+    request<{ handoff: string; url: string; expiresAt: number }>("/passkey/handoff", {
+      method: "POST",
+      body: JSON.stringify({ telegramInitData })
+    }),
+  passkeyWithdraw: (
+    body: PasskeyAuth & {
+      account: string;
+      token: string;
+      to: string;
+      amount: string;
+      deadline: number;
+      signature: string;
+    }
+  ) =>
     request<{ state: string; txHash: string }>("/passkey/withdraw", {
       method: "POST",
       body: JSON.stringify(body)

@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { PasskeyHandoff } from "./passkey-handoff.js";
 import type { TelegramIdentity } from "./telegram.js";
 export interface AgentStore {
   health(): Promise<unknown>;
@@ -53,6 +54,8 @@ export interface AgentApiConfig {
     input: Record<string, unknown>,
     identity: TelegramIdentity
   ) => Promise<unknown>;
+  /** One-time links that carry a Telegram-verified person into the phone's own browser. */
+  passkeyHandoff?: PasskeyHandoff;
   /** Bot token used only inside the server-side Telegram HMAC verifier. */
   telegramBotToken?: string;
   /** Maximum accepted age for Telegram initData; defaults to one hour. */

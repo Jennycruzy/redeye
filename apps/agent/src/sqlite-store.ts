@@ -12,6 +12,7 @@ import {
 } from "./plan-service.js";
 import type { PriceSnapshotOk } from "./price-service.js";
 import type { AgentStore } from "./types.js";
+import type { HandoffBook, HandoffRecord } from "./passkey-handoff.js";
 
 /** Plan writes, provided by the plan service once PlanBook is configured. */
 export interface PlanActions {
@@ -149,6 +150,15 @@ export class SqliteAgentStore implements AgentStore, PlanStore {
         .prepare("DELETE FROM documents WHERE kind = ? AND document_key = ?")
         .run(kind, key);
     }
+  }
+
+  /** Passkey handoff links, stored by the hash of their token. */
+  handoffBook(): HandoffBook {
+    const kind = "passkey-handoff";
+    return {
+      get: (key) => (this.one(kind, key) as HandoffRecord | null) ?? null,
+      put: (key, record) => this.put(kind, key, record)
+    };
   }
 
   /**

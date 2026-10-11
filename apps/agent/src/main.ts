@@ -18,6 +18,7 @@ import { reconcilePlanWindow } from "./chain-reconciliation.js";
 import { PlanService } from "./plan-service.js";
 import { createNightService } from "./night.js";
 import { createPasskeyAccountPreview, createPasskeyAccountService } from "./passkey-account.js";
+import { createPasskeyHandoff } from "./passkey-handoff.js";
 import { listedBstock, nasdaqCloseOn, nasdaqOfficialOpen, xyzCandles } from "./plan-sources.js";
 import { loadPoolMap, PriceService } from "./price-service.js";
 import { createSqliteAgentStore } from "./sqlite-store.js";
@@ -416,7 +417,11 @@ const server = startAgentServer(
         }
       : {}),
     ...(passkeyService && telegramBotToken
-      ? { passkeyCreate: passkeyService.create, passkeyWithdraw: passkeyService.withdraw }
+      ? {
+          passkeyCreate: passkeyService.create,
+          passkeyWithdraw: passkeyService.withdraw,
+          passkeyHandoff: createPasskeyHandoff(store.handoffBook())
+        }
       : {}),
     lockSigned: (body) => planService.lockSigned(body),
     mcp: createMcpHandler(readSources, AGENT_VERSION)

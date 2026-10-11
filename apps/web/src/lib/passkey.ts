@@ -363,3 +363,73 @@ export function telegramInitData(): string | null {
   value?.ready?.();
   return value?.initData || null;
 }
+
+type TelegramWebApp = { initData?: string; openLink?: (url: string) => void };
+
+function telegramWebApp(): TelegramWebApp | undefined {
+  return (window as unknown as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp;
+}
+
+const HANDOFF_KEY = "redeye.passkey.handoff";
+
+/**
+ * The one-time link Telegram handed to this browser, if any. It is moved out of the address bar
+ * into this tab's session, so it is not left in history or in a shared screenshot.
+ */
+export function handoffToken(): string | null {
+  try {
+    const url = new URL(window.location.href);
+    const fragment = new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
+    // Accept the old query form too, so an already-issued link still works during deployment.
+    const fromUrl = fragment.get("handoff") ?? url.searchParams.get("handoff");
+    if (fromUrl) {
+      sessionStorage.setItem(HANDOFF_KEY, fromUrl);
+      fragment.delete("handoff");
+      url.searchParams.delete("handoff");
+      const remainingFragment = fragment.toString();
+      url.hash = remainingFragment ? `#${remainingFragment}` : "";
+      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+      return fromUrl;
+    }
+    return sessionStorage.getItem(HANDOFF_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function forgetHandoff(): void {
+  try {
+    sessionStorage.removeItem(HANDOFF_KEY);
+  } catch {
+    // Nothing stored.
+  }
+}
+
+/** Who is asking: Telegram's own data inside the bot, or the handoff link in the phone's browser. */
+export function passkeyAuth(): { telegramInitData: string } | { handoff: string } | null {
+  const initData = telegramInitData();
+  if (initData !== null) return { telegramInitData: initData };
+  const handoff = handoffToken();
+  return handoff === null ? null : { handoff };
+}
+
+/** Opens a page in the phone's own browser; Telegram's openLink leaves its in-app browser. */
+export function openInBrowser(url: string): void {
+  const app = telegramWebApp();
+  if (app?.openLink) app.openLink(url);
+  else window.location.assign(url);
+}
+
+/** Whether this browser can show a passkey prompt with the phone's own screen lock. */
+export async function passkeysWork(): Promise<boolean> {
+  try {
+    if (typeof PublicKeyCredential === "undefined") return false;
+    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch {
+    return false;
+  }
+}
+
+export function isAndroid(): boolean {
+  return /Android/i.test(navigator.userAgent);
+}
