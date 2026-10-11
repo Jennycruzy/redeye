@@ -79,6 +79,40 @@ function OpenTelegram({ doing }: { doing: string }) {
   );
 }
 
+/** The person's account: where it is, and how to put money in. */
+function YourAccount({ address, txHash }: { address: string; txHash?: string | undefined }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2_000);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <div className="locked" role="status">
+      <p className="locked__title">Your account is ready.</p>
+      <p>Only this phone can approve it. Your account address on BNB Chain:</p>
+      <p>
+        <code className="account__address">{address}</code>
+      </p>
+      <p>
+        <button className="button button--ghost" type="button" onClick={() => void copy()}>
+          {copied ? "Copied" : "Copy address"}
+        </button>
+      </p>
+      <p className="fine">
+        To add money, send USDT to this address on BNB Smart Chain (BEP-20). From Binance: Withdraw,
+        pick USDT, paste the address and choose the network BNB Smart Chain. Other networks will not
+        arrive.
+      </p>
+      {txHash && <TxLink hash={txHash}>creation transaction</TxLink>}
+    </div>
+  );
+}
+
 type MoveState =
   | { step: "idle" }
   | { step: "busy"; label: string }
@@ -299,16 +333,9 @@ export default function Newcomer() {
         </p>
       )}
       {state.step === "ready" ? (
-        <div className="locked" role="status">
-          <p className="locked__title">Your account is ready.</p>
-          <p>
-            It is linked to your Telegram and approved by this phone. Your account address is{" "}
-            <code>{state.account.account}</code>.
-          </p>
-          {state.account.txHash && (
-            <TxLink hash={state.account.txHash}>creation transaction</TxLink>
-          )}
-        </div>
+        <YourAccount address={state.account.account} txHash={state.account.txHash} />
+      ) : saved ? (
+        <YourAccount address={saved.account} />
       ) : auth === null ? (
         <OpenTelegram doing="make your account" />
       ) : (
