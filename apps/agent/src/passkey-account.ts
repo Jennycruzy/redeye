@@ -45,6 +45,7 @@ export interface PasskeyAccountPreviewConfig {
 export interface PasskeySponsorLedger {
   claimPasskeySponsor(userId: string, day: string, account: string, dailyLimit: number): boolean;
   releasePasskeySponsor(userId: string, day: string, account: string): void;
+  claimPasskeyWithdrawal(userId: string, day: string, dailyLimit: number): boolean;
 }
 
 export interface PasskeyAccountServiceConfig extends PasskeyAccountPreviewConfig {
@@ -182,8 +183,6 @@ export function createPasskeyAccountService(config: PasskeyAccountServiceConfig)
   const walletClient = createWalletClient({ account, chain: bsc, transport });
   const preview = createPasskeyAccountPreview(config);
 
-  const withdrawCounts = new Map<string, number>();
-
   /**
    * Relays a withdrawal the account owner signed with their passkey. The account
    * checks the signature, nonce and deadline itself; the agent only refuses
@@ -244,8 +243,7 @@ export function createPasskeyAccountService(config: PasskeyAccountServiceConfig)
       );
 
     const day = new Date().toISOString().slice(0, 10);
-    const key = `${identity.userId}:${day}`;
-    if ((withdrawCounts.get(key) ?? 0) >= WITHDRAW_DAILY_PER_USER)
+    if (!config.ledger.claimPasskeyWithdrawal(identity.userId, day, WITHDRAW_DAILY_PER_USER))
       throw new PasskeyAccountError(
         429,
         "PASSKEY_WITHDRAW_LIMIT",
@@ -280,7 +278,6 @@ export function createPasskeyAccountService(config: PasskeyAccountServiceConfig)
         "PASSKEY_SPONSOR_CAP",
         "The withdrawal fee exceeds the sponsor cap."
       );
-    withdrawCounts.set(key, (withdrawCounts.get(key) ?? 0) + 1);
     const hash = await walletClient.writeContract({
       address: target,
       abi: PLAN_ACCOUNT_WITHDRAW_ABI,

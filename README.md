@@ -181,7 +181,7 @@ pnpm contract:test
 ```
 
 The contract test suite is offline and does not deploy or move funds. The first live
-plan-triggered wallet execution and the phone-backed Telegram flow are still release
+PlanAccount-triggered execution and the phone-backed Telegram flow are still release
 gates. The signed-wallet code path is covered offline and its mainnet template is
 deployed and source-verified. Mainnet delegation and plan locking are confirmed;
 browser-provider EIP-7702 support, the first phone-backed passkey account and signed plan,
@@ -212,3 +212,11 @@ The read-only service checks and the source-derived study rebuild are documented
 The source probe validates endpoint reachability, response shape, source timestamps and
 local prerequisites before implementation depends on external behavior. Findings
 belong in [`docs/dx-log.md`](docs/dx-log.md).
+
+## Operations
+
+`redeye-backup.timer` creates a SQLite-consistent backup every day under
+`/home/ubuntu/redeye-data/backups`, verifies the source database first, keeps 14 days, and writes
+files with owner-only permissions. Install the unit files from `deploy/` and test recovery before
+relying on them. Future minute-level source records use compact JSON; published evidence paths and
+contents are unchanged. Monitor disk use because raw evidence is intentionally retained.

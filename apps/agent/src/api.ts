@@ -136,15 +136,22 @@ export function createAgentApi(store: AgentStore, config: AgentApiConfig) {
           );
         const identity =
           handoff !== null
-            ? config.passkeyHandoff!.identity(handoff)
+            ? id === "preview"
+              ? config.passkeyHandoff!.identity(handoff)
+              : config.passkeyHandoff!.reserve(handoff)
             : telegramIdentity(body.telegramInitData as string, config);
         const input = { ...body };
         delete input.telegramInitData;
         delete input.handoff;
-        const result = await callback(input, identity);
-        // Spent only once the account exists or money moved, so a failed try can be retried.
-        if (handoff !== null && id !== "preview") config.passkeyHandoff!.spend(handoff);
-        return json(200, result, config);
+        try {
+          const result = await callback(input, identity);
+          if (handoff !== null && id !== "preview") config.passkeyHandoff!.spend(handoff);
+          return json(200, result, config);
+        } catch (caught) {
+          // A failed operation can be retried, while concurrent side effects stay excluded.
+          if (handoff !== null && id !== "preview") config.passkeyHandoff!.release(handoff);
+          throw caught;
+        }
       }
       if (
         request.method === "POST" &&

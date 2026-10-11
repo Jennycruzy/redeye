@@ -184,7 +184,13 @@ describe("agent HTTP boundary", () => {
       ...config,
       telegramBotToken: token,
       passkeyHandoff: createPasskeyHandoff(
-        { get: (key) => records.get(key) ?? null, put: (key, record) => records.set(key, record) },
+        {
+          get: (key) => records.get(key) ?? null,
+          put: (key, record) => records.set(key, record),
+          prune: (before) => {
+            for (const [key, record] of records) if (record.expiresAt < before) records.delete(key);
+          }
+        },
         { now: () => now }
       ),
       passkeyPreview: async (input, identity) => ({ input, identity }),
@@ -288,6 +294,45 @@ describe("agent HTTP boundary", () => {
       })
     );
     expect(preview.body).toMatchObject({ error: { code: "TELEGRAM_INIT_DATA_REQUIRED" } });
+  });
+
+  it("reserves a handoff before an asynchronous passkey side effect", async () => {
+    const token = "123456:fixture-token";
+    const records = new Map<string, HandoffRecord>();
+    let releaseCreate!: () => void;
+    let enteredCreate!: () => void;
+    const blocked = new Promise<void>((resolve) => (releaseCreate = resolve));
+    const entered = new Promise<void>((resolve) => (enteredCreate = resolve));
+    const api = createAgentApi(store(), {
+      ...config,
+      telegramBotToken: token,
+      passkeyHandoff: createPasskeyHandoff({
+        get: (key) => records.get(key) ?? null,
+        put: (key, record) => records.set(key, record),
+        prune: () => undefined
+      }),
+      passkeyCreate: async () => {
+        enteredCreate();
+        await blocked;
+        return { created: true };
+      }
+    });
+    const issued = await api(
+      request("/passkey/handoff", {
+        method: "POST",
+        body: { telegramInitData: telegramFixture(token) }
+      })
+    );
+    const { handoff } = issued.body as { handoff: string };
+    const first = api(request("/passkey/create", { method: "POST", body: { handoff } }));
+    await entered;
+    const concurrent = await api(request("/passkey/create", { method: "POST", body: { handoff } }));
+    expect(concurrent).toMatchObject({
+      status: 401,
+      body: { error: { reason: expect.stringContaining("already being used") } }
+    });
+    releaseCreate();
+    await expect(first).resolves.toMatchObject({ status: 200, body: { created: true } });
   });
 
   it("rejects writes without the owner token", async () => {

@@ -16,6 +16,8 @@ export async function storeRawRecord<T>(
   await mkdir(directory, { recursive: true });
   const filename = `${safePart(record.fetchedAt)}.json`;
   const path = join(directory, filename);
-  await writeFile(path, JSON.stringify(record, null, 2) + "\n", "utf8");
+  // These minute-level records are immutable evidence; compact JSON avoids wasting disk without
+  // changing their contents, paths, or downstream verification behavior.
+  await writeFile(path, JSON.stringify(record) + "\n", "utf8");
   return relative(resolve(rootDir), path);
 }

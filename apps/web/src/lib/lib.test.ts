@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NightTrace } from "./api";
 import { changePct, duration, pct, reasonWords, usd } from "./format";
 import { triggerLabel, triggerPrice } from "./plans";
@@ -9,7 +9,9 @@ import {
   WalletUnsupported,
   type WalletChoice
 } from "./wallet";
-import { p256Coordinates, passkeyCreationOptions, withdrawDigest } from "./passkey";
+import { handoffToken, p256Coordinates, passkeyCreationOptions, withdrawDigest } from "./passkey";
+
+afterEach(() => vi.unstubAllGlobals());
 
 const THU_CLOSE = Date.parse("2026-10-08T20:00:00Z");
 const FRI_OPEN = Date.parse("2026-10-09T13:30:00Z");
@@ -123,6 +125,23 @@ describe("PlanAccount wallet compatibility", () => {
 });
 
 describe("passkey registration", () => {
+  it("moves a fragment handoff into tab storage and removes it from the address bar", () => {
+    const stored = new Map<string, string>();
+    const replaceState = vi.fn();
+    vi.stubGlobal("window", {
+      location: { href: "https://redeye.example/new#handoff=token-123" },
+      history: { replaceState }
+    });
+    vi.stubGlobal("sessionStorage", {
+      setItem: (key: string, value: string) => stored.set(key, value),
+      getItem: (key: string) => stored.get(key) ?? null
+    });
+
+    expect(handoffToken()).toBe("token-123");
+    expect(replaceState).toHaveBeenCalledWith(null, "", "/new");
+    expect([...stored.values()]).toEqual(["token-123"]);
+  });
+
   it("offers a platform path and a flexible cross-device path", () => {
     const userId = new Uint8Array(32);
     const device = passkeyCreationOptions("theredeyed-agent.site", userId, "device");

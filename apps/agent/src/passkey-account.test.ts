@@ -43,7 +43,11 @@ describe("passkey withdrawal relay", () => {
     sponsorKey: `0x${"55".repeat(32)}`,
     dailyLimit: 1,
     maxFeeWei: 1n,
-    ledger: { claimPasskeySponsor: () => true, releasePasskeySponsor: () => undefined }
+    ledger: {
+      claimPasskeySponsor: () => true,
+      releasePasskeySponsor: () => undefined,
+      claimPasskeyWithdrawal: () => true
+    }
   });
   const identity = { userId: "7", authDate: 1, queryId: null };
   const good = {

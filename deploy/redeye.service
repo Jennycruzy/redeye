@@ -18,6 +18,16 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+PrivateDevices=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+CapabilityBoundingSet=
+AmbientCapabilities=
 # The Agentic Wallet tool rewrites its session in ~/.baw on every call.
 ReadWritePaths=/home/ubuntu/redeye/.redeye /home/ubuntu/redeye/data /home/ubuntu/.baw
 UMask=0077

@@ -1,0 +1,15 @@
+[Unit]
+Description=Back up the Redeye SQLite database
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/redeye
+EnvironmentFile=/home/ubuntu/redeye/.env
+ExecStart=/usr/bin/node /home/ubuntu/redeye/scripts/backup-database.mjs
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/redeye-data/backups
+UMask=0077

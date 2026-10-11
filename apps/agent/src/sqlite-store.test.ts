@@ -86,6 +86,10 @@ describe("SQLite agent store boundary", () => {
     store.releasePasskeySponsor("42", "2026-10-09", "0xaccount-a");
     expect(store.claimPasskeySponsor("44", "2026-10-09", "0xaccount-d", 2)).toBe(true);
     expect(store.claimPasskeySponsor("42", "2026-10-10", "0xaccount-a", 2)).toBe(true);
+    expect(store.claimPasskeyWithdrawal("42", "2026-10-09", 2)).toBe(true);
+    expect(store.claimPasskeyWithdrawal("42", "2026-10-09", 2)).toBe(true);
+    expect(store.claimPasskeyWithdrawal("42", "2026-10-09", 2)).toBe(false);
+    expect(store.claimPasskeyWithdrawal("42", "2026-10-10", 2)).toBe(true);
   });
 });
 

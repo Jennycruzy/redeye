@@ -19,7 +19,7 @@
     "@redeye/shared": "workspace:*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "viem": "2.21.54"
+    "viem": "2.57.4"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

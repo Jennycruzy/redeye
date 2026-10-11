@@ -152,12 +152,32 @@ export class SqliteAgentStore implements AgentStore, PlanStore {
     }
   }
 
+  /** Durably limits passkey withdrawal gas sponsorship across service restarts. */
+  claimPasskeyWithdrawal(userId: string, day: string, dailyLimit: number): boolean {
+    const kind = "passkey-withdrawal";
+    const key = `${day}:${userId}`;
+    const current = this.one(kind, key) as { count?: unknown } | null;
+    const count = Number(current?.count ?? 0);
+    if (!Number.isInteger(dailyLimit) || dailyLimit < 1 || !Number.isInteger(count) || count < 0)
+      return false;
+    if (count >= dailyLimit) return false;
+    this.put(kind, key, { userId, day, count: count + 1 });
+    return true;
+  }
+
   /** Passkey handoff links, stored by the hash of their token. */
   handoffBook(): HandoffBook {
     const kind = "passkey-handoff";
     return {
       get: (key) => (this.one(kind, key) as HandoffRecord | null) ?? null,
-      put: (key, record) => this.put(kind, key, record)
+      put: (key, record) => this.put(kind, key, record),
+      prune: (expiredBefore) => {
+        this.database
+          .prepare(
+            "DELETE FROM documents WHERE kind = ? AND CAST(json_extract(payload, '$.expiresAt') AS INTEGER) < ?"
+          )
+          .run(kind, expiredBefore);
+      }
     };
   }
 

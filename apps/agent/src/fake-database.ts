@@ -30,6 +30,16 @@ export class FakeDatabase {
       },
       run: (...parameters: unknown[]) => {
         if (sql.includes("DELETE FROM documents")) {
+          if (sql.includes("json_extract")) {
+            const kind = String(parameters[0]);
+            const before = Number(parameters[1]);
+            for (const [key, row] of this.rows) {
+              const record = JSON.parse(row.payload) as { expiresAt?: number };
+              if (key.startsWith(`${kind}:`) && Number(record.expiresAt) < before)
+                this.rows.delete(key);
+            }
+            return;
+          }
           this.rows.delete(`${parameters[0]}:${parameters[1]}`);
           return;
         }
