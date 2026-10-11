@@ -136,6 +136,21 @@ export class SqliteAgentStore implements AgentStore, PlanStore {
     return true;
   }
 
+  /** Marks a reserved sponsorship as used once the creation transaction has succeeded. */
+  completePasskeySponsor(userId: string, day: string, account: string, txHash: string): void {
+    const kind = "passkey-sponsor";
+    const key = `${day}:${userId}`;
+    const current = this.one(kind, key);
+    if (
+      typeof current === "object" &&
+      current !== null &&
+      !Array.isArray(current) &&
+      (current as Record<string, unknown>).account === account
+    ) {
+      this.put(kind, key, { userId, day, account, state: "created", txHash });
+    }
+  }
+
   releasePasskeySponsor(userId: string, day: string, account: string): void {
     const kind = "passkey-sponsor";
     const key = `${day}:${userId}`;

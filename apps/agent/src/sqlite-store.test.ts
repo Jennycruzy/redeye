@@ -91,6 +91,28 @@ describe("SQLite agent store boundary", () => {
     expect(store.claimPasskeyWithdrawal("42", "2026-10-09", 2)).toBe(false);
     expect(store.claimPasskeyWithdrawal("42", "2026-10-10", 2)).toBe(true);
   });
+
+  it("marks a sponsored passkey claim as created with its transaction", () => {
+    const database = new FakeDatabase();
+    const store = new SqliteAgentStore(database);
+    const read = () =>
+      JSON.parse(
+        String(
+          (
+            database
+              .prepare("SELECT payload FROM documents WHERE kind = ? AND document_key = ?")
+              .get("passkey-sponsor", "2026-10-11:42") as { payload: string }
+          ).payload
+        )
+      );
+    expect(store.claimPasskeySponsor("42", "2026-10-11", "0xaccount-a", 2)).toBe(true);
+    expect(read().state).toBe("pending");
+    store.completePasskeySponsor("42", "2026-10-11", "0xaccount-other", "0xwrong");
+    expect(read().state).toBe("pending");
+    store.completePasskeySponsor("42", "2026-10-11", "0xaccount-a", "0xhash");
+    expect(read()).toMatchObject({ account: "0xaccount-a", state: "created", txHash: "0xhash" });
+    expect(store.claimPasskeySponsor("42", "2026-10-11", "0xaccount-b", 2)).toBe(false);
+  });
 });
 
 async function expectStoreFailure(operation: () => Promise<unknown>, code: string): Promise<void> {

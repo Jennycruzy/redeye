@@ -59,6 +59,7 @@ export interface PasskeyAccountPreviewConfig {
 export interface PasskeySponsorLedger {
   claimPasskeySponsor(userId: string, day: string, account: string, dailyLimit: number): boolean;
   releasePasskeySponsor(userId: string, day: string, account: string): void;
+  completePasskeySponsor?(userId: string, day: string, account: string, txHash: string): void;
   claimPasskeyWithdrawal(userId: string, day: string, dailyLimit: number): boolean;
 }
 
@@ -408,6 +409,11 @@ export function createPasskeyAccountService(config: PasskeyAccountServiceConfig)
           createdOwnerCode === "0x"
         ) {
           throw new Error("deployment receipt did not produce both account contracts");
+        }
+        try {
+          config.ledger.completePasskeySponsor?.(identity.userId, day, predicted.account, hash);
+        } catch {
+          // Bookkeeping only: the account exists on chain, so never fail the response here.
         }
         return {
           state: "created",
