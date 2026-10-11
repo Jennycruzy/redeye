@@ -340,12 +340,15 @@ export default function Newcomer() {
               </button>
             </>
           )}
+          {insideTelegram && !handOffFirst && (
+            <ContinueInBrowser primary={false} label="Continue in your browser" />
+          )}
         </div>
       )}
       {state.step === "error" && (
         <p className="problem">
           {state.message}
-          {insideTelegram && " If no prompt appeared, use Continue in Chrome above."}
+          {insideTelegram && " If no prompt appeared, continue in your browser instead."}
         </p>
       )}
       {saved && <MoveMoneyOut account={saved} />}
