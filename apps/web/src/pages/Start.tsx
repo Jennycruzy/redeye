@@ -283,7 +283,19 @@ export default function Start() {
   useEffect(() => {
     let active = true;
     (standing ? agent.previewStanding(debounced) : agent.preview(debounced))
-      .then((value) => active && (setPreview(value), setPreviewError(null)))
+      .then((value) => {
+        if (!active) return;
+        // A refused preview can come back without a window; show its reasons instead of
+        // rendering a plan that has no deadline.
+        if (!value?.window) {
+          const reasons = (value?.issues ?? []).map((i) => i.message).join(" ");
+          setPreview(null);
+          setPreviewError(reasons || "This plan can't be checked right now.");
+          return;
+        }
+        setPreview(value);
+        setPreviewError(null);
+      })
       .catch(
         (error: unknown) =>
           active && setPreviewError(error instanceof Error ? error.message : "The check failed.")
