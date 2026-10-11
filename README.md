@@ -2,14 +2,23 @@ Redeye is the agent for when Wall Street is closed. It prices your stock from th
 
 Redeye reads the last US close, a source-labelled 24/7 equity price, and the token's own BNB Smart Chain price. It turns a plain plan into deterministic checks, publishes the plan fingerprint before the window starts, and keeps the result visible.
 
-Status, 10 Oct 2026: live on BNB Smart Chain at [theredeyed-agent.site](https://theredeyed-agent.site).
+Status, 11 Oct 2026: live on BNB Smart Chain at [theredeyed-agent.site](https://theredeyed-agent.site).
 
 - **First plan-triggered trade.** Plan #6 promised to sell 0.0605 CRCL if its 24/7 price rose 1% over the weekend. At 02:41 UTC on 10 Oct it did: the decision went on chain, the Binance Agentic Wallet sold for 5.156 USDT, and the fill was recorded on PlanBook. Binance's Wallet API and the chain agree on the amount to the last digit.
 - **Trades are checked by the Binance Web3 API, signed with our own key** (five modules; which ones run depends on the route, see below).
 - **Spot only.** The 24/7 price from Hyperliquid's `xyz` market is a reference signal only; Redeye never opens a position there. Every trade is a spot bStock trade on BNB Smart Chain mainnet.
 - Plans #2 to #5, #7 and #8 are watching the weekend window, graded at Monday's open (13:30 UTC); plan #9 (Monday night) and #10 are locked. Results publish at the next open.
 - **Plan #10 was signed by the Binance Agentic Wallet itself** through the Redeye skill (`skills/redeye`, `lock --yes`): the wallet signed the plan (EIP-712, Developer mode), and PlanBook stores it under the wallet's own address `0xDA11…aae2`. A Hold on NVDA for the Monday-night window; no money moves, graded at Tuesday's open.
+- **x402 sales settle through Binance B402** since 11 Oct 01:49 UTC: other agents pay 0.002 U for the 24/7 price, and Binance's own facilitator settles the transfer on chain. First full B402 sale: the Agentic Wallet paid, Binance settled ([tx](https://bscscan.com/tx/0x967e61768d815efc4642a5ba2ba0e8e7ffdfebcdff76e2ec9593ef951a663173)); every sale so far was bought by our own wallets. How we got there: [`docs/b402-investigation.md`](docs/b402-investigation.md).
 - Two ways to trade: the Binance Agentic Wallet, and your own wallet through PlanAccount (one bounded, owner-signed trade; plan #8 is locked this way). A phone passkey account for newcomers, created from Telegram, is deployed and tested; the first real phone account is still to be made.
+
+## Check it in 60 seconds
+
+1. Open [theredeyed-agent.site/record](https://theredeyed-agent.site/record): every plan, its promise, and its result once graded.
+2. Open plan #6 and press **Check it**: your browser re-hashes the plan and the decision and compares them with PlanBook on BNB Chain; no trust in our server needed.
+3. Click the sale link on plan #6: the Agentic Wallet's CRCL sale on BscScan, 02:41 UTC on 10 Oct.
+4. `curl -i https://api.theredeyed-agent.site/x402/price/NVDA`: a 402 asking for 0.002 U, settled by Binance B402.
+5. `curl -s https://api.theredeyed-agent.site/binance`: live counts of the Binance Web3 API checks.
 
 ## On chain
 
@@ -19,6 +28,7 @@ Status, 10 Oct 2026: live on BNB Smart Chain at [theredeyed-agent.site](https://
 | PlanAccount template (bounded permission + ERC-1271 revision)   | [`0x9736a95F6a5c24165Ecf282e3E08016715460AAC`](https://bscscan.com/address/0x9736a95F6a5c24165Ecf282e3E08016715460AAC)                                                                                                                                                                                                    |
 | Agent                                                           | [`0xe201bbf3C736a5d188797974a7e4B9464f707eA8`](https://bscscan.com/address/0xe201bbf3C736a5d188797974a7e4B9464f707eA8)                                                                                                                                                                                                    |
 | First x402 sale: NVDA 24/7 price, 0.002 U, settled by the agent | [settle](https://bscscan.com/tx/0x7dd090f39dfa8ba765a50c3dddc547418a9ac8e1d25244e97737cbf072e79a78) (team buyer wallet, labelled as our own test)                                                                                                                                                                         |
+| First B402 sale: Agentic Wallet paid, Binance settled           | [settle](https://bscscan.com/tx/0x967e61768d815efc4642a5ba2ba0e8e7ffdfebcdff76e2ec9593ef951a663173) (our own Agentic Wallet as buyer, 10 Oct 21:07 UTC)                                                                                                                                                                   |
 | PlanJobHook (team jobs)                                         | [`0x42a7F449e4950524c13deBC96a0549100b516594`](https://bscscan.com/address/0x42a7F449e4950524c13deBC96a0549100b516594)                                                                                                                                                                                                    |
 | Plan 1: Guard on NVDA, 7 Oct overnight window                   | [lock](https://bscscan.com/tx/0x759ead4af86268d4015ab4074a58f2dc866ff8ee96dd077f85a5cd6ad2902092), 5 h 27 min before the close                                                                                                                                                                                            |
 | Plan 6: first triggered trade, CRCL sell on +1%                 | [decision](https://bscscan.com/tx/0x4a25f64a1bb47ef302ef5dfb978bcf0ce27bd583f797217e954ef6687ab8a62a) · [sale](https://bscscan.com/tx/0x3014f7996e59458934dcd500232fd2674904d183df376daac9c8171770f0e87a) · [fill on PlanBook](https://bscscan.com/tx/0xcea26956f4a1053b9cf6f4feee049781addc82a4082b9ff0b4645d95243e683e) |
