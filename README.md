@@ -6,7 +6,7 @@
 
 **We built Redeye to act on this gap.** It reads a 24/7 price for your stock while Wall Street sleeps, locks its promise on BNB Chain before the bell, acts on it overnight or over the weekend, and at the next open shows on chain whether it kept its word.
 
-Live on BNB Chain mainnet: **[theredeyed-agent.site](https://theredeyed-agent.site)** · [Proof page](https://theredeyed-agent.site/proof) · [Every promise it made](https://theredeyed-agent.site/record)
+Live on BNB Chain mainnet: **[theredeyed-agent.site](https://theredeyed-agent.site)** · [Proof page](https://theredeyed-agent.site/proof) · [Every promise it made](https://theredeyed-agent.site/record) · Telegram: [@redeyed_bot](https://t.me/redeyed_bot)
 
 ## Check it yourself
 
