@@ -13,6 +13,7 @@ import {
   planPermissionDomain,
   type SerializedPlanPermission
 } from "@redeye/core";
+import { createTelegramKey, signWithTelegramKey } from "./telegram-key";
 
 export interface RegisteredPasskey {
   credentialId: string;
@@ -25,6 +26,8 @@ export interface StoredPasskeyAccount extends RegisteredPasskey {
   account: Address;
   owner: Address;
   rpId: string;
+  /** "telegram": the key sits in Telegram's fingerprint storage instead of a passkey. */
+  kind?: "passkey" | "telegram";
 }
 
 export type PasskeyRegistrationMode = "device" | "flexible";
@@ -109,7 +112,8 @@ function storedAccount(value: unknown): StoredPasskeyAccount | null {
     publicKeyY: input.publicKeyY as `0x${string}`,
     account: input.account,
     owner: input.owner,
-    rpId: input.rpId
+    rpId: input.rpId,
+    kind: input.kind === "telegram" ? "telegram" : "passkey"
   };
 }
 
@@ -214,6 +218,17 @@ export async function registerPasskey(
   };
 }
 
+/** A key kept in Telegram behind the fingerprint or face, for phones where passkeys fail there. */
+export async function registerTelegramKey(): Promise<RegisteredPasskey> {
+  const key = await createTelegramKey();
+  return {
+    credentialId: key.credentialId,
+    credentialIdHash: keccak256(base64urlBytes(key.credentialId)),
+    publicKeyX: key.publicKeyX,
+    publicKeyY: key.publicKeyY
+  };
+}
+
 export function savePasskeyAccount(value: StoredPasskeyAccount): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
@@ -305,6 +320,17 @@ export async function signPasskeyWithdraw(
 
 /** One WebAuthn assertion over `digest`, encoded the way PasskeyOwner reads it. */
 async function signPasskeyDigest(account: StoredPasskeyAccount, digest: Hex): Promise<Hex> {
+  if (account.kind === "telegram") {
+    const challenge = hexToBytes(digest);
+    const signed = await signWithTelegramKey(account, challenge, account.rpId);
+    return encodeAssertion(
+      signed.r,
+      signed.s,
+      signed.authenticatorData,
+      signed.clientDataJSON,
+      base64url(challenge)
+    );
+  }
   if (!window.PublicKeyCredential || !navigator.credentials) {
     throw new Error("This browser does not support passkey assertions.");
   }
@@ -328,13 +354,29 @@ async function signPasskeyDigest(account: StoredPasskeyAccount, digest: Hex): Pr
     throw new Error("The browser returned an invalid passkey assertion.");
   }
   const clientDataJSON = new TextDecoder().decode(response.clientDataJSON);
-  const challengeText = base64url(challenge);
+  const { r, s } = derSignature(response.signature);
+  return encodeAssertion(
+    r,
+    s,
+    new Uint8Array(response.authenticatorData),
+    clientDataJSON,
+    base64url(challenge)
+  );
+}
+
+/** The layout PasskeyOwner decodes: abi.encode(r, s, challengeIndex, typeIndex, authData, client). */
+export function encodeAssertion(
+  r: Hex,
+  s: Hex,
+  authenticatorData: Uint8Array,
+  clientDataJSON: string,
+  challengeText: string
+): Hex {
   const challengeIndex = clientDataJSON.indexOf(`"challenge":"${challengeText}"`);
   const typeIndex = clientDataJSON.indexOf('"type":"webauthn.get"');
   if (challengeIndex < 0 || typeIndex < 0) {
     throw new Error("The passkey assertion was not bound to this permission.");
   }
-  const { r, s } = derSignature(response.signature);
   const signature = encodeAbiParameters(
     [
       { type: "bytes32" },
@@ -344,14 +386,7 @@ async function signPasskeyDigest(account: StoredPasskeyAccount, digest: Hex): Pr
       { type: "bytes" },
       { type: "string" }
     ],
-    [
-      r,
-      s,
-      BigInt(challengeIndex),
-      BigInt(typeIndex),
-      toHex(new Uint8Array(response.authenticatorData)),
-      clientDataJSON
-    ]
+    [r, s, BigInt(challengeIndex), BigInt(typeIndex), toHex(authenticatorData), clientDataJSON]
   );
   return signature;
 }

@@ -10,6 +10,7 @@ import {
   passkeyAuth,
   passkeysWork,
   registerPasskey,
+  registerTelegramKey,
   savePasskeyAccount,
   signPasskeyWithdraw,
   telegramInitData,
@@ -17,6 +18,7 @@ import {
   type RegisteredPasskey,
   type StoredPasskeyAccount
 } from "../lib/passkey";
+import { telegramUnlock, type TelegramUnlock } from "../lib/telegram-key";
 import { formatUnits, isAddress, parseUnits, type Address } from "viem";
 
 const USDT = "0x55d398326f99059fF775485246999027B3197955";
@@ -237,23 +239,29 @@ export default function Newcomer() {
   const [auth] = useState(() => passkeyAuth());
   const insideTelegram = auth !== null && "telegramInitData" in auth;
   const [canPasskey, setCanPasskey] = useState<boolean | null>(null);
+  const [tgUnlock, setTgUnlock] = useState<TelegramUnlock | null>(null);
   useEffect(() => {
     let live = true;
     void passkeysWork().then((works) => live && setCanPasskey(works));
+    if (insideTelegram) void telegramUnlock().then((kind) => live && setTgUnlock(kind));
     return () => {
       live = false;
     };
-  }, []);
-  // Telegram's in-app browser on Android often cannot show a passkey prompt; the phone's own
-  // browser can. There the bot's handoff link comes first, and trying inside Telegram second.
-  const handOffFirst = insideTelegram && (isAndroid() || canPasskey === false);
+  }, [insideTelegram]);
+  // Telegram's in-app browser often cannot show a passkey prompt. Telegram's own fingerprint or face unlock works inside the bot on both phones, so it
+  // comes first there; the phone's browser stays as the way to make a full passkey.
+  const useTelegramKey = insideTelegram && tgUnlock !== null;
+  const handOffFirst = insideTelegram && !useTelegramKey && (isAndroid() || canPasskey === false);
   const available = status.status === "ready" && status.value.available;
 
-  const create = async (mode: PasskeyRegistrationMode) => {
+  const create = async (mode: PasskeyRegistrationMode | "telegram") => {
     if (status.status !== "ready" || !status.value.available || auth === null) return;
     setState({ step: "busy" });
     try {
-      const passkey = await registerPasskey(status.value.rpId, mode);
+      const passkey =
+        mode === "telegram"
+          ? await registerTelegramKey()
+          : await registerPasskey(status.value.rpId, mode);
       const request = { ...passkey, ...auth };
       await agent.passkeyPreview(request);
       const account = await agent.passkeyCreate(request);
@@ -262,7 +270,8 @@ export default function Newcomer() {
         ...passkey,
         account: account.account as `0x${string}`,
         owner: account.owner as `0x${string}`,
-        rpId: status.value.rpId
+        rpId: status.value.rpId,
+        kind: mode === "telegram" ? "telegram" : "passkey"
       });
       setState({ step: "ready", passkey, account });
       setSaved(loadPasskeyAccount());
@@ -304,6 +313,20 @@ export default function Newcomer() {
         <OpenTelegram doing="make your account" />
       ) : (
         <div className="walletlist">
+          {useTelegramKey && available && (
+            <button
+              className="button button--primary"
+              type="button"
+              disabled={state.step === "busy"}
+              onClick={() => void create("telegram")}
+            >
+              {state.step === "busy"
+                ? "Waiting for your phone…"
+                : tgUnlock === "face"
+                  ? "Use Face ID"
+                  : "Use your fingerprint"}
+            </button>
+          )}
           {handOffFirst && (
             <ContinueInBrowser
               primary
@@ -316,7 +339,7 @@ export default function Newcomer() {
               iPhone.
             </p>
           )}
-          {available && canPasskey !== false && (
+          {available && canPasskey !== false && !useTelegramKey && (
             <>
               <button
                 className={handOffFirst ? "button button--ghost" : "button button--primary"}
@@ -341,14 +364,21 @@ export default function Newcomer() {
             </>
           )}
           {insideTelegram && !handOffFirst && (
-            <ContinueInBrowser primary={false} label="Continue in your browser" />
+            <ContinueInBrowser
+              primary={false}
+              label={
+                useTelegramKey
+                  ? "Make a passkey in your browser instead"
+                  : "Continue in your browser"
+              }
+            />
           )}
         </div>
       )}
       {state.step === "error" && (
         <p className="problem">
           {state.message}
-          {insideTelegram && " If no prompt appeared, continue in your browser instead."}
+          {insideTelegram && " If nothing appeared, make a passkey in your browser instead."}
         </p>
       )}
       {saved && <MoveMoneyOut account={saved} />}
