@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { encodeFunctionData, toFunctionSelector } from "viem";
 import {
+  PASSKEY_FACTORY_ABI,
   createPasskeyAccountService,
   normalizePasskeyInput,
   PasskeyAccountError
@@ -31,6 +33,25 @@ describe("passkey account input", () => {
     );
     expect(() => normalizePasskeyInput({ ...valid, credentialIdHash: "not-hex" })).toThrow(
       "32-byte hex"
+    );
+  });
+});
+
+describe("passkey factory ABI", () => {
+  it("can encode every factory call the sponsor makes", () => {
+    // createAccount was once missing here, so every account creation failed before any gas.
+    const data = encodeFunctionData({
+      abi: PASSKEY_FACTORY_ABI,
+      functionName: "createAccount",
+      args: [valid.credentialIdHash, valid.publicKeyX, valid.publicKeyY] as [
+        `0x${string}`,
+        `0x${string}`,
+        `0x${string}`
+      ]
+    });
+    expect(data.slice(0, 10)).toBe(toFunctionSelector("createAccount(bytes32,bytes32,bytes32)"));
+    expect(data.slice(0, 10)).toBe(
+      toFunctionSelector("function createAccount(bytes32,bytes32,bytes32)")
     );
   });
 });

@@ -29,6 +29,20 @@ export const PASSKEY_FACTORY_ABI = [
   },
   {
     type: "function",
+    name: "createAccount",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "credentialIdHash", type: "bytes32" },
+      { name: "qx", type: "bytes32" },
+      { name: "qy", type: "bytes32" }
+    ],
+    outputs: [
+      { name: "account", type: "address" },
+      { name: "owner", type: "address" }
+    ]
+  },
+  {
+    type: "function",
     name: "planBook",
     stateMutability: "view",
     inputs: [],
@@ -335,7 +349,13 @@ export function createPasskeyAccountService(config: PasskeyAccountServiceConfig)
           }),
           publicClient.getGasPrice()
         ]);
-      } catch {
+      } catch (cause) {
+        console.error(
+          JSON.stringify({
+            status: "passkey_create_estimate_failed",
+            reason: cause instanceof Error ? cause.message.slice(0, 300) : String(cause)
+          })
+        );
         throw new PasskeyAccountError(
           503,
           "PASSKEY_SPONSOR_UNAVAILABLE",
@@ -403,6 +423,12 @@ export function createPasskeyAccountService(config: PasskeyAccountServiceConfig)
       } catch (caught) {
         config.ledger.releasePasskeySponsor(identity.userId, day, predicted.account);
         if (caught instanceof PasskeyAccountError) throw caught;
+        console.error(
+          JSON.stringify({
+            status: "passkey_create_failed",
+            reason: caught instanceof Error ? caught.message.slice(0, 300) : String(caught)
+          })
+        );
         throw new PasskeyAccountError(
           503,
           "PASSKEY_SPONSOR_FAILED",
