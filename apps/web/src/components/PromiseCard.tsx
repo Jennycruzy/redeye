@@ -77,8 +77,8 @@ export function PromiseCard({ item, now }: { item: RecordItem; now: number }) {
       <header className="promise__head">
         <div>
           <p className="eyebrow">
-            Plan #{item.planId} · {kindName(item.kind)} · {stockName(item.ticker)} ·{" "}
-            {windowName(item.window).toLowerCase()}
+            {kindName(item.kind)} · {stockName(item.ticker)} ·{" "}
+            {windowName(item.window).toLowerCase()} · plan #{item.planId}
           </p>
           <h3 className="promise__text">“{item.promise}”</h3>
         </div>

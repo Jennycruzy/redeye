@@ -48,7 +48,7 @@ function Hero({ now, record }: { now: number; record: RecordItem[] }) {
           : [
               {
                 value: price,
-                label: `Plan #${i.planId}: ${triggerLabel(i, price)}`,
+                label: `Locked plan: ${triggerLabel(i, price)}`,
                 tone: "trigger" as const
               }
             ];
@@ -339,8 +339,7 @@ export default function Home() {
           </Link>
           {lead && (
             <p className="fine">
-              Latest: plan #{lead.planId}, {kindName(lead.kind).toLowerCase()} on{" "}
-              {stockName(lead.ticker)}.
+              Latest: {kindName(lead.kind).toLowerCase()} on {stockName(lead.ticker)}.
             </p>
           )}
         </Reveal>

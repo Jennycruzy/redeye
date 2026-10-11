@@ -192,7 +192,7 @@ const DOORS = [
     id: "agentic",
     name: "Binance Agentic Wallet",
     state: "Live",
-    body: "Trades stay inside the daily limit you set in the Binance app. Redeye checks every price before it trades and refuses anything outside the plan. Plan #6 sold CRCL through this door on 10 Oct, after the price rose 1%."
+    body: "Trades stay inside the daily limit you set in the Binance app. Redeye checks every price before it trades and refuses anything outside the plan. The weekend CRCL sale went through this door on 10 Oct, after the price rose 1%."
   },
   {
     id: "newcomer",

@@ -269,8 +269,7 @@ export default function Run({ id }: { id: string }) {
             {stockName(item.ticker)}
           </p>
           <h1 className="title title--wide">
-            The whole {windowName(item.window).toLowerCase()} of plan #{item.planId},{" "}
-            <em>check by check</em>.
+            The whole {windowName(item.window).toLowerCase()} of this plan, <em>check by check</em>.
           </h1>
         </div>
         <OutcomeBadge item={item} />
