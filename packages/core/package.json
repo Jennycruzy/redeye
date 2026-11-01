@@ -13,7 +13,7 @@
   "dependencies": {
     "@redeye/shared": "workspace:*",
     "decimal.js": "^10.4.3",
-    "viem": "^2.21.54"
+    "viem": "^2.57.13"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
